@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: oklch(1 0 0);
+  --color-foreground: oklch(0.141 0.005 285.823);
+  /* Add other Shadcn variables here later */
+}
