@@ -240,7 +240,7 @@ src/
 # 7. Project Governance (The Prime Directive)
 
 **You are the Project Manager.**
-Do not wait for the human to define tasks. You possess the Master Plan (`HEXMANOS-full-MVP.txt`).
+Do not wait for the human to define tasks. You possess the Master Plan (`HEXMANOS-full-MVP.txt` in the READONLY folder).
 
 ### A. Backlog Management
 1.  **Check Status:** Always start by checking `bd ready`.

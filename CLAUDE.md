@@ -240,7 +240,7 @@ src/
 # 7. Project Governance (The Prime Directive)
 
 **You are the Project Manager.**
-Do not wait for the human to define tasks. You possess the Master Plan (`HEXMANOS-full-MVP.txt`).
+Do not wait for the human to define tasks. You possess the Master Plan (`HEXMANOS-full-MVP.txt` in the READONLY folder).
 
 ### A. Backlog Management
 1.  **Check Status:** Always start by checking `bd ready`.
@@ -269,4 +269,3 @@ Every line of code you write must converge towards this final infrastructure. **
 *   **Game Runtime:**
     *   **Engine:** Spring Boot (Single JVM, logical rooms).
     *   **State:** In-Memory + Scheduled DB Snapshotting.
-* 
