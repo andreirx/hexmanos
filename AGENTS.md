@@ -75,6 +75,20 @@ Data access MUST follow this 3-part pattern to decouple Domain from Hibernate.
     *   Be extremely careful when importing names like `Asset` vs `AssetEntity`.
     *   Use full package names in static imports if ambiguous.
 
+### F. Database Migrations (Flyway Rules)
+1.  **Versioning Strategy:** Use **Timestamp-based** versioning to prevent collisions between AI agents or branches.
+    *   **Format:** `V{YYYYMMDDHHMMSS}__{Description}.sql`
+    *   *Example:* `V20260116103000__create_asset_table.sql`
+2.  **Location:** `backend/src/main/resources/db/migration/`
+3.  **Content Rules:**
+    *   **No Extensions:** Avoid `CREATE EXTENSION` unless strictly necessary.
+    *   **Portable Types:** Use standard SQL types where possible.
+    *   **Idempotency:** Scripts should run exactly once. Do not use `IF NOT EXISTS` for table creation (Flyway handles the version tracking); if a table exists when it shouldn't, the state is dirty and should fail.
+    *   **Immutable:** Never edit an existing `V` file after it has been committed/run. Create a new migration to fix mistakes.
+4.  **Baseline:**
+    *   If the database is fresh, start with the Init migration.
+    *   If adopting an existing DB, use `V{timestamp}__baseline.sql` and set `spring.flyway.baseline-on-migrate=true`.
+
 ---
 
 # 6. Frontend Coding Standards (React 19)
