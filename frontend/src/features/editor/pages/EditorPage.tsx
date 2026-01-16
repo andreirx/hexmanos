@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react"
-import { PixelCanvas } from "../components/PixelCanvas"
+import { PixelCanvas, type CanvasTool } from "../components/PixelCanvas"
 import { CharacterGallery } from "../components/CharacterGallery"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -7,7 +7,7 @@ import { Header } from "@/components/layout"
 import { getPresignedUrl, uploadToPresignedUrl, registerAsset, getAssetFile, loadAssetImage } from "@/api/assets"
 import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
-import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, FilePlus, Pencil, Eraser } from "lucide-react"
+import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, FilePlus, Pencil, Eraser, Square, Undo2, Redo2 } from "lucide-react"
 import type { UserDTO, AssetDTO } from "@/api/types"
 
 // Character definition structure from JSON
@@ -18,8 +18,8 @@ interface CharacterDefinition {
 }
 
 const CANVAS_SIZE = 128
-
-type Tool = "pencil" | "eraser"
+const MAX_HISTORY = 10 // 10 undo levels per frame
+const BRUSH_SIZES = [1, 2, 4, 8, 16]
 
 // Animation state definitions
 const ANIMATION_STATES = [
@@ -56,13 +56,21 @@ function createInitialAnimationData(): AnimationData {
   return data as AnimationData
 }
 
+// History type for undo/redo - keyed by "stateId_frameIndex"
+type FrameHistoryKey = string
+interface FrameHistory {
+  undoStack: Uint8ClampedArray[]
+  redoStack: Uint8ClampedArray[]
+}
+
 export function EditorPage() {
   const { isAuthenticated, user: authUser } = useAuth()
   const [animationData, setAnimationData] = useState<AnimationData>(createInitialAnimationData)
   const [currentState, setCurrentState] = useState<AnimationStateId>("idle")
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0)
   const [currentColor, setCurrentColor] = useState("#ffffff")
-  const [currentTool, setCurrentTool] = useState<Tool>("pencil")
+  const [currentTool, setCurrentTool] = useState<CanvasTool>("pencil")
+  const [brushSize, setBrushSize] = useState(1)
   const [characterName, setCharacterName] = useState("")
   const [isSaving, setIsSaving] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -70,6 +78,9 @@ export function EditorPage() {
   const [backendUser, setBackendUser] = useState<UserDTO | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const playIntervalRef = useRef<number | null>(null)
+
+  // Undo/Redo history per frame
+  const historyRef = useRef<Map<FrameHistoryKey, FrameHistory>>(new Map())
 
   // Gallery and loading state
   const [isGalleryOpen, setIsGalleryOpen] = useState(false)
@@ -127,6 +138,7 @@ export function EditorPage() {
       setAnimationData(newAnimationData)
       setCurrentState("idle")
       setCurrentFrameIndex(0)
+      clearAllHistory() // Clear undo/redo when loading new character
 
       if (mode === "edit") {
         // Editing own character
@@ -158,6 +170,7 @@ export function EditorPage() {
     setCurrentState("idle")
     setCurrentFrameIndex(0)
     setStatusMessage(null)
+    clearAllHistory() // Clear undo/redo when creating new character
   }
 
   const currentFrames = animationData[currentState].frames
@@ -180,9 +193,37 @@ export function EditorPage() {
     return [255, 255, 255, 255]
   }, [currentColor, currentTool])
 
+  // Get history key for current frame
+  const getHistoryKey = useCallback(
+    (): FrameHistoryKey => `${currentState}_${currentFrameIndex}`,
+    [currentState, currentFrameIndex]
+  )
+
+  // Get or create history for current frame
+  const getFrameHistory = useCallback((): FrameHistory => {
+    const key = getHistoryKey()
+    if (!historyRef.current.has(key)) {
+      historyRef.current.set(key, { undoStack: [], redoStack: [] })
+    }
+    return historyRef.current.get(key)!
+  }, [getHistoryKey])
+
   // Called by PixelCanvas on mouseup - commits the drawn pixels to React state
   const handleCommit = useCallback(
     (newPixels: Uint8ClampedArray) => {
+      // Push current state to undo stack before changing
+      const history = getFrameHistory()
+      const currentPixels = animationData[currentState].frames[currentFrameIndex].pixels
+      history.undoStack.push(new Uint8ClampedArray(currentPixels))
+
+      // Limit undo stack to MAX_HISTORY
+      if (history.undoStack.length > MAX_HISTORY) {
+        history.undoStack.shift()
+      }
+
+      // Clear redo stack on new action
+      history.redoStack = []
+
       setAnimationData((prev) => {
         const newData = { ...prev }
         const newFrames = [...newData[currentState].frames]
@@ -191,8 +232,65 @@ export function EditorPage() {
         return newData
       })
     },
-    [currentState, currentFrameIndex]
+    [currentState, currentFrameIndex, animationData, getFrameHistory]
   )
+
+  // Undo last action
+  const handleUndo = useCallback(() => {
+    const history = getFrameHistory()
+    if (history.undoStack.length === 0) return
+
+    // Push current state to redo stack
+    const currentPixels = animationData[currentState].frames[currentFrameIndex].pixels
+    history.redoStack.push(new Uint8ClampedArray(currentPixels))
+
+    // Limit redo stack
+    if (history.redoStack.length > MAX_HISTORY) {
+      history.redoStack.shift()
+    }
+
+    // Pop from undo stack
+    const previousPixels = history.undoStack.pop()!
+
+    setAnimationData((prev) => {
+      const newData = { ...prev }
+      const newFrames = [...newData[currentState].frames]
+      newFrames[currentFrameIndex] = { pixels: previousPixels }
+      newData[currentState] = { frames: newFrames }
+      return newData
+    })
+  }, [currentState, currentFrameIndex, animationData, getFrameHistory])
+
+  // Redo last undone action
+  const handleRedo = useCallback(() => {
+    const history = getFrameHistory()
+    if (history.redoStack.length === 0) return
+
+    // Push current state to undo stack
+    const currentPixels = animationData[currentState].frames[currentFrameIndex].pixels
+    history.undoStack.push(new Uint8ClampedArray(currentPixels))
+
+    // Pop from redo stack
+    const nextPixels = history.redoStack.pop()!
+
+    setAnimationData((prev) => {
+      const newData = { ...prev }
+      const newFrames = [...newData[currentState].frames]
+      newFrames[currentFrameIndex] = { pixels: nextPixels }
+      newData[currentState] = { frames: newFrames }
+      return newData
+    })
+  }, [currentState, currentFrameIndex, animationData, getFrameHistory])
+
+  // Clear all history (called when loading new character)
+  const clearAllHistory = useCallback(() => {
+    historyRef.current.clear()
+  }, [])
+
+  // Get current history state for UI
+  const currentHistory = getFrameHistory()
+  const canUndo = currentHistory.undoStack.length > 0
+  const canRedo = currentHistory.redoStack.length > 0
 
   const handleClearFrame = () => {
     setAnimationData((prev) => {
@@ -577,29 +675,82 @@ export function EditorPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-zinc-300">Tools</CardTitle>
           </CardHeader>
-          <CardContent className="flex gap-2">
+          <CardContent className="space-y-3">
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCurrentTool("pencil")}
+                className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                  currentTool === "pencil"
+                    ? "bg-blue-600 text-white"
+                    : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                }`}
+              >
+                <Pencil className="w-4 h-4" />
+                Pencil
+              </button>
+              <button
+                onClick={() => setCurrentTool("eraser")}
+                className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                  currentTool === "eraser"
+                    ? "bg-blue-600 text-white"
+                    : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                }`}
+              >
+                <Eraser className="w-4 h-4" />
+                Eraser
+              </button>
+            </div>
             <button
-              onClick={() => setCurrentTool("pencil")}
-              className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
-                currentTool === "pencil"
+              onClick={() => setCurrentTool("select")}
+              className={`w-full py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                currentTool === "select"
                   ? "bg-blue-600 text-white"
                   : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
               }`}
             >
-              <Pencil className="w-4 h-4" />
-              Pencil
+              <Square className="w-4 h-4" />
+              Select
             </button>
-            <button
-              onClick={() => setCurrentTool("eraser")}
-              className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
-                currentTool === "eraser"
-                  ? "bg-blue-600 text-white"
-                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
-              }`}
-            >
-              <Eraser className="w-4 h-4" />
-              Eraser
-            </button>
+            <div>
+              <label className="text-xs text-zinc-400 block mb-2">Brush Size</label>
+              <div className="flex gap-1">
+                {BRUSH_SIZES.map((size) => (
+                  <button
+                    key={size}
+                    onClick={() => setBrushSize(size)}
+                    className={`flex-1 py-1 px-2 rounded text-xs transition-colors ${
+                      brushSize === size
+                        ? "bg-blue-600 text-white"
+                        : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1 bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600 disabled:opacity-40"
+                onClick={handleUndo}
+                disabled={!canUndo}
+                title="Undo (Ctrl+Z)"
+              >
+                <Undo2 className="w-4 h-4" />
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1 bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600 disabled:opacity-40"
+                onClick={handleRedo}
+                disabled={!canRedo}
+                title="Redo (Ctrl+Y)"
+              >
+                <Redo2 className="w-4 h-4" />
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
@@ -666,6 +817,8 @@ export function EditorPage() {
               height={CANVAS_SIZE}
               pixels={currentFrame.pixels}
               color={getCurrentColor()}
+              brushSize={brushSize}
+              tool={currentTool}
               onCommit={handleCommit}
               initialZoom={4}
               className="rounded"

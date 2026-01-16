@@ -1,17 +1,22 @@
 import { useState, useRef, useCallback, useEffect } from "react"
-import { PixelCanvas } from "@/features/editor/components/PixelCanvas"
+import { PixelCanvas, type CanvasTool } from "@/features/editor/components/PixelCanvas"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Header } from "@/components/layout"
 import { getPresignedUrl, uploadToPresignedUrl, registerAsset } from "@/api/assets"
 import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
-import { Save, Trash2, Image, Check, X, Pencil, Eraser } from "lucide-react"
+import { Save, Trash2, Image, Check, X, Pencil, Eraser, Square, Undo2, Redo2 } from "lucide-react"
 import type { UserDTO } from "@/api/types"
 
 const TILE_SIZE = 128
+const MAX_HISTORY = 10
+const BRUSH_SIZES = [1, 2, 4, 8, 16]
 
-type Tool = "pencil" | "eraser"
+interface TileHistory {
+  undoStack: Uint8ClampedArray[]
+  redoStack: Uint8ClampedArray[]
+}
 
 export function TileEditorPage() {
   const { isAuthenticated, user: authUser } = useAuth()
@@ -19,13 +24,17 @@ export function TileEditorPage() {
     () => new Uint8ClampedArray(TILE_SIZE * TILE_SIZE * 4)
   )
   const [currentColor, setCurrentColor] = useState("#ffffff")
-  const [currentTool, setCurrentTool] = useState<Tool>("pencil")
+  const [currentTool, setCurrentTool] = useState<CanvasTool>("pencil")
+  const [brushSize, setBrushSize] = useState(1)
   const [tileName, setTileName] = useState("")
   const [passable, setPassable] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [backendUser, setBackendUser] = useState<UserDTO | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Undo/Redo history
+  const historyRef = useRef<TileHistory>({ undoStack: [], redoStack: [] })
 
   // Sync user with backend when authenticated
   useEffect(() => {
@@ -60,11 +69,59 @@ export function TileEditorPage() {
 
   // Called by PixelCanvas on mouseup - commits the drawn pixels to React state
   const handleCommit = useCallback((newPixels: Uint8ClampedArray) => {
+    // Push current state to undo stack before changing
+    const history = historyRef.current
+    history.undoStack.push(new Uint8ClampedArray(pixels))
+
+    // Limit undo stack to MAX_HISTORY
+    if (history.undoStack.length > MAX_HISTORY) {
+      history.undoStack.shift()
+    }
+
+    // Clear redo stack on new action
+    history.redoStack = []
+
     setPixels(newPixels)
-  }, [])
+  }, [pixels])
+
+  // Undo last action
+  const handleUndo = useCallback(() => {
+    const history = historyRef.current
+    if (history.undoStack.length === 0) return
+
+    // Push current state to redo stack
+    history.redoStack.push(new Uint8ClampedArray(pixels))
+
+    // Limit redo stack
+    if (history.redoStack.length > MAX_HISTORY) {
+      history.redoStack.shift()
+    }
+
+    // Pop from undo stack
+    const previousPixels = history.undoStack.pop()!
+    setPixels(previousPixels)
+  }, [pixels])
+
+  // Redo last undone action
+  const handleRedo = useCallback(() => {
+    const history = historyRef.current
+    if (history.redoStack.length === 0) return
+
+    // Push current state to undo stack
+    history.undoStack.push(new Uint8ClampedArray(pixels))
+
+    // Pop from redo stack
+    const nextPixels = history.redoStack.pop()!
+    setPixels(nextPixels)
+  }, [pixels])
+
+  // Check if undo/redo are available
+  const canUndo = historyRef.current.undoStack.length > 0
+  const canRedo = historyRef.current.redoStack.length > 0
 
   const handleClear = () => {
     setPixels(new Uint8ClampedArray(TILE_SIZE * TILE_SIZE * 4))
+    historyRef.current = { undoStack: [], redoStack: [] } // Clear history on clear
     setStatusMessage(null)
   }
 
@@ -251,7 +308,7 @@ export function TileEditorPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-zinc-300">Tools</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-3">
             <div className="flex gap-2">
               <button
                 onClick={() => setCurrentTool("pencil")}
@@ -276,7 +333,65 @@ export function TileEditorPage() {
                 Eraser
               </button>
             </div>
+            <button
+              onClick={() => setCurrentTool("select")}
+              className={`w-full py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                currentTool === "select"
+                  ? "bg-blue-600 text-white"
+                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+              }`}
+            >
+              <Square className="w-4 h-4" />
+              Select
+            </button>
+            <div>
+              <label className="text-xs text-zinc-400 block mb-2">Brush Size</label>
+              <div className="flex gap-1">
+                {BRUSH_SIZES.map((size) => (
+                  <button
+                    key={size}
+                    onClick={() => setBrushSize(size)}
+                    className={`flex-1 py-1 px-2 rounded text-xs transition-colors ${
+                      brushSize === size
+                        ? "bg-blue-600 text-white"
+                        : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1 bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600 disabled:opacity-40"
+                onClick={handleUndo}
+                disabled={!canUndo}
+                title="Undo"
+              >
+                <Undo2 className="w-4 h-4" />
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1 bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600 disabled:opacity-40"
+                onClick={handleRedo}
+                disabled={!canRedo}
+                title="Redo"
+              >
+                <Redo2 className="w-4 h-4" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
+        <Card className="bg-zinc-800 border-zinc-700">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-zinc-300">Color</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
             <div>
               <label className="text-xs text-zinc-400 block mb-2">Current Color</label>
               <div className="flex items-center gap-2">
@@ -353,6 +468,8 @@ export function TileEditorPage() {
             height={TILE_SIZE}
             pixels={pixels}
             color={getCurrentColor()}
+            brushSize={brushSize}
+            tool={currentTool}
             onCommit={handleCommit}
             initialZoom={4}
             className="rounded"
