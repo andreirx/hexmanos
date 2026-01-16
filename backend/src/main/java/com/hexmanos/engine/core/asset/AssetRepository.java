@@ -8,5 +8,6 @@ public interface AssetRepository {
     List<Asset> findAll();
     Optional<Asset> findById(UUID id);
     List<Asset> findByStatus(Asset.AssetStatus status);
+    List<Asset> findByType(Asset.AssetType type);
     Asset save(Asset asset);
 }

@@ -1,12 +1,21 @@
 import { useState, useRef, useCallback, useEffect } from "react"
 import { PixelCanvas } from "../components/PixelCanvas"
+import { CharacterGallery } from "../components/CharacterGallery"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { getPresignedUrl, uploadToPresignedUrl, registerAsset } from "@/api/assets"
+import { Header } from "@/components/layout"
+import { getPresignedUrl, uploadToPresignedUrl, registerAsset, getAssetFile, loadAssetImage } from "@/api/assets"
 import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
-import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause } from "lucide-react"
-import type { UserDTO } from "@/api/types"
+import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, FilePlus } from "lucide-react"
+import type { UserDTO, AssetDTO } from "@/api/types"
+
+// Character definition structure from JSON
+interface CharacterDefinition {
+  name: string
+  spriteSize: number
+  states: Record<string, { frames: number; loop: boolean }>
+}
 
 const CANVAS_SIZE = 32
 
@@ -59,6 +68,12 @@ export function EditorPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const playIntervalRef = useRef<number | null>(null)
 
+  // Gallery and loading state
+  const [isGalleryOpen, setIsGalleryOpen] = useState(false)
+  const [loadedAsset, setLoadedAsset] = useState<AssetDTO | null>(null)
+  const [isReadOnly, setIsReadOnly] = useState(false)
+  const [isLoadingCharacter, setIsLoadingCharacter] = useState(false)
+
   // Sync user with backend when authenticated
   useEffect(() => {
     if (isAuthenticated && authUser) {
@@ -72,6 +87,75 @@ export function EditorPage() {
         .catch((err) => console.error("Failed to sync user:", err))
     }
   }, [isAuthenticated, authUser])
+
+  // Handle character selection from gallery
+  const handleCharacterSelect = async (asset: AssetDTO, mode: "edit" | "copy") => {
+    setIsGalleryOpen(false)
+    setIsLoadingCharacter(true)
+    setStatusMessage(null)
+
+    try {
+      // Load the definition.json
+      const definition = await getAssetFile<CharacterDefinition>(
+        asset.storageKeyPrefix,
+        "definition.json"
+      )
+
+      // Create new animation data structure
+      const newAnimationData = createInitialAnimationData()
+
+      // Load all frames for each state
+      for (const [stateId, stateInfo] of Object.entries(definition.states)) {
+        if (stateId in newAnimationData) {
+          const frames: AnimationFrame[] = []
+          for (let i = 0; i < stateInfo.frames; i++) {
+            try {
+              const pixels = await loadAssetImage(asset.storageKeyPrefix, `${stateId}_${i}.png`)
+              frames.push({ pixels })
+            } catch (err) {
+              console.warn(`Failed to load frame ${stateId}_${i}.png, using empty frame`)
+              frames.push(createEmptyFrame())
+            }
+          }
+          newAnimationData[stateId as AnimationStateId] = { frames }
+        }
+      }
+
+      setAnimationData(newAnimationData)
+      setCurrentState("idle")
+      setCurrentFrameIndex(0)
+
+      if (mode === "edit") {
+        // Editing own character
+        setLoadedAsset(asset)
+        setCharacterName(definition.name)
+        setIsReadOnly(false)
+        setStatusMessage({ type: "success", text: `Loaded "${definition.name}" for editing` })
+      } else {
+        // Copying another user's character
+        setLoadedAsset(null) // Clear loaded asset so it saves as new
+        setCharacterName(`${definition.name} (Copy)`)
+        setIsReadOnly(false)
+        setStatusMessage({ type: "success", text: `Copied "${definition.name}" - save as your own!` })
+      }
+    } catch (err) {
+      console.error("Failed to load character:", err)
+      setStatusMessage({ type: "error", text: "Failed to load character. Please try again." })
+    } finally {
+      setIsLoadingCharacter(false)
+    }
+  }
+
+  // Start a new character
+  const handleNewCharacter = () => {
+    setAnimationData(createInitialAnimationData())
+    setCharacterName("")
+    setLoadedAsset(null)
+    setIsReadOnly(false)
+    setCurrentState("idle")
+    setCurrentFrameIndex(0)
+    setStatusMessage(null)
+  }
 
   const currentFrames = animationData[currentState].frames
   const currentFrame = currentFrames[currentFrameIndex] || currentFrames[0]
@@ -413,9 +497,53 @@ export function EditorPage() {
   const stateInfo = ANIMATION_STATES.find((s) => s.id === currentState)
 
   return (
-    <div className="h-screen flex bg-zinc-900 text-zinc-100">
+    <div className="h-screen flex flex-col bg-zinc-900 text-zinc-100">
+      <Header />
+      <div className="flex-1 flex overflow-hidden">
+      {/* Character Gallery */}
+      <CharacterGallery
+        isOpen={isGalleryOpen}
+        onClose={() => setIsGalleryOpen(false)}
+        onSelect={handleCharacterSelect}
+        currentUserId={backendUser?.id}
+      />
+
+      {/* Loading overlay */}
+      {isLoadingCharacter && (
+        <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center">
+          <div className="bg-zinc-800 rounded-lg px-6 py-4 text-zinc-100">
+            Loading character...
+          </div>
+        </div>
+      )}
+
       {/* Left Sidebar - Tools */}
       <div className="w-64 border-r border-zinc-700 p-4 flex flex-col gap-4 overflow-y-auto">
+        {/* File Operations */}
+        <Card className="bg-zinc-800 border-zinc-700">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-zinc-300">File</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <Button
+              variant="outline"
+              className="w-full border-zinc-600 hover:bg-zinc-700"
+              onClick={() => setIsGalleryOpen(true)}
+            >
+              <FolderOpen className="w-4 h-4 mr-2" />
+              Load Character
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full border-zinc-600 hover:bg-zinc-700"
+              onClick={handleNewCharacter}
+            >
+              <FilePlus className="w-4 h-4 mr-2" />
+              New Character
+            </Button>
+          </CardContent>
+        </Card>
+
         <Card className="bg-zinc-800 border-zinc-700">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-zinc-300">Animation State</CardTitle>
@@ -573,6 +701,12 @@ export function EditorPage() {
             <CardTitle className="text-sm text-zinc-300">Character</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {loadedAsset && (
+              <div className="text-xs text-zinc-500 bg-zinc-900 rounded px-2 py-1">
+                Editing: {loadedAsset.name}
+              </div>
+            )}
+
             <div>
               <label className="text-xs text-zinc-400 block mb-1">Name</label>
               <input
@@ -580,7 +714,8 @@ export function EditorPage() {
                 value={characterName}
                 onChange={(e) => setCharacterName(e.target.value)}
                 placeholder="blue-knight"
-                className="w-full px-3 py-2 bg-zinc-700 border border-zinc-600 rounded text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+                disabled={isReadOnly}
+                className="w-full px-3 py-2 bg-zinc-700 border border-zinc-600 rounded text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
 
@@ -642,6 +777,7 @@ export function EditorPage() {
             Exports definition.json + all frames
           </p>
         </div>
+      </div>
       </div>
     </div>
   )

@@ -28,6 +28,10 @@ public class AssetService {
         return assetRepository.findByStatus(status);
     }
 
+    public List<Asset> getByType(Asset.AssetType type) {
+        return assetRepository.findByType(type);
+    }
+
     public Asset create(Asset asset) {
         // Business Rule: New assets are always PENDING
         asset.setStatus(Asset.AssetStatus.PENDING);

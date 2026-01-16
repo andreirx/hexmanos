@@ -104,3 +104,66 @@ export async function registerAsset(request: RegisterAssetRequest): Promise<Regi
   const response = await api.post<RegisterAssetResponse>("/assets/register", request)
   return response.data
 }
+
+/**
+ * Get assets filtered by type.
+ */
+export async function getAssetsByType(type: "CHARACTER" | "TILE" | "MAP"): Promise<AssetDTO[]> {
+  const response = await api.get<AssetDTO[]>(`/assets/type/${type}`)
+  return response.data
+}
+
+/**
+ * Get a file from an asset's storage.
+ * Returns the URL to fetch the file from.
+ */
+export function getAssetFileUrl(storageKeyPrefix: string, fileName: string): string {
+  const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:8080/api"
+  return `${baseUrl}/assets/files/${storageKeyPrefix}/${fileName}`
+}
+
+/**
+ * Fetch an asset file as JSON.
+ */
+export async function getAssetFile<T>(storageKeyPrefix: string, fileName: string): Promise<T> {
+  const url = getAssetFileUrl(storageKeyPrefix, fileName)
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${fileName}: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+/**
+ * Load an image from asset storage and return as ImageData.
+ */
+export async function loadAssetImage(storageKeyPrefix: string, fileName: string): Promise<Uint8ClampedArray> {
+  const url = getAssetFileUrl(storageKeyPrefix, fileName)
+
+  return new Promise((resolve, reject) => {
+    const img = document.createElement("img")
+    img.crossOrigin = "anonymous"
+
+    img.onload = () => {
+      const canvas = document.createElement("canvas")
+      canvas.width = img.width
+      canvas.height = img.height
+      const ctx = canvas.getContext("2d")
+
+      if (!ctx) {
+        reject(new Error("Could not get canvas context"))
+        return
+      }
+
+      ctx.drawImage(img, 0, 0)
+      const imageData = ctx.getImageData(0, 0, img.width, img.height)
+      resolve(imageData.data)
+    }
+
+    img.onerror = () => {
+      reject(new Error(`Failed to load image: ${fileName}`))
+    }
+
+    img.src = url
+  })
+}

@@ -11,4 +11,5 @@ import java.util.UUID;
 @Repository
 public interface AssetDB extends JpaRepository<AssetEntity, UUID> {
     List<AssetEntity> findByStatus(Asset.AssetStatus status);
+    List<AssetEntity> findByType(Asset.AssetType type);
 }

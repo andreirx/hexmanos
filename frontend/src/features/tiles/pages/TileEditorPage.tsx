@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react"
 import { PixelCanvas } from "@/features/editor/components/PixelCanvas"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Header } from "@/components/layout"
 import { getPresignedUrl, uploadToPresignedUrl, registerAsset } from "@/api/assets"
 import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
@@ -245,9 +246,11 @@ export function TileEditorPage() {
   ]
 
   return (
-    <div className="h-screen flex bg-zinc-900 text-zinc-100">
+    <div className="h-screen flex flex-col bg-zinc-900 text-zinc-100">
+      <Header />
+      <div className="flex-1 flex overflow-hidden">
       {/* Left Sidebar - Tools */}
-      <div className="w-64 border-r border-zinc-700 p-4 flex flex-col gap-4">
+      <div className="w-64 border-r border-zinc-700 p-4 flex flex-col gap-4 overflow-y-auto">
         <Card className="bg-zinc-800 border-zinc-700">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-zinc-300">Tools</CardTitle>
@@ -432,6 +435,7 @@ export function TileEditorPage() {
             Uploads tile.png & properties.json
           </p>
         </div>
+      </div>
       </div>
     </div>
   )

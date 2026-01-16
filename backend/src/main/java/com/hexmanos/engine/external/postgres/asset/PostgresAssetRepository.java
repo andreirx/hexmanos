@@ -32,6 +32,11 @@ public class PostgresAssetRepository implements AssetRepository {
     }
 
     @Override
+    public List<Asset> findByType(Asset.AssetType type) {
+        return db.findByType(type).stream().map(EntityMapper::fromEntity).toList();
+    }
+
+    @Override
     public Asset save(Asset asset) {
         // Check if this is an update or insert
         boolean exists = asset.getId() != null && db.existsById(asset.getId());

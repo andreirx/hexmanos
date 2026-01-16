@@ -256,9 +256,71 @@ public class AssetController {
         }
     }
 
+    /**
+     * Serve asset files from storage.
+     * URL pattern: /api/assets/files/{assetType}/{assetId}/{fileName}
+     * Example: /api/assets/files/characters/abc-123/definition.json
+     */
+    @GetMapping("/files/**")
+    public ResponseEntity<org.springframework.core.io.Resource> serveFile(
+            jakarta.servlet.http.HttpServletRequest request) {
+        // Extract the storage key from the path after /files/
+        String fullPath = request.getRequestURI();
+        String storageKey = fullPath.substring(fullPath.indexOf("/files/") + "/files/".length());
+
+        if (storageKey.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        try {
+            org.springframework.core.io.Resource resource = fileStorageService.loadFileAsResource(storageKey);
+
+            // Determine content type based on file extension
+            String contentType = determineContentType(storageKey);
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .header("Cache-Control", "public, max-age=3600")
+                    .body(resource);
+        } catch (Exception e) {
+            log.warn("File not found: {}", storageKey);
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * Get assets filtered by type.
+     * Example: /api/assets/type/CHARACTER
+     */
+    @GetMapping("/type/{type}")
+    public ResponseEntity<List<AssetDTO>> getAssetsByType(@PathVariable String type) {
+        try {
+            Asset.AssetType assetType = Asset.AssetType.valueOf(type.toUpperCase());
+            List<AssetDTO> assets = assetService.getByType(assetType).stream()
+                    .map(AssetDTO.DTOMapper::toDTO)
+                    .toList();
+            return ResponseEntity.ok(assets);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
     private boolean isValidAssetType(String assetType) {
         return "characters".equals(assetType) ||
                "tiles".equals(assetType) ||
                "maps".equals(assetType);
+    }
+
+    private String determineContentType(String storageKey) {
+        if (storageKey.endsWith(".json")) {
+            return "application/json";
+        } else if (storageKey.endsWith(".png")) {
+            return "image/png";
+        } else if (storageKey.endsWith(".jpg") || storageKey.endsWith(".jpeg")) {
+            return "image/jpeg";
+        } else if (storageKey.endsWith(".gif")) {
+            return "image/gif";
+        }
+        return "application/octet-stream";
     }
 }
