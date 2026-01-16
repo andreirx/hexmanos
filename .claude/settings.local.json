@@ -23,7 +23,14 @@
       "Bash(bd list:*)",
       "Bash(npx cdk diff)",
       "Bash(npx cdk deploy:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(python3 -m json.tool:*)",
+      "Bash(python3:*)",
+      "Bash(git pull:*)",
+      "Bash(git stash:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx playwright test:*)"
     ]
   }
 }

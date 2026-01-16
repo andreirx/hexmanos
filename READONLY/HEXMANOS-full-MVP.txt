@@ -3,7 +3,7 @@
 *   **Sprite Resolution:** `32x32` pixels.
     *   *Why:* 16x16 is too abstract for kids; 64x64 takes too long to draw. 32x32 is the industry standard for this genre (e.g., Stardew Valley).
 *   **Tile Resolution:** `32x32` pixels (1:1 with Sprites).
-*   **Map Coordinate System:** Integer-based `(x, y)` where 1 unit = 32 pixels.
+*   **Map Coordinate System:** Integer-based `(x, y)` where 1 unit = 128 pixels.
 *   **Canvas Zoom:** Client-side scaling (e.g., 2x or 3x) to make the 32px sprites look chunky on modern monitors.
 
 ### 2. The Animation Schema
@@ -163,7 +163,7 @@ When the user hits **Submit** in the frontend:
     {
       "name": "Knight",
       "animations": { "idle": [0, 1], "walk": [2, 3] },
-      "dimensions": { "w": 32, "h": 32 }
+      "dimensions": { "w": 128, "h": 128 }
     }
     ```
 2.  **Frontend** asks Backend for a **Presigned S3 Upload URL** (secure direct upload).
@@ -259,7 +259,7 @@ This keeps the DB lean and queryable, while large/binary data lives in object st
 ```json
 {
   "name": "Blue Knight",
-  "sprite_size": 32,
+  "sprite_size": 128,
   "states": {
     "idle": { "frames": 2, "loop": true },
     "walk_down": { "frames": 4, "loop": true },
@@ -299,7 +299,7 @@ characters
 ```json
 {
   "name": "Grass",
-  "tile_size": 32,
+  "tile_size": 128,
   "passable": true
 }
 ```
@@ -335,7 +335,7 @@ tiles
   "name": "Forest Clearing",
   "width": 20,
   "height": 15,
-  "tile_size": 32,
+  "tile_size": 128,
   "grid": [
     ["tile_uuid_grass", "tile_uuid_grass", "tile_uuid_water", ...],
     ["tile_uuid_grass", "tile_uuid_tree", "tile_uuid_grass", ...],
@@ -684,7 +684,7 @@ public ResponseEntity<String> generateSprite(@RequestBody PromptRequest request)
 *   **Prompt Modal:** Input text.
 *   **Post-Process:**
     1.  Receive 512px image.
-    2.  Draw to offscreen canvas `ctx.drawImage(img, 0, 0, 32, 32)`.
+    2.  Draw to offscreen canvas `ctx.drawImage(img, 0, 0, 128, 128)`.
     3.  `ctx.getImageData` to get the pixels.
     4.  Inject into the Editor Grid.
 
