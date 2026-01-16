@@ -1,5 +1,13 @@
 import api from "@/lib/api"
-import type { AssetDTO, CreateAssetRequest, UploadResponse, PresignedUrlRequest, PresignedUrlResponse } from "./types"
+import type {
+  AssetDTO,
+  CreateAssetRequest,
+  UploadResponse,
+  PresignedUrlRequest,
+  PresignedUrlResponse,
+  RegisterAssetRequest,
+  RegisterAssetResponse
+} from "./types"
 
 export async function uploadAsset(file: File): Promise<UploadResponse> {
   const formData = new FormData()
@@ -82,5 +90,17 @@ export async function uploadToPresignedUrl(
  */
 export async function verifyFileExists(storageKey: string): Promise<boolean> {
   const response = await api.get<boolean>(`/assets/verify/${encodeURIComponent(storageKey)}`)
+  return response.data
+}
+
+/**
+ * Register an asset after files have been uploaded to storage.
+ * This validates that all required files exist and creates the database record.
+ *
+ * @param request Contains assetId, type, name, authorId, and list of files to validate
+ * @returns RegisterAssetResponse with success status and asset or error details
+ */
+export async function registerAsset(request: RegisterAssetRequest): Promise<RegisterAssetResponse> {
+  const response = await api.post<RegisterAssetResponse>("/assets/register", request)
   return response.data
 }

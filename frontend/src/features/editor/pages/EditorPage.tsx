@@ -2,8 +2,11 @@ import { useState, useRef, useCallback, useEffect } from "react"
 import { PixelCanvas } from "../components/PixelCanvas"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { getPresignedUrl, uploadToPresignedUrl, createAsset } from "@/api/assets"
+import { getPresignedUrl, uploadToPresignedUrl, registerAsset } from "@/api/assets"
+import { getCurrentUser } from "@/api/users"
+import { useAuth } from "@/context/AuthContext"
 import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause } from "lucide-react"
+import type { UserDTO } from "@/api/types"
 
 const CANVAS_SIZE = 32
 
@@ -43,6 +46,7 @@ function createInitialAnimationData(): AnimationData {
 }
 
 export function EditorPage() {
+  const { isAuthenticated, user: authUser } = useAuth()
   const [animationData, setAnimationData] = useState<AnimationData>(createInitialAnimationData)
   const [currentState, setCurrentState] = useState<AnimationStateId>("idle")
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0)
@@ -51,8 +55,18 @@ export function EditorPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+  const [backendUser, setBackendUser] = useState<UserDTO | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const playIntervalRef = useRef<number | null>(null)
+
+  // Sync user with backend when authenticated
+  useEffect(() => {
+    if (isAuthenticated && authUser) {
+      getCurrentUser()
+        .then(setBackendUser)
+        .catch((err) => console.error("Failed to sync user:", err))
+    }
+  }, [isAuthenticated, authUser])
 
   const currentFrames = animationData[currentState].frames
   const currentFrame = currentFrames[currentFrameIndex] || currentFrames[0]
@@ -287,6 +301,13 @@ export function EditorPage() {
       return
     }
 
+    // Get the author ID from the backend user or auth user
+    const authorId = backendUser?.id || authUser?.userId
+    if (!authorId) {
+      setStatusMessage({ type: "error", text: "Please log in to save characters" })
+      return
+    }
+
     setIsSaving(true)
     setStatusMessage(null)
 
@@ -295,6 +316,9 @@ export function EditorPage() {
 
       // Generate definition JSON
       const definition = generateDefinitionJson()
+
+      // Collect all file names for registration
+      const fileNames: string[] = ["definition.json"]
 
       // Collect all presigned URL requests and uploads
       const uploads: Promise<void>[] = []
@@ -308,11 +332,13 @@ export function EditorPage() {
       for (const state of ANIMATION_STATES) {
         const frames = animationData[state.id].frames
         for (let i = 0; i < frames.length; i++) {
+          const fileName = `${state.id}_${i}.png`
           presignedRequests.push({
             stateId: state.id,
             frameIndex: i,
-            fileName: `${state.id}_${i}.png`,
+            fileName,
           })
+          fileNames.push(fileName)
         }
       }
 
@@ -347,15 +373,23 @@ export function EditorPage() {
       // Wait for all uploads
       await Promise.all(uploads)
 
-      // Register asset in database
-      await createAsset({
+      // Register asset in database with file validation
+      const result = await registerAsset({
+        assetId,
         type: "CHARACTER",
         name: characterName,
-        authorId: "anonymous", // TODO: Get from auth context
-        storageKeyPrefix: `characters/${assetId}`,
+        authorId,
+        files: fileNames,
       })
 
-      setStatusMessage({ type: "success", text: `Character "${characterName}" saved successfully!` })
+      if (result.success) {
+        setStatusMessage({ type: "success", text: `Character "${characterName}" saved successfully!` })
+      } else {
+        const missingInfo = result.missingFiles?.length
+          ? ` Missing files: ${result.missingFiles.join(", ")}`
+          : ""
+        setStatusMessage({ type: "error", text: `Registration failed: ${result.message}${missingInfo}` })
+      }
     } catch (err) {
       console.error("Failed to save character:", err)
       setStatusMessage({ type: "error", text: "Failed to save. Is the backend running?" })

@@ -1,13 +1,17 @@
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
 import { PixelCanvas } from "@/features/editor/components/PixelCanvas"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { getPresignedUrl, uploadToPresignedUrl, createAsset } from "@/api/assets"
+import { getPresignedUrl, uploadToPresignedUrl, registerAsset } from "@/api/assets"
+import { getCurrentUser } from "@/api/users"
+import { useAuth } from "@/context/AuthContext"
 import { Save, Trash2, Image, Check, X } from "lucide-react"
+import type { UserDTO } from "@/api/types"
 
 const TILE_SIZE = 32
 
 export function TileEditorPage() {
+  const { isAuthenticated, user: authUser } = useAuth()
   const [pixels, setPixels] = useState<Uint8ClampedArray>(
     () => new Uint8ClampedArray(TILE_SIZE * TILE_SIZE * 4)
   )
@@ -16,7 +20,17 @@ export function TileEditorPage() {
   const [passable, setPassable] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+  const [backendUser, setBackendUser] = useState<UserDTO | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Sync user with backend when authenticated
+  useEffect(() => {
+    if (isAuthenticated && authUser) {
+      getCurrentUser()
+        .then(setBackendUser)
+        .catch((err) => console.error("Failed to sync user:", err))
+    }
+  }, [isAuthenticated, authUser])
 
   const hexToRgba = (hex: string): [number, number, number, number] => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
@@ -146,6 +160,13 @@ export function TileEditorPage() {
       return
     }
 
+    // Get the author ID from the backend user or auth user
+    const authorId = backendUser?.id || authUser?.userId
+    if (!authorId) {
+      setStatusMessage({ type: "error", text: "Please log in to save tiles" })
+      return
+    }
+
     setIsSaving(true)
     setStatusMessage(null)
 
@@ -186,15 +207,23 @@ export function TileEditorPage() {
         uploadToPresignedUrl(jsonPresigned, jsonBlob, "application/json"),
       ])
 
-      // Register asset in database
-      await createAsset({
+      // Register asset in database with file validation
+      const result = await registerAsset({
+        assetId,
         type: "TILE",
         name: tileName,
-        authorId: "anonymous", // TODO: Get from auth context
-        storageKeyPrefix: `tiles/${assetId}`,
+        authorId,
+        files: ["tile.png", "properties.json"],
       })
 
-      setStatusMessage({ type: "success", text: `Tile "${tileName}" saved successfully!` })
+      if (result.success) {
+        setStatusMessage({ type: "success", text: `Tile "${tileName}" saved successfully!` })
+      } else {
+        const missingInfo = result.missingFiles?.length
+          ? ` Missing files: ${result.missingFiles.join(", ")}`
+          : ""
+        setStatusMessage({ type: "error", text: `Registration failed: ${result.message}${missingInfo}` })
+      }
     } catch (err) {
       console.error("Failed to save tile:", err)
       setStatusMessage({ type: "error", text: "Failed to save tile. Is the backend running?" })

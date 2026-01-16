@@ -36,3 +36,37 @@ export interface PresignedUrlResponse {
   httpMethod: string
   expiresInSeconds: number
 }
+
+// New register endpoint types
+export interface RegisterAssetRequest {
+  assetId: string
+  type: AssetType
+  name: string
+  authorId: string
+  files: string[]
+}
+
+export interface RegisterAssetResponse {
+  success: boolean
+  message: string
+  asset: AssetDTO | null
+  missingFiles: string[] | null
+}
+
+// User types
+export interface UserDTO {
+  id: string
+  cognitoSub: string
+  pool: "PLAYER" | "ADMIN"
+  displayName: string
+  email: string
+  createdAt: string
+  lastLoginAt: string
+}
+
+export interface SyncUserRequest {
+  cognitoSub: string
+  pool: string
+  displayName: string
+  email: string
+}
