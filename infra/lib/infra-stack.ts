@@ -47,7 +47,7 @@ export class InfraStack extends cdk.Stack {
         email: true,
       },
       autoVerify: {
-        email: false, // No email verification for MVP (reduce friction)
+        email: true, // Auto-verify email with code
       },
       standardAttributes: {
         email: {
@@ -71,6 +71,13 @@ export class InfraStack extends cdk.Stack {
       },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
+      // Use SES for sending emails
+      email: cognito.UserPoolEmail.withSES({
+        fromEmail: 'contact@bijuterie.software',
+        fromName: 'Hexmanos',
+        sesVerifiedDomain: 'bijuterie.software',
+        sesRegion: 'eu-central-1',
+      }),
     });
 
     // Player Pool App Client
@@ -139,6 +146,13 @@ export class InfraStack extends cdk.Stack {
       },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
+      // Use SES for sending emails
+      email: cognito.UserPoolEmail.withSES({
+        fromEmail: 'contact@bijuterie.software',
+        fromName: 'Hexmanos Admin',
+        sesVerifiedDomain: 'bijuterie.software',
+        sesRegion: 'eu-central-1',
+      }),
     });
 
     // Admin Pool App Client
