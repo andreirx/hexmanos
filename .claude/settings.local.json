@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "Bash(./gradlew clean:*)",
+      "Bash(chmod:*)",
+      "Bash(bd close:*)",
+      "Bash(git add:*)",
+      "Bash(bd sync:*)",
+      "Bash(git push:*)",
+      "Bash(bd ready)",
+      "Bash(./gradlew compileJava:*)",
+      "Bash(bd update:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm install:*)",
+      "Bash(tree:*)",
+      "Bash(cd:*)",
+      "Bash(npm init:*)",
+      "Bash(bd stats:*)",
+      "Bash(bd create:*)",
+      "Bash(bd dep add:*)",
+      "Bash(cdk --version:*)",
+      "Bash(bd list:*)",
+      "Bash(npx cdk diff)",
+      "Bash(npx cdk deploy:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
