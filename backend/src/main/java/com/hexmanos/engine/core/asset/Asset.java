@@ -19,6 +19,6 @@ public class Asset {
     private String name;
     private String authorId;
     private AssetStatus status;
-    private String s3KeyPrefix;
+    private String storageKeyPrefix;
     private LocalDateTime createdAt;
 }

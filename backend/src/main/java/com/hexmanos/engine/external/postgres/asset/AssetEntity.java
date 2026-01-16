@@ -33,8 +33,10 @@ public class AssetEntity {
     @Enumerated(EnumType.STRING)
     private Asset.AssetStatus status;
 
+    // RENAMED from s3KeyPrefix to avoid naming strategy collisions
+    // Hibernate will map this to: storage_key_prefix
     @Column(nullable = false)
-    private String s3KeyPrefix;
+    private String storageKeyPrefix;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -52,7 +54,7 @@ public class AssetEntity {
                     entity.getName(),
                     entity.getAuthorId(),
                     entity.getStatus(),
-                    entity.getS3KeyPrefix(),
+                    entity.getStorageKeyPrefix(),
                     entity.getCreatedAt()
             );
         }
@@ -64,7 +66,7 @@ public class AssetEntity {
                     asset.getName(),
                     asset.getAuthorId(),
                     asset.getStatus(),
-                    asset.getS3KeyPrefix(),
+                    asset.getStorageKeyPrefix(),
                     asset.getCreatedAt()
             );
         }

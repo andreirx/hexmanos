@@ -89,6 +89,14 @@ Data access MUST follow this 3-part pattern to decouple Domain from Hibernate.
     *   If the database is fresh, start with the Init migration.
     *   If adopting an existing DB, use `V{timestamp}__baseline.sql` and set `spring.flyway.baseline-on-migrate=true`.
 
+### G. Naming Strategy Rules (No Magic Strings)
+1.  **No Manual Mapping:** Never use `@Column(name = "...")` or `@Table(name = "...")`.
+    *   *Reason:* We rely on Spring Boot's default `SpringPhysicalNamingStrategy` (CamelCase -> snake_case).
+2.  **Field Naming:** Java fields must be `camelCase`.
+    *   *Example:* `storageKeyPrefix` (Java) -> `storage_key_prefix` (SQL).
+3.  **Ambiguity:** Avoid variable names starting with numbers or acronyms that confuse the tokenizer (e.g., `s3Key` might map unpredictably). Use semantic names (`storageKey`).
+4.  **SQL Migrations:** Must be written in `snake_case` to match the expected Hibernate output.
+
 ---
 
 # 6. Frontend Coding Standards (React 19)

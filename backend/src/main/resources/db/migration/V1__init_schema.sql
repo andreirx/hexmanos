@@ -7,7 +7,7 @@ CREATE TABLE asset_index (
                              name VARCHAR(255) NOT NULL,
                              author_id VARCHAR(255) NOT NULL,
                              status VARCHAR(50) NOT NULL,
-                             s3_key_prefix VARCHAR(500) NOT NULL,
+                             storage_key_prefix VARCHAR(500) NOT NULL, -- Renamed to match Java
                              created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
