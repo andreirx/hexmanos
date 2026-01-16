@@ -32,6 +32,7 @@ export function PixelCanvas({
   className,
 }: PixelCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(initialZoom)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -40,7 +41,14 @@ export function PixelCanvas({
   const lastPanPoint = useRef({ x: 0, y: 0 })
   const lastDrawnPixel = useRef<{ x: number; y: number } | null>(null)
 
-  const effectivePixelSize = pixelSize * zoom
+  // Initialize offscreen canvas
+  useEffect(() => {
+    if (!offscreenRef.current) {
+      offscreenRef.current = document.createElement("canvas")
+    }
+    offscreenRef.current.width = width
+    offscreenRef.current.height = height
+  }, [width, height])
 
   const getPixelCoords = useCallback(
     (clientX: number, clientY: number) => {
@@ -48,84 +56,81 @@ export function PixelCanvas({
       if (!canvas) return null
 
       const rect = canvas.getBoundingClientRect()
-      const x = Math.floor((clientX - rect.left - pan.x) / effectivePixelSize)
-      const y = Math.floor((clientY - rect.top - pan.y) / effectivePixelSize)
+      // Account for zoom when calculating pixel coordinates
+      const x = Math.floor((clientX - rect.left - pan.x) / zoom)
+      const y = Math.floor((clientY - rect.top - pan.y) / zoom)
 
       if (x >= 0 && x < width && y >= 0 && y < height) {
         return { x, y }
       }
       return null
     },
-    [pan, effectivePixelSize, width, height]
+    [pan, zoom, width, height]
   )
 
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current
+    const offscreen = offscreenRef.current
     const ctx = canvas?.getContext("2d")
-    if (!canvas || !ctx) return
+    const offCtx = offscreen?.getContext("2d")
+    if (!canvas || !ctx || !offscreen || !offCtx) return
 
-    // Disable image smoothing for crisp pixels
-    ctx.imageSmoothingEnabled = false
+    // Step A: Write pixels into offscreen canvas using putImageData (O(1))
+    if (pixels) {
+      const imageData = new ImageData(new Uint8ClampedArray(pixels), width, height)
+      offCtx.putImageData(imageData, 0, 0)
+    } else {
+      offCtx.clearRect(0, 0, width, height)
+    }
 
-    // Clear canvas
+    // Step B: Clear main canvas
     ctx.fillStyle = "#1a1a1a"
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
+    // Step C: Draw offscreen canvas onto main canvas with transform (O(1))
+    ctx.imageSmoothingEnabled = false
     ctx.save()
     ctx.translate(pan.x, pan.y)
+    ctx.scale(zoom, zoom)
+    ctx.drawImage(offscreen, 0, 0)
+    ctx.restore()
 
-    // Draw pixels if provided
-    if (pixels) {
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          const i = (y * width + x) * 4
-          const r = pixels[i]
-          const g = pixels[i + 1]
-          const b = pixels[i + 2]
-          const a = pixels[i + 3]
-
-          if (a > 0) {
-            ctx.fillStyle = `rgba(${r},${g},${b},${a / 255})`
-            ctx.fillRect(
-              x * effectivePixelSize,
-              y * effectivePixelSize,
-              effectivePixelSize,
-              effectivePixelSize
-            )
-          }
-        }
-      }
-    }
-
-    // Draw grid
+    // Draw grid on top (only if zoom > 4)
     if (showGrid && zoom >= 4) {
+      ctx.save()
+      ctx.translate(pan.x, pan.y)
       ctx.strokeStyle = gridColor
       ctx.lineWidth = 1
 
+      // Use a single path for all grid lines (more efficient)
+      ctx.beginPath()
+
       // Vertical lines
       for (let x = 0; x <= width; x++) {
-        ctx.beginPath()
-        ctx.moveTo(x * effectivePixelSize + 0.5, 0)
-        ctx.lineTo(x * effectivePixelSize + 0.5, height * effectivePixelSize)
-        ctx.stroke()
+        const px = x * zoom + 0.5
+        ctx.moveTo(px, 0)
+        ctx.lineTo(px, height * zoom)
       }
 
       // Horizontal lines
       for (let y = 0; y <= height; y++) {
-        ctx.beginPath()
-        ctx.moveTo(0, y * effectivePixelSize + 0.5)
-        ctx.lineTo(width * effectivePixelSize, y * effectivePixelSize + 0.5)
-        ctx.stroke()
+        const py = y * zoom + 0.5
+        ctx.moveTo(0, py)
+        ctx.lineTo(width * zoom, py)
       }
+
+      ctx.stroke()
+      ctx.restore()
     }
 
     // Draw canvas border
+    ctx.save()
+    ctx.translate(pan.x, pan.y)
     ctx.strokeStyle = "#666"
     ctx.lineWidth = 2
-    ctx.strokeRect(0, 0, width * effectivePixelSize, height * effectivePixelSize)
-
+    ctx.strokeRect(0, 0, width * zoom, height * zoom)
     ctx.restore()
-  }, [pixels, width, height, effectivePixelSize, pan, showGrid, gridColor, zoom])
+  }, [pixels, width, height, pan, showGrid, gridColor, zoom])
 
   // Redraw on changes
   useEffect(() => {
@@ -207,8 +212,9 @@ export function PixelCanvas({
     lastDrawnPixel.current = null
   }
 
-  const canvasWidth = Math.max(width * effectivePixelSize + Math.abs(pan.x) * 2, 400)
-  const canvasHeight = Math.max(height * effectivePixelSize + Math.abs(pan.y) * 2, 400)
+  // Calculate canvas size based on zoom and pan
+  const canvasWidth = Math.max(width * zoom + Math.abs(pan.x) * 2, 512)
+  const canvasHeight = Math.max(height * zoom + Math.abs(pan.y) * 2, 512)
 
   return (
     <div
