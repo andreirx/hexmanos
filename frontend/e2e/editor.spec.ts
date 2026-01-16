@@ -1,100 +1,74 @@
 import { test, expect } from "@playwright/test"
 
-test.describe("Editor Page", () => {
+test.describe("Character Editor Page", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/editor")
+    await page.goto("/editor/character")
   })
 
-  test("should display the editor layout", async ({ page }) => {
-    // Check left sidebar tools
-    await expect(page.getByRole("heading", { name: "Tools" })).toBeVisible()
-    await expect(page.getByText("Current Color")).toBeVisible()
-    await expect(page.getByText("Presets")).toBeVisible()
-
-    // Check import section
-    await expect(page.getByRole("heading", { name: "Import" })).toBeVisible()
-    await expect(page.getByRole("button", { name: /Import Image/i })).toBeVisible()
-
-    // Check right sidebar metadata
-    await expect(page.getByRole("heading", { name: "Asset Metadata" })).toBeVisible()
-    await expect(page.getByRole("heading", { name: "Canvas Info" })).toBeVisible()
-
-    // Check canvas info
-    await expect(page.getByText("Size: 32x32 pixels")).toBeVisible()
+  test("should display the header", async ({ page }) => {
+    await expect(page.getByRole("link", { name: "Hexmanos" })).toBeVisible()
+    await expect(page.getByRole("link", { name: "Sign In" })).toBeVisible()
+    await expect(page.getByRole("link", { name: "Sign Up" })).toBeVisible()
   })
 
-  test("should have color picker", async ({ page }) => {
+  test("should display file operations card", async ({ page }) => {
+    await expect(page.getByText("File")).toBeVisible()
+    await expect(page.getByRole("button", { name: /Load Character/i })).toBeVisible()
+    await expect(page.getByRole("button", { name: /New Character/i })).toBeVisible()
+  })
+
+  test("should display animation state selector", async ({ page }) => {
+    await expect(page.getByText("Animation State")).toBeVisible()
+    await expect(page.getByRole("button", { name: "Idle" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Walk Down" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Walk Up" })).toBeVisible()
+  })
+
+  test("should display color picker", async ({ page }) => {
+    await expect(page.getByText("Color")).toBeVisible()
     const colorPicker = page.locator('input[type="color"]')
     await expect(colorPicker).toBeVisible()
     await expect(colorPicker).toHaveValue("#ffffff")
   })
 
-  test("should have asset name input", async ({ page }) => {
-    const nameInput = page.getByPlaceholder("my-character")
+  test("should display character name input", async ({ page }) => {
+    await expect(page.getByText("Character").first()).toBeVisible()
+    const nameInput = page.getByPlaceholder("blue-knight")
     await expect(nameInput).toBeVisible()
-    await expect(nameInput).toHaveValue("")
   })
 
-  test("should have asset type selector", async ({ page }) => {
-    const typeSelect = page.getByRole("combobox")
-    await expect(typeSelect).toBeVisible()
-    await expect(typeSelect).toHaveValue("CHARACTER")
-
-    // Check all options are available
-    await typeSelect.selectOption("TILE")
-    await expect(typeSelect).toHaveValue("TILE")
-
-    await typeSelect.selectOption("MAP")
-    await expect(typeSelect).toHaveValue("MAP")
+  test("should display info card", async ({ page }) => {
+    await expect(page.getByText("Info")).toBeVisible()
+    await expect(page.getByText("Sprite: 32x32px")).toBeVisible()
+    await expect(page.getByText("States: 7")).toBeVisible()
   })
 
-  test("should have clear canvas button", async ({ page }) => {
-    await expect(page.getByRole("button", { name: /Clear Canvas/i })).toBeVisible()
-  })
-
-  test("should have save button disabled without name", async ({ page }) => {
-    const saveButton = page.getByRole("button", { name: /Save Asset/i })
+  test("should display save button", async ({ page }) => {
+    const saveButton = page.getByRole("button", { name: /Save Character/i })
     await expect(saveButton).toBeVisible()
-    await expect(saveButton).toBeDisabled()
   })
 
-  test("should enable save button when name is entered", async ({ page }) => {
-    const nameInput = page.getByPlaceholder("my-character")
-    const saveButton = page.getByRole("button", { name: /Save Asset/i })
-
-    await nameInput.fill("test-asset")
-    await expect(saveButton).toBeEnabled()
+  test("should open character gallery when Load Character clicked", async ({ page }) => {
+    await page.getByRole("button", { name: /Load Character/i }).click()
+    await expect(page.getByText("Character Gallery")).toBeVisible()
   })
 
-  test("should display canvas with instructions", async ({ page }) => {
-    await expect(page.getByText(/Scroll to zoom/i)).toBeVisible()
-    await expect(page.getByText(/Alt\+drag to pan/i)).toBeVisible()
-    await expect(page.getByText(/Click to draw/i)).toBeVisible()
+  test("should close gallery when clicking X button", async ({ page }) => {
+    await page.getByRole("button", { name: /Load Character/i }).click()
+    await expect(page.getByText("Character Gallery")).toBeVisible()
+
+    // Click the X button to close (inside the dialog header)
+    await page.locator(".relative.bg-zinc-800 button").first().click()
+    await expect(page.getByText("Character Gallery")).not.toBeVisible()
   })
 
-  test("should update status to ready when name entered", async ({ page }) => {
-    await expect(page.getByText("Status: Enter a name")).toBeVisible()
+  test("should switch animation states", async ({ page }) => {
+    // Default is Idle
+    await expect(page.getByRole("button", { name: "Idle" })).toHaveClass(/bg-blue-600/)
 
-    await page.getByPlaceholder("my-character").fill("test-asset")
-
-    await expect(page.getByText("Status: Ready to save")).toBeVisible()
-  })
-
-  test("should have color preset buttons", async ({ page }) => {
-    // Check that preset buttons exist (we expect 16 presets)
-    const presetButtons = page.locator("button").filter({ has: page.locator('[style*="background-color"]') })
-    await expect(presetButtons.first()).toBeVisible()
-  })
-
-  test("should change current color when clicking preset", async ({ page }) => {
-    const colorPicker = page.locator('input[type="color"]')
-    const initialColor = await colorPicker.inputValue()
-
-    // Click on a different color preset (black)
-    const blackPreset = page.locator('button[title="#000000"]')
-    await blackPreset.click()
-
-    await expect(colorPicker).toHaveValue("#000000")
-    expect(await colorPicker.inputValue()).not.toBe(initialColor)
+    // Click Walk Down
+    await page.getByRole("button", { name: "Walk Down" }).click()
+    await expect(page.getByRole("button", { name: "Walk Down" })).toHaveClass(/bg-blue-600/)
+    await expect(page.getByRole("button", { name: "Idle" })).not.toHaveClass(/bg-blue-600/)
   })
 })

@@ -8,19 +8,35 @@ test.describe("Home Page", () => {
     await expect(page.getByText("Pixel Art Game Engine")).toBeVisible()
   })
 
-  test("should have link to editor", async ({ page }) => {
+  test("should display the header", async ({ page }) => {
     await page.goto("/")
 
-    const editorLink = page.getByRole("link", { name: "Open Editor" })
-    await expect(editorLink).toBeVisible()
-    await expect(editorLink).toHaveAttribute("href", "/editor")
+    await expect(page.getByRole("link", { name: "Hexmanos" })).toBeVisible()
+    await expect(page.getByRole("link", { name: "Sign In" })).toBeVisible()
+    await expect(page.getByRole("link", { name: "Sign Up" })).toBeVisible()
   })
 
-  test("should navigate to editor when clicking link", async ({ page }) => {
+  test("should have link to character editor", async ({ page }) => {
     await page.goto("/")
 
-    await page.getByRole("link", { name: "Open Editor" }).click()
+    const editorLink = page.getByRole("link", { name: "Character Editor" })
+    await expect(editorLink).toBeVisible()
+    await expect(editorLink).toHaveAttribute("href", "/editor/character")
+  })
 
-    await expect(page).toHaveURL("/editor")
+  test("should have link to tile editor", async ({ page }) => {
+    await page.goto("/")
+
+    const tileLink = page.getByRole("link", { name: "Tile Editor" })
+    await expect(tileLink).toBeVisible()
+    await expect(tileLink).toHaveAttribute("href", "/editor/tile")
+  })
+
+  test("should navigate to character editor when clicking link", async ({ page }) => {
+    await page.goto("/")
+
+    await page.getByRole("link", { name: "Character Editor" }).click()
+
+    await expect(page).toHaveURL("/editor/character")
   })
 })
