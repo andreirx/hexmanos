@@ -29,23 +29,33 @@ public class SecurityConfig {
     @Value("${app.cognito.admin.issuer-uri}")
     private String adminIssuerUri;
 
+    @Value("${app.security.enabled:true}")
+    private boolean securityEnabled;
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf.disable())
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                // Public endpoints
-                .requestMatchers("/actuator/health").permitAll()
-                .requestMatchers("/api/public/**").permitAll()
-                // All other API endpoints require authentication
-                .requestMatchers("/api/**").authenticated()
-                .anyRequest().permitAll()
-            )
-            .oauth2ResourceServer(oauth2 -> oauth2
-                .jwt(jwt -> jwt.decoder(multiIssuerJwtDecoder()))
-            );
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+
+        if (securityEnabled) {
+            http
+                .authorizeHttpRequests(auth -> auth
+                    // Public endpoints
+                    .requestMatchers("/actuator/health").permitAll()
+                    .requestMatchers("/api/public/**").permitAll()
+                    // All other API endpoints require authentication
+                    .requestMatchers("/api/**").authenticated()
+                    .anyRequest().permitAll()
+                )
+                .oauth2ResourceServer(oauth2 -> oauth2
+                    .jwt(jwt -> jwt.decoder(multiIssuerJwtDecoder()))
+                );
+        } else {
+            // WARNING: Local dev only - allow all requests without authentication
+            http.authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
+        }
 
         return http.build();
     }

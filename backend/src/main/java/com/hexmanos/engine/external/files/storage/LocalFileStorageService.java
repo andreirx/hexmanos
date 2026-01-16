@@ -108,6 +108,7 @@ public class LocalFileStorageService implements FileStorageService {
     /**
      * Upload a file to a specific storage key (used for direct uploads).
      */
+    @Override
     public String uploadFileToKey(MultipartFile file, String storageKey) {
         try {
             Path targetPath = fileStorageLocation.resolve(storageKey).normalize();

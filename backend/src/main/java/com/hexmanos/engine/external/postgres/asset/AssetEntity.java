@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.springframework.data.domain.Persistable;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -14,10 +15,12 @@ import java.util.UUID;
 @AllArgsConstructor
 @NoArgsConstructor
 @Table(name = "asset_index")
-public class AssetEntity {
+public class AssetEntity implements Persistable<UUID> {
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
+
+    @Transient
+    private boolean isNew = true;
 
     @Column(nullable = false)
     @Enumerated(EnumType.STRING)
@@ -46,6 +49,17 @@ public class AssetEntity {
         this.createdAt = LocalDateTime.now();
     }
 
+    @PostLoad
+    @PostPersist
+    public void markNotNew() {
+        this.isNew = false;
+    }
+
+    @Override
+    public boolean isNew() {
+        return isNew;
+    }
+
     public interface EntityMapper {
         static Asset fromEntity(AssetEntity entity) {
             return new Asset(
@@ -60,15 +74,16 @@ public class AssetEntity {
         }
 
         static AssetEntity toEntity(Asset asset) {
-            return new AssetEntity(
-                    asset.getId(),
-                    asset.getType(),
-                    asset.getName(),
-                    asset.getAuthorId(),
-                    asset.getStatus(),
-                    asset.getStorageKeyPrefix(),
-                    asset.getCreatedAt()
-            );
+            AssetEntity entity = new AssetEntity();
+            entity.setId(asset.getId());
+            entity.setType(asset.getType());
+            entity.setName(asset.getName());
+            entity.setAuthorId(asset.getAuthorId());
+            entity.setStatus(asset.getStatus());
+            entity.setStorageKeyPrefix(asset.getStorageKeyPrefix());
+            entity.setCreatedAt(asset.getCreatedAt());
+            // Note: isNew is set by repository based on existence check
+            return entity;
         }
     }
 }

@@ -3,12 +3,15 @@ package com.hexmanos.engine.app.controllers;
 import com.hexmanos.engine.app.dtos.AssetDTO;
 import com.hexmanos.engine.app.dtos.PresignedUrlRequest;
 import com.hexmanos.engine.app.dtos.PresignedUrlResponse;
+import com.hexmanos.engine.app.dtos.RegisterAssetRequest;
+import com.hexmanos.engine.app.dtos.RegisterAssetResponse;
 import com.hexmanos.engine.app.dtos.UploadResponse;
 import com.hexmanos.engine.core.asset.Asset;
 import com.hexmanos.engine.core.asset.AssetService;
 import com.hexmanos.engine.core.files.FileStorageService;
 import com.hexmanos.engine.core.files.PresignedUploadUrl;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -18,6 +21,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/assets")
 @RequiredArgsConstructor
@@ -69,6 +73,76 @@ public class AssetController {
             return ResponseEntity.ok(AssetDTO.DTOMapper.toDTO(approved));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * Register an asset after files have been uploaded to storage.
+     *
+     * Flow:
+     * 1. Frontend generates assetId (UUID)
+     * 2. Frontend requests presigned URLs using POST /api/assets/presigned-url
+     * 3. Frontend uploads files directly to S3/local storage
+     * 4. Frontend calls this endpoint to register the asset
+     * 5. Backend validates files exist and creates the asset record
+     *
+     * @param request Contains assetId, type, name, authorId, and list of files to validate
+     * @return RegisterAssetResponse with success status and asset or error details
+     */
+    @PostMapping("/register")
+    public ResponseEntity<RegisterAssetResponse> registerAsset(@RequestBody RegisterAssetRequest request) {
+        // Validate required fields
+        if (request.getAssetId() == null || request.getType() == null ||
+            request.getName() == null || request.getAuthorId() == null ||
+            request.getFiles() == null || request.getFiles().isEmpty()) {
+            return ResponseEntity.badRequest().body(
+                RegisterAssetResponse.builder()
+                    .success(false)
+                    .message("Missing required fields: assetId, type, name, authorId, and files are required")
+                    .build()
+            );
+        }
+
+        // Parse asset type
+        Asset.AssetType assetType;
+        try {
+            assetType = Asset.AssetType.valueOf(request.getType().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(
+                RegisterAssetResponse.builder()
+                    .success(false)
+                    .message("Invalid asset type: " + request.getType() + ". Must be CHARACTER, TILE, or MAP")
+                    .build()
+            );
+        }
+
+        try {
+            Asset registered = assetService.register(
+                request.getAssetId(),
+                assetType,
+                request.getName(),
+                request.getAuthorId(),
+                request.getFiles()
+            );
+
+            log.info("Asset registered successfully: {} ({})", registered.getName(), registered.getId());
+
+            return ResponseEntity.status(HttpStatus.CREATED).body(
+                RegisterAssetResponse.builder()
+                    .success(true)
+                    .message("Asset registered successfully")
+                    .asset(AssetDTO.DTOMapper.toDTO(registered))
+                    .build()
+            );
+        } catch (AssetService.AssetRegistrationException e) {
+            log.warn("Asset registration failed: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
+                RegisterAssetResponse.builder()
+                    .success(false)
+                    .message(e.getMessage())
+                    .missingFiles(e.getMissingFiles())
+                    .build()
+            );
         }
     }
 
@@ -134,11 +208,52 @@ public class AssetController {
 
     /**
      * Check if the uploaded files exist for an asset (used during registration).
+     * The storage key can contain slashes, e.g., "characters/uuid/sprite.png"
      */
-    @GetMapping("/verify/{storageKey}")
-    public ResponseEntity<Boolean> verifyFileExists(@PathVariable String storageKey) {
+    @GetMapping("/verify/**")
+    public ResponseEntity<Boolean> verifyFileExists(jakarta.servlet.http.HttpServletRequest request) {
+        // Extract the storage key from the path after /verify/
+        String fullPath = request.getRequestURI();
+        String storageKey = fullPath.substring(fullPath.indexOf("/verify/") + "/verify/".length());
         boolean exists = fileStorageService.fileExists(storageKey);
         return ResponseEntity.ok(exists);
+    }
+
+    /**
+     * Direct upload endpoint for local development.
+     * In production (S3), clients upload directly via presigned PUT URLs.
+     * For local development, the presigned URL points to this endpoint.
+     *
+     * @param file The file to upload
+     * @param key The storage key (e.g., "characters/uuid/sprite.png")
+     * @return Upload response with the CDN URL
+     */
+    @PostMapping(value = "/upload-direct", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<UploadResponse> uploadFileDirect(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("key") String key) {
+        if (file.isEmpty()) {
+            return ResponseEntity.badRequest().build();
+        }
+        if (key == null || key.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        try {
+            String url = fileStorageService.uploadFileToKey(file, key);
+            log.info("File uploaded directly to key: {}", key);
+
+            UploadResponse response = UploadResponse.builder()
+                    .url(url)
+                    .storageKey(key)
+                    .build();
+
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        } catch (UnsupportedOperationException e) {
+            // S3 storage doesn't support direct upload through backend
+            log.error("Direct upload not supported for current storage type");
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+        }
     }
 
     private boolean isValidAssetType(String assetType) {

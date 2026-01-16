@@ -33,6 +33,12 @@ public class PostgresAssetRepository implements AssetRepository {
 
     @Override
     public Asset save(Asset asset) {
-        return EntityMapper.fromEntity(db.save(EntityMapper.toEntity(asset)));
+        // Check if this is an update or insert
+        boolean exists = asset.getId() != null && db.existsById(asset.getId());
+
+        AssetEntity entity = EntityMapper.toEntity(asset);
+        entity.setNew(!exists); // Mark as new only if it doesn't exist
+
+        return EntityMapper.fromEntity(db.save(entity));
     }
 }

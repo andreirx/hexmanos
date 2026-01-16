@@ -1,8 +1,11 @@
 package com.hexmanos.engine.core.asset;
 
+import com.hexmanos.engine.core.files.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -11,6 +14,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AssetService {
     private final AssetRepository assetRepository;
+    private final FileStorageService fileStorageService;
 
     public List<Asset> getAll() {
         return assetRepository.findAll();
@@ -38,6 +42,69 @@ public class AssetService {
         return assetRepository.save(asset);
     }
 
+    /**
+     * Register an asset after files have been uploaded to storage.
+     * Validates that all required files exist before creating the database record.
+     *
+     * @param assetId The UUID that was used when generating presigned URLs
+     * @param type The asset type (CHARACTER, TILE, MAP)
+     * @param name The display name
+     * @param authorId The Cognito sub of the author
+     * @param files List of filenames to validate (e.g., ["sprite.png", "definition.json"])
+     * @return The created asset
+     * @throws AssetRegistrationException if files are missing or validation fails
+     */
+    public Asset register(UUID assetId, Asset.AssetType type, String name, String authorId, List<String> files) {
+        // Build the storage key prefix based on asset type
+        String assetTypeFolder = getAssetTypeFolder(type);
+        String storageKeyPrefix = assetTypeFolder + "/" + assetId.toString();
+
+        // Validate all required files exist
+        List<String> missingFiles = new ArrayList<>();
+        for (String fileName : files) {
+            String fullKey = storageKeyPrefix + "/" + fileName;
+            if (!fileStorageService.fileExists(fullKey)) {
+                missingFiles.add(fileName);
+            }
+        }
+
+        if (!missingFiles.isEmpty()) {
+            log.error("Asset registration failed - missing files: {} for asset {}", missingFiles, assetId);
+            throw new AssetRegistrationException(
+                "Missing required files: " + String.join(", ", missingFiles),
+                assetId,
+                missingFiles
+            );
+        }
+
+        // Check if asset already exists (prevent duplicates)
+        if (assetRepository.findById(assetId).isPresent()) {
+            log.error("Asset registration failed - asset already exists: {}", assetId);
+            throw new AssetRegistrationException("Asset already exists with ID: " + assetId, assetId, List.of());
+        }
+
+        // Create the asset record
+        Asset asset = new Asset();
+        asset.setId(assetId);
+        asset.setType(type);
+        asset.setName(name);
+        asset.setAuthorId(authorId);
+        asset.setStatus(Asset.AssetStatus.PENDING);
+        asset.setStorageKeyPrefix(storageKeyPrefix);
+        asset.setCreatedAt(LocalDateTime.now());
+
+        log.info("Registering asset {} with {} validated files at {}", name, files.size(), storageKeyPrefix);
+        return assetRepository.save(asset);
+    }
+
+    private String getAssetTypeFolder(Asset.AssetType type) {
+        return switch (type) {
+            case CHARACTER -> "characters";
+            case TILE -> "tiles";
+            case MAP -> "maps";
+        };
+    }
+
     public Asset approve(UUID id) {
         return assetRepository.findById(id)
                 .map(asset -> {
@@ -46,5 +113,27 @@ public class AssetService {
                     return assetRepository.save(asset);
                 })
                 .orElseThrow(() -> new IllegalArgumentException("Asset not found: " + id));
+    }
+
+    /**
+     * Exception thrown when asset registration fails due to missing files or validation errors.
+     */
+    public static class AssetRegistrationException extends RuntimeException {
+        private final UUID assetId;
+        private final List<String> missingFiles;
+
+        public AssetRegistrationException(String message, UUID assetId, List<String> missingFiles) {
+            super(message);
+            this.assetId = assetId;
+            this.missingFiles = missingFiles;
+        }
+
+        public UUID getAssetId() {
+            return assetId;
+        }
+
+        public List<String> getMissingFiles() {
+            return missingFiles;
+        }
     }
 }
