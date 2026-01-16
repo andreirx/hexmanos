@@ -68,5 +68,5 @@ export interface SyncUserRequest {
   cognitoSub: string
   pool: string
   displayName: string
-  email: string
+  email?: string
 }

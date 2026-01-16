@@ -3,7 +3,7 @@ import { PixelCanvas } from "@/features/editor/components/PixelCanvas"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { getPresignedUrl, uploadToPresignedUrl, registerAsset } from "@/api/assets"
-import { getCurrentUser } from "@/api/users"
+import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
 import { Save, Trash2, Image, Check, X } from "lucide-react"
 import type { UserDTO } from "@/api/types"
@@ -26,7 +26,12 @@ export function TileEditorPage() {
   // Sync user with backend when authenticated
   useEffect(() => {
     if (isAuthenticated && authUser) {
-      getCurrentUser()
+      syncUser({
+        cognitoSub: authUser.userId,
+        pool: "PLAYER",
+        displayName: authUser.username,
+        email: authUser.email,
+      })
         .then(setBackendUser)
         .catch((err) => console.error("Failed to sync user:", err))
     }
