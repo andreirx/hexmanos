@@ -41,8 +41,12 @@ export function TileEditorPage() {
     }
   }, [isAuthenticated, authUser])
 
-  const hexToRgba = (hex: string): [number, number, number, number] => {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  // Convert hex color to RGBA tuple, accounting for eraser tool
+  const getCurrentColor = useCallback((): [number, number, number, number] => {
+    if (currentTool === "eraser") {
+      return [0, 0, 0, 0] // Transparent for eraser
+    }
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(currentColor)
     if (result) {
       return [
         parseInt(result[1], 16),
@@ -52,79 +56,12 @@ export function TileEditorPage() {
       ]
     }
     return [255, 255, 255, 255]
-  }
+  }, [currentColor, currentTool])
 
-  // Draw a single pixel with current tool
-  const drawPixel = useCallback(
-    (pixelArray: Uint8ClampedArray, x: number, y: number) => {
-      if (x < 0 || x >= TILE_SIZE || y < 0 || y >= TILE_SIZE) return
-      const i = (y * TILE_SIZE + x) * 4
-      if (currentTool === "eraser") {
-        pixelArray[i] = 0
-        pixelArray[i + 1] = 0
-        pixelArray[i + 2] = 0
-        pixelArray[i + 3] = 0
-      } else {
-        const [r, g, b, a] = hexToRgba(currentColor)
-        pixelArray[i] = r
-        pixelArray[i + 1] = g
-        pixelArray[i + 2] = b
-        pixelArray[i + 3] = a
-      }
-    },
-    [currentColor, currentTool]
-  )
-
-  // Bresenham's line algorithm
-  const drawLine = useCallback(
-    (pixelArray: Uint8ClampedArray, x0: number, y0: number, x1: number, y1: number) => {
-      const dx = Math.abs(x1 - x0)
-      const dy = Math.abs(y1 - y0)
-      const sx = x0 < x1 ? 1 : -1
-      const sy = y0 < y1 ? 1 : -1
-      let err = dx - dy
-
-      let x = x0
-      let y = y0
-
-      while (true) {
-        drawPixel(pixelArray, x, y)
-        if (x === x1 && y === y1) break
-        const e2 = 2 * err
-        if (e2 > -dy) {
-          err -= dy
-          x += sx
-        }
-        if (e2 < dx) {
-          err += dx
-          y += sy
-        }
-      }
-    },
-    [drawPixel]
-  )
-
-  const handlePixelDraw = useCallback(
-    (x: number, y: number) => {
-      setPixels((prev) => {
-        const newPixels = new Uint8ClampedArray(prev)
-        drawPixel(newPixels, x, y)
-        return newPixels
-      })
-    },
-    [drawPixel]
-  )
-
-  const handleLineDraw = useCallback(
-    (x0: number, y0: number, x1: number, y1: number) => {
-      setPixels((prev) => {
-        const newPixels = new Uint8ClampedArray(prev)
-        drawLine(newPixels, x0, y0, x1, y1)
-        return newPixels
-      })
-    },
-    [drawLine]
-  )
+  // Called by PixelCanvas on mouseup - commits the drawn pixels to React state
+  const handleCommit = useCallback((newPixels: Uint8ClampedArray) => {
+    setPixels(newPixels)
+  }, [])
 
   const handleClear = () => {
     setPixels(new Uint8ClampedArray(TILE_SIZE * TILE_SIZE * 4))
@@ -415,8 +352,8 @@ export function TileEditorPage() {
             width={TILE_SIZE}
             height={TILE_SIZE}
             pixels={pixels}
-            onPixelDraw={handlePixelDraw}
-            onLineDraw={handleLineDraw}
+            color={getCurrentColor()}
+            onCommit={handleCommit}
             initialZoom={4}
             className="rounded"
           />

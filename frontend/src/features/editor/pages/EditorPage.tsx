@@ -163,8 +163,12 @@ export function EditorPage() {
   const currentFrames = animationData[currentState].frames
   const currentFrame = currentFrames[currentFrameIndex] || currentFrames[0]
 
-  const hexToRgba = (hex: string): [number, number, number, number] => {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  // Convert hex color to RGBA tuple, accounting for eraser tool
+  const getCurrentColor = useCallback((): [number, number, number, number] => {
+    if (currentTool === "eraser") {
+      return [0, 0, 0, 0] // Transparent for eraser
+    }
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(currentColor)
     if (result) {
       return [
         parseInt(result[1], 16),
@@ -174,86 +178,20 @@ export function EditorPage() {
       ]
     }
     return [255, 255, 255, 255]
-  }
+  }, [currentColor, currentTool])
 
-  // Draw a single pixel with current tool
-  const drawPixel = useCallback(
-    (pixels: Uint8ClampedArray, x: number, y: number) => {
-      if (x < 0 || x >= CANVAS_SIZE || y < 0 || y >= CANVAS_SIZE) return
-      const i = (y * CANVAS_SIZE + x) * 4
-      if (currentTool === "eraser") {
-        pixels[i] = 0
-        pixels[i + 1] = 0
-        pixels[i + 2] = 0
-        pixels[i + 3] = 0
-      } else {
-        const [r, g, b, a] = hexToRgba(currentColor)
-        pixels[i] = r
-        pixels[i + 1] = g
-        pixels[i + 2] = b
-        pixels[i + 3] = a
-      }
-    },
-    [currentColor, currentTool]
-  )
-
-  // Bresenham's line algorithm
-  const drawLine = useCallback(
-    (pixels: Uint8ClampedArray, x0: number, y0: number, x1: number, y1: number) => {
-      const dx = Math.abs(x1 - x0)
-      const dy = Math.abs(y1 - y0)
-      const sx = x0 < x1 ? 1 : -1
-      const sy = y0 < y1 ? 1 : -1
-      let err = dx - dy
-
-      let x = x0
-      let y = y0
-
-      while (true) {
-        drawPixel(pixels, x, y)
-        if (x === x1 && y === y1) break
-        const e2 = 2 * err
-        if (e2 > -dy) {
-          err -= dy
-          x += sx
-        }
-        if (e2 < dx) {
-          err += dx
-          y += sy
-        }
-      }
-    },
-    [drawPixel]
-  )
-
-  const handlePixelDraw = useCallback(
-    (x: number, y: number) => {
+  // Called by PixelCanvas on mouseup - commits the drawn pixels to React state
+  const handleCommit = useCallback(
+    (newPixels: Uint8ClampedArray) => {
       setAnimationData((prev) => {
         const newData = { ...prev }
         const newFrames = [...newData[currentState].frames]
-        const newPixels = new Uint8ClampedArray(newFrames[currentFrameIndex].pixels)
-        drawPixel(newPixels, x, y)
         newFrames[currentFrameIndex] = { pixels: newPixels }
         newData[currentState] = { frames: newFrames }
         return newData
       })
     },
-    [currentState, currentFrameIndex, drawPixel]
-  )
-
-  const handleLineDraw = useCallback(
-    (x0: number, y0: number, x1: number, y1: number) => {
-      setAnimationData((prev) => {
-        const newData = { ...prev }
-        const newFrames = [...newData[currentState].frames]
-        const newPixels = new Uint8ClampedArray(newFrames[currentFrameIndex].pixels)
-        drawLine(newPixels, x0, y0, x1, y1)
-        newFrames[currentFrameIndex] = { pixels: newPixels }
-        newData[currentState] = { frames: newFrames }
-        return newData
-      })
-    },
-    [currentState, currentFrameIndex, drawLine]
+    [currentState, currentFrameIndex]
   )
 
   const handleClearFrame = () => {
@@ -727,8 +665,8 @@ export function EditorPage() {
               width={CANVAS_SIZE}
               height={CANVAS_SIZE}
               pixels={currentFrame.pixels}
-              onPixelDraw={handlePixelDraw}
-              onLineDraw={handleLineDraw}
+              color={getCurrentColor()}
+              onCommit={handleCommit}
               initialZoom={4}
               className="rounded"
             />
