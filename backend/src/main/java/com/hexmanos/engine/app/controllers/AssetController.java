@@ -1,10 +1,13 @@
 package com.hexmanos.engine.app.controllers;
 
 import com.hexmanos.engine.app.dtos.AssetDTO;
+import com.hexmanos.engine.app.dtos.PresignedUrlRequest;
+import com.hexmanos.engine.app.dtos.PresignedUrlResponse;
 import com.hexmanos.engine.app.dtos.UploadResponse;
 import com.hexmanos.engine.core.asset.Asset;
 import com.hexmanos.engine.core.asset.AssetService;
 import com.hexmanos.engine.core.files.FileStorageService;
+import com.hexmanos.engine.core.files.PresignedUploadUrl;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -92,5 +95,55 @@ public class AssetController {
         // S3: https://bucket.s3.amazonaws.com/prefix/filename.png -> filename.png
         int lastSlash = url.lastIndexOf('/');
         return lastSlash >= 0 ? url.substring(lastSlash + 1) : url;
+    }
+
+    /**
+     * Generate a presigned URL for direct client-to-storage upload.
+     * This allows the frontend to upload files directly to S3/local storage
+     * without proxying through the backend.
+     */
+    @PostMapping("/presigned-url")
+    public ResponseEntity<PresignedUrlResponse> generatePresignedUrl(@RequestBody PresignedUrlRequest request) {
+        // Validate request
+        if (request.getAssetType() == null || request.getAssetId() == null ||
+            request.getFileName() == null || request.getContentType() == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        // Validate asset type
+        if (!isValidAssetType(request.getAssetType())) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        PresignedUploadUrl presignedUrl = fileStorageService.generatePresignedUploadUrl(
+                request.getAssetType(),
+                request.getAssetId(),
+                request.getFileName(),
+                request.getContentType()
+        );
+
+        PresignedUrlResponse response = PresignedUrlResponse.builder()
+                .uploadUrl(presignedUrl.uploadUrl())
+                .storageKey(presignedUrl.storageKey())
+                .httpMethod(presignedUrl.httpMethod())
+                .expiresInSeconds(presignedUrl.expiresInSeconds())
+                .build();
+
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Check if the uploaded files exist for an asset (used during registration).
+     */
+    @GetMapping("/verify/{storageKey}")
+    public ResponseEntity<Boolean> verifyFileExists(@PathVariable String storageKey) {
+        boolean exists = fileStorageService.fileExists(storageKey);
+        return ResponseEntity.ok(exists);
+    }
+
+    private boolean isValidAssetType(String assetType) {
+        return "characters".equals(assetType) ||
+               "tiles".equals(assetType) ||
+               "maps".equals(assetType);
     }
 }

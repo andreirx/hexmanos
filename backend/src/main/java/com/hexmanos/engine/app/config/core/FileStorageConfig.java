@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 @Slf4j
 @Configuration
@@ -18,9 +19,11 @@ public class FileStorageConfig {
 
     @Bean
     @ConditionalOnProperty(name = "app.storage.type", havingValue = "local")
-    FileStorageService localFileStorageService(@Value("${app.storage.local.dir}") String uploadDir) {
+    FileStorageService localFileStorageService(
+            @Value("${app.storage.local.dir}") String uploadDir,
+            @Value("${app.base-url:http://localhost:8080}") String baseUrl) {
         log.info("Initializing Local File Storage: {}", uploadDir);
-        return new LocalFileStorageService(uploadDir);
+        return new LocalFileStorageService(uploadDir, baseUrl);
     }
 
     @Bean
@@ -30,10 +33,19 @@ public class FileStorageConfig {
             @Value("${app.storage.aws.prefix}") String prefix,
             @Value("${aws.region}") String region) {
         log.info("Initializing S3 File Storage: {}/{}", bucketName, prefix);
+
+        Region awsRegion = Region.of(region);
+
         S3Client s3Client = S3Client.builder()
-                .region(Region.of(region))
+                .region(awsRegion)
                 .credentialsProvider(DefaultCredentialsProvider.create())
                 .build();
-        return new S3FileStorageService(s3Client, bucketName, prefix);
+
+        S3Presigner s3Presigner = S3Presigner.builder()
+                .region(awsRegion)
+                .credentialsProvider(DefaultCredentialsProvider.create())
+                .build();
+
+        return new S3FileStorageService(s3Client, s3Presigner, bucketName, prefix);
     }
 }

@@ -22,3 +22,17 @@ export interface UploadResponse {
   url: string
   storageKey: string
 }
+
+export interface PresignedUrlRequest {
+  assetType: "characters" | "tiles" | "maps"
+  assetId: string
+  fileName: string
+  contentType: string
+}
+
+export interface PresignedUrlResponse {
+  uploadUrl: string
+  storageKey: string
+  httpMethod: string
+  expiresInSeconds: number
+}
