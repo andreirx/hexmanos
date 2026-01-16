@@ -28,7 +28,7 @@ test.describe("Tile Editor Page", () => {
 
   test("should display tile info", async ({ page }) => {
     await expect(page.getByText("Tile Info")).toBeVisible()
-    await expect(page.getByText("Size: 32x32 pixels")).toBeVisible()
+    await expect(page.getByText("Size: 128x128 pixels")).toBeVisible()
     await expect(page.getByText("Format: PNG")).toBeVisible()
   })
 

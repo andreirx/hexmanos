@@ -11,6 +11,7 @@ interface PixelCanvasProps {
   showGrid?: boolean
   onPixelClick?: (x: number, y: number) => void
   onPixelDraw?: (x: number, y: number) => void
+  onLineDraw?: (x0: number, y0: number, x1: number, y1: number) => void
   pixels?: Uint8ClampedArray
   className?: string
 }
@@ -26,6 +27,7 @@ export function PixelCanvas({
   showGrid = true,
   onPixelClick,
   onPixelDraw,
+  onLineDraw,
   pixels,
   className,
 }: PixelCanvasProps) {
@@ -36,6 +38,7 @@ export function PixelCanvas({
   const [isDrawing, setIsDrawing] = useState(false)
   const [isPanning, setIsPanning] = useState(false)
   const lastPanPoint = useRef({ x: 0, y: 0 })
+  const lastDrawnPixel = useRef<{ x: number; y: number } | null>(null)
 
   const effectivePixelSize = pixelSize * zoom
 
@@ -163,6 +166,7 @@ export function PixelCanvas({
       if (coords) {
         onPixelClick?.(coords.x, coords.y)
         onPixelDraw?.(coords.x, coords.y)
+        lastDrawnPixel.current = coords
       }
     }
   }
@@ -176,7 +180,17 @@ export function PixelCanvas({
     } else if (isDrawing) {
       const coords = getPixelCoords(e.clientX, e.clientY)
       if (coords) {
-        onPixelDraw?.(coords.x, coords.y)
+        // If we have a line draw callback and a previous point, draw a line
+        if (onLineDraw && lastDrawnPixel.current) {
+          const prev = lastDrawnPixel.current
+          if (prev.x !== coords.x || prev.y !== coords.y) {
+            onLineDraw(prev.x, prev.y, coords.x, coords.y)
+          }
+        } else {
+          // Fallback to single pixel draw
+          onPixelDraw?.(coords.x, coords.y)
+        }
+        lastDrawnPixel.current = coords
       }
     }
   }
@@ -184,11 +198,13 @@ export function PixelCanvas({
   const handleMouseUp = () => {
     setIsDrawing(false)
     setIsPanning(false)
+    lastDrawnPixel.current = null
   }
 
   const handleMouseLeave = () => {
     setIsDrawing(false)
     setIsPanning(false)
+    lastDrawnPixel.current = null
   }
 
   const canvasWidth = Math.max(width * effectivePixelSize + Math.abs(pan.x) * 2, 400)

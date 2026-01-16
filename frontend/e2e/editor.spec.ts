@@ -39,7 +39,7 @@ test.describe("Character Editor Page", () => {
 
   test("should display info card", async ({ page }) => {
     await expect(page.getByText("Info")).toBeVisible()
-    await expect(page.getByText("Sprite: 32x32px")).toBeVisible()
+    await expect(page.getByText("Sprite: 128x128px")).toBeVisible()
     await expect(page.getByText("States: 7")).toBeVisible()
   })
 

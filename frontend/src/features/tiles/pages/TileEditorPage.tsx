@@ -6,10 +6,12 @@ import { Header } from "@/components/layout"
 import { getPresignedUrl, uploadToPresignedUrl, registerAsset } from "@/api/assets"
 import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
-import { Save, Trash2, Image, Check, X } from "lucide-react"
+import { Save, Trash2, Image, Check, X, Pencil, Eraser } from "lucide-react"
 import type { UserDTO } from "@/api/types"
 
-const TILE_SIZE = 32
+const TILE_SIZE = 128
+
+type Tool = "pencil" | "eraser"
 
 export function TileEditorPage() {
   const { isAuthenticated, user: authUser } = useAuth()
@@ -17,6 +19,7 @@ export function TileEditorPage() {
     () => new Uint8ClampedArray(TILE_SIZE * TILE_SIZE * 4)
   )
   const [currentColor, setCurrentColor] = useState("#ffffff")
+  const [currentTool, setCurrentTool] = useState<Tool>("pencil")
   const [tileName, setTileName] = useState("")
   const [passable, setPassable] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
@@ -51,20 +54,76 @@ export function TileEditorPage() {
     return [255, 255, 255, 255]
   }
 
+  // Draw a single pixel with current tool
+  const drawPixel = useCallback(
+    (pixelArray: Uint8ClampedArray, x: number, y: number) => {
+      if (x < 0 || x >= TILE_SIZE || y < 0 || y >= TILE_SIZE) return
+      const i = (y * TILE_SIZE + x) * 4
+      if (currentTool === "eraser") {
+        pixelArray[i] = 0
+        pixelArray[i + 1] = 0
+        pixelArray[i + 2] = 0
+        pixelArray[i + 3] = 0
+      } else {
+        const [r, g, b, a] = hexToRgba(currentColor)
+        pixelArray[i] = r
+        pixelArray[i + 1] = g
+        pixelArray[i + 2] = b
+        pixelArray[i + 3] = a
+      }
+    },
+    [currentColor, currentTool]
+  )
+
+  // Bresenham's line algorithm
+  const drawLine = useCallback(
+    (pixelArray: Uint8ClampedArray, x0: number, y0: number, x1: number, y1: number) => {
+      const dx = Math.abs(x1 - x0)
+      const dy = Math.abs(y1 - y0)
+      const sx = x0 < x1 ? 1 : -1
+      const sy = y0 < y1 ? 1 : -1
+      let err = dx - dy
+
+      let x = x0
+      let y = y0
+
+      while (true) {
+        drawPixel(pixelArray, x, y)
+        if (x === x1 && y === y1) break
+        const e2 = 2 * err
+        if (e2 > -dy) {
+          err -= dy
+          x += sx
+        }
+        if (e2 < dx) {
+          err += dx
+          y += sy
+        }
+      }
+    },
+    [drawPixel]
+  )
+
   const handlePixelDraw = useCallback(
     (x: number, y: number) => {
       setPixels((prev) => {
         const newPixels = new Uint8ClampedArray(prev)
-        const i = (y * TILE_SIZE + x) * 4
-        const [r, g, b, a] = hexToRgba(currentColor)
-        newPixels[i] = r
-        newPixels[i + 1] = g
-        newPixels[i + 2] = b
-        newPixels[i + 3] = a
+        drawPixel(newPixels, x, y)
         return newPixels
       })
     },
-    [currentColor]
+    [drawPixel]
+  )
+
+  const handleLineDraw = useCallback(
+    (x0: number, y0: number, x1: number, y1: number) => {
+      setPixels((prev) => {
+        const newPixels = new Uint8ClampedArray(prev)
+        drawLine(newPixels, x0, y0, x1, y1)
+        return newPixels
+      })
+    },
+    [drawLine]
   )
 
   const handleClear = () => {
@@ -256,6 +315,31 @@ export function TileEditorPage() {
             <CardTitle className="text-sm text-zinc-300">Tools</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCurrentTool("pencil")}
+                className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                  currentTool === "pencil"
+                    ? "bg-blue-600 text-white"
+                    : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                }`}
+              >
+                <Pencil className="w-4 h-4" />
+                Pencil
+              </button>
+              <button
+                onClick={() => setCurrentTool("eraser")}
+                className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                  currentTool === "eraser"
+                    ? "bg-blue-600 text-white"
+                    : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                }`}
+              >
+                <Eraser className="w-4 h-4" />
+                Eraser
+              </button>
+            </div>
+
             <div>
               <label className="text-xs text-zinc-400 block mb-2">Current Color</label>
               <div className="flex items-center gap-2">
@@ -302,14 +386,14 @@ export function TileEditorPage() {
             />
             <Button
               variant="outline"
-              className="w-full border-zinc-600 hover:bg-zinc-700"
+              className="w-full bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
               onClick={handleImportClick}
             >
               <Image className="w-4 h-4 mr-2" />
               Import Image
             </Button>
             <p className="text-xs text-zinc-500 mt-2">
-              Scales to 32x32 using nearest-neighbor
+              Scales to {TILE_SIZE}x{TILE_SIZE} using nearest-neighbor
             </p>
           </CardContent>
         </Card>
@@ -332,7 +416,8 @@ export function TileEditorPage() {
             height={TILE_SIZE}
             pixels={pixels}
             onPixelDraw={handlePixelDraw}
-            initialZoom={12}
+            onLineDraw={handleLineDraw}
+            initialZoom={4}
             className="rounded"
           />
           <div className="mt-2 text-center text-xs text-zinc-500">

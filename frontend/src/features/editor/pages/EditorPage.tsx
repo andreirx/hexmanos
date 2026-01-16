@@ -7,7 +7,7 @@ import { Header } from "@/components/layout"
 import { getPresignedUrl, uploadToPresignedUrl, registerAsset, getAssetFile, loadAssetImage } from "@/api/assets"
 import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
-import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, FilePlus } from "lucide-react"
+import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, FilePlus, Pencil, Eraser } from "lucide-react"
 import type { UserDTO, AssetDTO } from "@/api/types"
 
 // Character definition structure from JSON
@@ -17,7 +17,9 @@ interface CharacterDefinition {
   states: Record<string, { frames: number; loop: boolean }>
 }
 
-const CANVAS_SIZE = 32
+const CANVAS_SIZE = 128
+
+type Tool = "pencil" | "eraser"
 
 // Animation state definitions
 const ANIMATION_STATES = [
@@ -60,6 +62,7 @@ export function EditorPage() {
   const [currentState, setCurrentState] = useState<AnimationStateId>("idle")
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0)
   const [currentColor, setCurrentColor] = useState("#ffffff")
+  const [currentTool, setCurrentTool] = useState<Tool>("pencil")
   const [characterName, setCharacterName] = useState("")
   const [isSaving, setIsSaving] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -173,24 +176,84 @@ export function EditorPage() {
     return [255, 255, 255, 255]
   }
 
+  // Draw a single pixel with current tool
+  const drawPixel = useCallback(
+    (pixels: Uint8ClampedArray, x: number, y: number) => {
+      if (x < 0 || x >= CANVAS_SIZE || y < 0 || y >= CANVAS_SIZE) return
+      const i = (y * CANVAS_SIZE + x) * 4
+      if (currentTool === "eraser") {
+        pixels[i] = 0
+        pixels[i + 1] = 0
+        pixels[i + 2] = 0
+        pixels[i + 3] = 0
+      } else {
+        const [r, g, b, a] = hexToRgba(currentColor)
+        pixels[i] = r
+        pixels[i + 1] = g
+        pixels[i + 2] = b
+        pixels[i + 3] = a
+      }
+    },
+    [currentColor, currentTool]
+  )
+
+  // Bresenham's line algorithm
+  const drawLine = useCallback(
+    (pixels: Uint8ClampedArray, x0: number, y0: number, x1: number, y1: number) => {
+      const dx = Math.abs(x1 - x0)
+      const dy = Math.abs(y1 - y0)
+      const sx = x0 < x1 ? 1 : -1
+      const sy = y0 < y1 ? 1 : -1
+      let err = dx - dy
+
+      let x = x0
+      let y = y0
+
+      while (true) {
+        drawPixel(pixels, x, y)
+        if (x === x1 && y === y1) break
+        const e2 = 2 * err
+        if (e2 > -dy) {
+          err -= dy
+          x += sx
+        }
+        if (e2 < dx) {
+          err += dx
+          y += sy
+        }
+      }
+    },
+    [drawPixel]
+  )
+
   const handlePixelDraw = useCallback(
     (x: number, y: number) => {
       setAnimationData((prev) => {
         const newData = { ...prev }
         const newFrames = [...newData[currentState].frames]
         const newPixels = new Uint8ClampedArray(newFrames[currentFrameIndex].pixels)
-        const i = (y * CANVAS_SIZE + x) * 4
-        const [r, g, b, a] = hexToRgba(currentColor)
-        newPixels[i] = r
-        newPixels[i + 1] = g
-        newPixels[i + 2] = b
-        newPixels[i + 3] = a
+        drawPixel(newPixels, x, y)
         newFrames[currentFrameIndex] = { pixels: newPixels }
         newData[currentState] = { frames: newFrames }
         return newData
       })
     },
-    [currentColor, currentState, currentFrameIndex]
+    [currentState, currentFrameIndex, drawPixel]
+  )
+
+  const handleLineDraw = useCallback(
+    (x0: number, y0: number, x1: number, y1: number) => {
+      setAnimationData((prev) => {
+        const newData = { ...prev }
+        const newFrames = [...newData[currentState].frames]
+        const newPixels = new Uint8ClampedArray(newFrames[currentFrameIndex].pixels)
+        drawLine(newPixels, x0, y0, x1, y1)
+        newFrames[currentFrameIndex] = { pixels: newPixels }
+        newData[currentState] = { frames: newFrames }
+        return newData
+      })
+    },
+    [currentState, currentFrameIndex, drawLine]
   )
 
   const handleClearFrame = () => {
@@ -527,7 +590,7 @@ export function EditorPage() {
           <CardContent className="space-y-2">
             <Button
               variant="outline"
-              className="w-full border-zinc-600 hover:bg-zinc-700"
+              className="w-full bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
               onClick={() => setIsGalleryOpen(true)}
             >
               <FolderOpen className="w-4 h-4 mr-2" />
@@ -535,7 +598,7 @@ export function EditorPage() {
             </Button>
             <Button
               variant="outline"
-              className="w-full border-zinc-600 hover:bg-zinc-700"
+              className="w-full bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
               onClick={handleNewCharacter}
             >
               <FilePlus className="w-4 h-4 mr-2" />
@@ -569,6 +632,36 @@ export function EditorPage() {
                 </span>
               </button>
             ))}
+          </CardContent>
+        </Card>
+
+        <Card className="bg-zinc-800 border-zinc-700">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-zinc-300">Tools</CardTitle>
+          </CardHeader>
+          <CardContent className="flex gap-2">
+            <button
+              onClick={() => setCurrentTool("pencil")}
+              className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                currentTool === "pencil"
+                  ? "bg-blue-600 text-white"
+                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+              }`}
+            >
+              <Pencil className="w-4 h-4" />
+              Pencil
+            </button>
+            <button
+              onClick={() => setCurrentTool("eraser")}
+              className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                currentTool === "eraser"
+                  ? "bg-blue-600 text-white"
+                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+              }`}
+            >
+              <Eraser className="w-4 h-4" />
+              Eraser
+            </button>
           </CardContent>
         </Card>
 
@@ -616,7 +709,7 @@ export function EditorPage() {
             />
             <Button
               variant="outline"
-              className="w-full border-zinc-600 hover:bg-zinc-700"
+              className="w-full bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
               onClick={handleImportClick}
             >
               <Image className="w-4 h-4 mr-2" />
@@ -635,7 +728,8 @@ export function EditorPage() {
               height={CANVAS_SIZE}
               pixels={currentFrame.pixels}
               onPixelDraw={handlePixelDraw}
-              initialZoom={12}
+              onLineDraw={handleLineDraw}
+              initialZoom={4}
               className="rounded"
             />
           </div>
@@ -649,26 +743,26 @@ export function EditorPage() {
               {stateInfo?.loop && " (Loop)"}
             </div>
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={handleAddFrame} title="Add Frame">
+              <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleAddFrame} title="Add Frame">
                 <Plus className="w-4 h-4" />
               </Button>
-              <Button size="sm" variant="outline" onClick={handleDuplicateFrame} title="Duplicate">
+              <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleDuplicateFrame} title="Duplicate">
                 <Copy className="w-4 h-4" />
               </Button>
-              <Button size="sm" variant="outline" onClick={handleDeleteFrame} title="Delete Frame">
+              <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleDeleteFrame} title="Delete Frame">
                 <Trash2 className="w-4 h-4" />
               </Button>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={handlePrevFrame}>
+            <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handlePrevFrame}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
-            <Button size="sm" variant="outline" onClick={togglePlayback}>
+            <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={togglePlayback}>
               {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             </Button>
-            <Button size="sm" variant="outline" onClick={handleNextFrame}>
+            <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleNextFrame}>
               <ChevronRight className="w-4 h-4" />
             </Button>
 
@@ -740,7 +834,7 @@ export function EditorPage() {
           <CardContent className="space-y-2">
             <Button
               variant="outline"
-              className="w-full border-zinc-600 hover:bg-zinc-700"
+              className="w-full bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
               onClick={handleClearFrame}
             >
               <Trash2 className="w-4 h-4 mr-2" />
