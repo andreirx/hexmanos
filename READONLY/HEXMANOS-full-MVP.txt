@@ -1,0 +1,877 @@
+
+### 1. The Physics Constants (The "Grid")
+*   **Sprite Resolution:** `32x32` pixels.
+    *   *Why:* 16x16 is too abstract for kids; 64x64 takes too long to draw. 32x32 is the industry standard for this genre (e.g., Stardew Valley).
+*   **Tile Resolution:** `32x32` pixels (1:1 with Sprites).
+*   **Map Coordinate System:** Integer-based `(x, y)` where 1 unit = 32 pixels.
+*   **Canvas Zoom:** Client-side scaling (e.g., 2x or 3x) to make the 32px sprites look chunky on modern monitors.
+
+### 2. The Animation Schema
+We need a **Fixed State Machine** so the game engine knows what to play when.
+*   **Schema:**
+    *   `IDLE` (Required, Loop, Suggest 2-4 frames)
+    *   `WALK` (Required, Loop, Suggest 4-8 frames)
+    *   `ACTION_BUILD` (Optional, Loop, e.g., hammering)
+    *   `ACTION_ATTACK` (Optional, One-shot)
+*   **Frame Policy:** **Flexible Count**.
+    *   *Why:* Forcing exactly 4 frames limits creativity. Supporting `min: 1, max: 8` allows for simple or smooth animations. The engine simply cycles `currentFrame % totalFrames`.
+
+### 3. The Map Layering (MVP)
+*   **Layering:** **Dual Layer**.
+    *   **Layer 0 (Ground):** Grass, Dirt, Water (Must exist).
+    *   **Layer 1 (Object):** Trees, Walls, Buildings (Optional, sitting on top).
+    *   *Collision Logic:* Defined on the Tile metadata. If Layer 1 exists and is `collidable: true`, the cell is blocked.
+    *   *Why:* Single layer is too restrictive (can't put a flower on grass). Dual layer is the minimum viable for a "Base Building" feeling.
+
+### 4. Authentication & Identity
+*   **Strategy:** **Cognito for All**.
+    *   *Why:* You mentioned "progression over days" and "accumulating money/recruits". This requires persistent identity. Guest accounts lose data when cookies clear.
+    *   *Flow:* Simple Sign-up (Username/Password). No email verification for MVP (reduce friction), but the Identity Record exists in AWS.
+
+### 5. Asset Library Scope
+*   **Scope:** **Global Public Library**.
+    *   *Flow:* User submits -> Admin Approves -> Asset is available to **everyone** in the "Marketplace".
+    *   *Why:* This creates a network effect. If Kid A makes a cool tank, Kid B wants to use it. This incentivizes content creation.
+
+### 6. Component Architecture Answers
+*   **Navigation:** **Single SPA**.
+    *   Sidebar/Top Nav: `Play`, `Workshop`, `Admin` (Protected).
+    *   State is preserved as you switch tabs (e.g., keeping the editor open while checking a game).
+*   **Code Sharing:** **Strict Reuse**.
+    *   The `<PixelCanvas />` component will be used in:
+        1.  Character Editor (Animation timeline injects the frame).
+        2.  Tile Editor (Single frame).
+        3.  Map Editor (Used as a "Palette" selector, but drawing logic differs).
+*   **Chat:** **Yes, Included**.
+    *   It comes "for free" with the WebSocket payload. Type: `CHAT_MESSAGE`.
+
+---
+
+### The Resulting Data Model (The Contract)
+
+If you agree with the above, this is the Database Schema we will implement in Postgres.
+
+**Table: `assets`**
+```sql
+id          UUID PRIMARY KEY
+type        VARCHAR (CHARACTER, TILE_GROUND, TILE_OBJECT)
+name        VARCHAR
+author_id   VARCHAR (Cognito Sub)
+status      VARCHAR (PENDING, APPROVED, REJECTED)
+metadata    JSONB 
+            -- For Char: { "states": { "idle": [s3_url_1, s3_url_2], "walk": [...] } }
+            -- For Tile: { "collidable": boolean }
+created_at  TIMESTAMP
+```
+
+**Table: `games`**
+```sql
+id          VARCHAR (e.g., 'TR4X-99') PRIMARY KEY
+host_id     VARCHAR (Cognito Sub)
+map_data    JSONB -- Snapshot of the map layout (2D Array of Asset IDs)
+state       JSONB -- Current global resources (Money, etc)
+is_active   BOOLEAN
+```
+
+**Table: `game_players` (Join Table)**
+```sql
+game_id     VARCHAR
+user_id     VARCHAR
+position_x  INT
+position_y  INT
+inventory   JSONB -- Their recruits/items
+```
+
+---
+
+**Step-by-step Execution Plan:**
+
+1.  **Phase 1: The Workshop (Frontend Only)**
+    *   Build the Pixel Editor.
+    *   Implement the "Auto-Scale" import logic.
+    *   Implement the JSON generation for the Animation Schema.
+2.  **Phase 2: The Warehouse (Backend)**
+    *   Spring Boot + Postgres + S3.
+    *   Endpoints to POST assets and GET approved lists.
+    *   Admin Moderation API.
+3.  **Phase 3: The Lobby & Auth**
+    *   Cognito integration.
+    *   Game Session creation endpoints.
+4.  **Phase 4: The Game Loop**
+    *   WebSocket integration.
+    *   Phaser 3 Game Client.
+    *   Synchronization logic.
+
+BUT I HAD SOMETHING TO SAY: why would we put JSONB inside the database for the sprites and the maps instead of making specific formats - maybe JSON yeah - BUT AGAIN WHY STORE THEM IN THE DATABASE when I say game library now I have to pray that the database never fails? why no simple file storage for the game library and just have the paths in the database?
+
+This is the **"Pointer Pattern"** architecture.
+
+### Why this is superior
+1.  **Immutability:** Once a version of an asset is written to S3, it is a file. It doesn't care about Postgres transaction limits.
+2.  **Performance:** The Game Client will load assets directly from S3 (via CloudFront/CDN). The Game Server doesn't need to proxy the data bytes. This saves your M1 Max/AWS Compute bandwidth.
+3.  **Resilience:** If the DB dies, you lose the *index* (who owns what), but the *assets* (the actual drawings and logic) are safe in the bucket.
+
+---
+
+### The Revised Data Model (Pointer Pattern)
+
+#### 1. The File Structure (S3 / MinIO)
+We organize files by Asset ID. This is the "Game Library."
+
+```text
+bucket-game-assets/
+├── characters/
+│   └── {uuid}/
+│       ├── sprite.png        # The raw pixel sheet
+│       └── meta.json         # The animation definitions (e.g. "walk": [0,1,2])
+├── tiles/
+│   └── {uuid}/
+│       ├── tile.png          # The 32x32 image
+│       └── properties.json   # Physics (e.g. { "collidable": true })
+└── maps/
+    └── {uuid}/
+        ├── thumbnail.png     # For the lobby UI
+        └── layout.json       # The 2D array of Tile IDs [[0,0,1],[0,1,1]...]
+```
+
+#### 2. The Database Schema (Postgres)
+The DB is now lightweight. It is used only for **Search, Permissions, and Links**.
+
+**Table: `asset_index`**
+*   `id` (UUID) - Primary Key
+*   `type` (ENUM: 'CHARACTER', 'TILE', 'MAP')
+*   `name` (VARCHAR) - "Cyber Tank", "Forest Floor"
+*   `author_id` (VARCHAR) - Cognito Sub
+*   `status` (ENUM: 'PENDING', 'APPROVED', 'REJECTED')
+*   `s3_key_prefix` (VARCHAR) - e.g., `characters/550e8400-e29b...` (The pointer)
+*   `version` (INT) - Allows us to ship patches to assets without breaking links.
+
+**Table: `active_games`**
+*   `id` (VARCHAR) - The Room Code (TR4X)
+*   `map_asset_id` (UUID) - Foreign Key to `asset_index`
+*   `host_id` (VARCHAR)
+*   `started_at` (TIMESTAMP)
+
+---
+
+### How "The Editor" writes to this (MVP Flow)
+
+When the user hits **Submit** in the frontend:
+
+1.  **Frontend** generates the JSON locally:
+    ```json
+    {
+      "name": "Knight",
+      "animations": { "idle": [0, 1], "walk": [2, 3] },
+      "dimensions": { "w": 32, "h": 32 }
+    }
+    ```
+2.  **Frontend** asks Backend for a **Presigned S3 Upload URL** (secure direct upload).
+3.  **Frontend** uploads `sprite.png` and `meta.json` directly to S3.
+4.  **Frontend** calls `POST /api/assets/register`.
+5.  **Backend** validates the S3 files exist, then creates the row in `asset_index` with status `PENDING`.
+
+### How "The Game" reads this
+
+1.  **Client** connects to Server.
+2.  **Server** sends list of Asset IDs required for this map: `["uuid-grass", "uuid-hero"]`.
+3.  **Client** constructs URLs: `https://cdn.yoursite.com/tiles/uuid-grass/tile.png`.
+4.  **Client** downloads and caches them locally.
+
+This keeps your bandwidth cost near zero and your database lightning fast.
+
+take this other input "Good. No chat, pings only. Clear URL structure. Let me sketch the data model.
+
+---
+
+## Entity Overview
+
+```
+User (two pools: Admin, Player)
+│
+├── Asset (Character, Tile, Map)
+│   └── stored as JSON + images in S3/Minio
+│   └── DB holds metadata + S3 keys
+│
+├── Submission (pending approval workflow)
+│
+└── GameSession
+    ├── uses Map asset
+    ├── has Participants (Players + chosen Characters)
+    ├── has Locks (exclusivity zones)
+    └── has GameState (positions, pings, etc.)
+```
+
+---
+
+## Identity Model
+
+### Two Cognito User Pools
+
+| Pool | Purpose | Access |
+|------|---------|--------|
+| **AdminPool** | You + future moderators | `/admin/*` |
+| **PlayerPool** | Kids, players | `/editor/*`, `/play/*`, `/` (game creation) |
+
+Each pool issues JWTs independently. Your backend validates tokens against the appropriate pool based on route.
+
+**Database user record:**
+
+```
+users
+├── id: UUID (your internal ID)
+├── cognito_sub: STRING (Cognito's unique ID, from JWT "sub" claim)
+├── pool: ENUM ('admin', 'player')
+├── display_name: STRING
+├── created_at: TIMESTAMP
+├── updated_at: TIMESTAMP
+```
+
+The `cognito_sub` is the link. When a user authenticates, you look up or create the `users` row by matching `cognito_sub` + `pool`.
+
+---
+
+## Asset Storage Model
+
+### Principle
+
+- **S3/Minio** holds the actual files (JSON definitions, PNG images).
+- **Database** holds metadata, status, ownership, and S3 keys.
+
+This keeps the DB lean and queryable, while large/binary data lives in object storage.
+
+---
+
+### Character Asset
+
+**S3 structure:**
+```
+/assets/characters/{character_uuid}/
+├── definition.json    # states, frame counts, metadata
+├── idle_0.png         # frame images
+├── idle_1.png
+├── walk_down_0.png
+├── walk_down_1.png
+└── ...
+```
+
+**definition.json example:**
+```json
+{
+  "name": "Blue Knight",
+  "sprite_size": 32,
+  "states": {
+    "idle": { "frames": 2, "loop": true },
+    "walk_down": { "frames": 4, "loop": true },
+    "walk_up": { "frames": 4, "loop": true },
+    "walk_left": { "frames": 4, "loop": true },
+    "walk_right": { "frames": 4, "loop": true }
+  }
+}
+```
+
+**Database record:**
+
+```
+characters
+├── id: UUID
+├── creator_id: UUID (FK → users.id)
+├── name: STRING
+├── s3_prefix: STRING (e.g., "assets/characters/{uuid}/")
+├── status: ENUM ('draft', 'pending', 'approved', 'rejected')
+├── rejection_note: STRING (nullable)
+├── created_at: TIMESTAMP
+├── updated_at: TIMESTAMP
+```
+
+---
+
+### Tile Asset
+
+**S3 structure:**
+```
+/assets/tiles/{tile_uuid}/
+├── definition.json
+└── tile.png
+```
+
+**definition.json example:**
+```json
+{
+  "name": "Grass",
+  "tile_size": 32,
+  "passable": true
+}
+```
+
+**Database record:**
+
+```
+tiles
+├── id: UUID
+├── creator_id: UUID (FK → users.id)
+├── name: STRING
+├── passable: BOOLEAN
+├── s3_prefix: STRING
+├── status: ENUM ('draft', 'pending', 'approved', 'rejected')
+├── rejection_note: STRING (nullable)
+├── created_at: TIMESTAMP
+├── updated_at: TIMESTAMP
+```
+
+---
+
+### Map Asset
+
+**S3 structure:**
+```
+/assets/maps/{map_uuid}/
+└── definition.json
+```
+
+**definition.json example:**
+```json
+{
+  "name": "Forest Clearing",
+  "width": 20,
+  "height": 15,
+  "tile_size": 32,
+  "grid": [
+    ["tile_uuid_grass", "tile_uuid_grass", "tile_uuid_water", ...],
+    ["tile_uuid_grass", "tile_uuid_tree", "tile_uuid_grass", ...],
+    ...
+  ],
+  "spawn_points": [
+    { "x": 5, "y": 5 },
+    { "x": 10, "y": 5 }
+  ]
+}
+```
+
+The `grid` is a 2D array of tile UUIDs. Renderer looks up each tile's image from the tile asset.
+
+**Database record:**
+
+```
+maps
+├── id: UUID
+├── creator_id: UUID (FK → users.id)
+├── name: STRING
+├── width: INTEGER
+├── height: INTEGER
+├── s3_prefix: STRING
+├── status: ENUM ('draft', 'pending', 'approved', 'rejected')
+├── rejection_note: STRING (nullable)
+├── created_at: TIMESTAMP
+├── updated_at: TIMESTAMP
+```
+
+---
+
+### Submission Workflow
+
+The `status` field on each asset table handles the workflow:
+
+```
+draft → pending → approved
+                → rejected (can resubmit → pending)
+```
+
+- **draft**: Player is still editing. Not visible to admin.
+- **pending**: Player submitted. Appears in admin moderation queue.
+- **approved**: Visible in game library. Usable in games.
+- **rejected**: Player sees rejection note. Can edit and resubmit (returns to pending).
+
+No separate `submissions` table needed — status lives on the asset itself.
+
+---
+
+## Game Session Model
+
+**Database record:**
+
+```
+game_sessions
+├── id: UUID
+├── creator_id: UUID (FK → users.id)
+├── name: STRING
+├── map_id: UUID (FK → maps.id)
+├── status: ENUM ('lobby', 'active', 'closed')
+├── created_at: TIMESTAMP
+├── updated_at: TIMESTAMP
+├── closed_at: TIMESTAMP (nullable)
+```
+
+**Participants:**
+
+```
+game_participants
+├── id: UUID
+├── game_session_id: UUID (FK → game_sessions.id)
+├── user_id: UUID (FK → users.id)
+├── character_id: UUID (FK → characters.id)
+├── joined_at: TIMESTAMP
+├── left_at: TIMESTAMP (nullable)
+```
+
+**Game State (positions, pings):**
+
+This is ephemeral, high-churn data. Two options:
+
+**Option A:** Store in DB (PostgreSQL JSONB column on `game_sessions`).
+
+**Option B:** Store in Redis/memory, persist snapshots periodically.
+
+For MVP with logical rooms in Spring Boot, **I recommend in-memory with periodic DB snapshot**. On server restart, load last snapshot. Acceptable data loss: a few seconds of movement.
+
+**Question: Do you want game state in DB (simpler, slower writes) or in-memory with snapshots (faster, more complex)?**
+
+---
+
+### Locks (Exclusivity Zones)
+
+Ephemeral by nature. Player acquires lock, does work, releases or disconnects.
+
+**In-memory structure per game session:**
+
+```java
+Map<String, Lock> activeLocks; // key = zone identifier
+
+class Lock {
+    String zoneId;       // e.g., "tile:5:10" or "building:barracks"
+    UUID holderId;       // user_id
+    Instant acquiredAt;
+    Instant expiresAt;   // auto-release if holder silent too long
+}
+```
+
+No DB persistence needed. If server restarts, locks are gone — acceptable since players would reconnect and reacquire.
+
+---
+
+## URL Structure Mapping
+
+| URL Pattern | Auth Pool | Purpose |
+|-------------|-----------|---------|
+| `/` | Public (read), PlayerPool (create) | Home. Show library, running games, create game. |
+| `/editor/*` | PlayerPool | Character, Tile, Map editors. My submissions. |
+| `/play/{gameId}` | PlayerPool | Join/play specific game session. |
+| `/admin/*` | AdminPool | Moderation queue, library management, session monitoring. |
+
+---
+
+## Questions
+
+### 1. Spawn Points
+
+Maps have spawn points in the definition. Two options:
+
+**Option A:** Fixed spawn points defined in map editor. Players assigned to them in order of joining.
+
+**Option B:** Spawn zone — a region where players can appear randomly.
+
+For MVP, **Option A** is simpler. Confirm?
+
+---
+
+### 2. Game State Persistence
+
+As mentioned above:
+
+**Option A:** DB-only (JSONB column, update on every state change). Simpler. Write amplification.
+
+**Option B:** In-memory primary, snapshot to DB every N seconds. Faster. Loses up to N seconds on crash.
+
+**Your preference?**
+
+---
+
+### 3. Asset Versioning
+
+When a player edits an approved character (to fix something), should it:
+
+**Option A:** Create a new version. Old version remains in games using it. New version goes through approval.
+
+**Option B:** Overwrite. Existing games see updated asset after approval.
+
+Option A is safer (no mid-game surprises) but more complex. Option B is simpler but could break running games if edits are drastic.
+
+**Your preference?**
+
+---
+
+### 4. Soft Delete vs. Hard Delete
+
+When admin removes an asset from library:
+
+**Option A:** Soft delete — set `status = 'removed'`, hide from library, retain data.
+
+**Option B:** Hard delete — remove DB record and S3 files.
+
+Soft delete is safer (can undo, audit trail). **Confirm soft delete?**
+
+---
+
+### 5. Public Home Page Data
+
+Home page shows:
+- Library assets (approved characters, maps)
+- Running games (no user details)
+
+**Question:** Should running games show player *count* (e.g., "3 players") or nothing at all?
+
+---
+
+Once you answer these, I can diagram the component relationships and API surface.
+
+---
+
+**Confidence: 9/10** — Data model is coherent. The five questions are genuine decision points affecting schema and behavior." and SUMMARIZE THE PROJECT LONG TERM OBJECTIVES AND SHORT TERM MVP AND HOW TO GET FROM zero to MVP to long term goal and I will see that you understand or not
+
+This is a rock-solid convergence of requirements. The "Pointer Pattern" coupled with the Hybrid Hosting model is the correct architectural choice for a system that needs to be both cost-effective (M1 Max) and reliable (AWS).
+
+Here are the answers to the final five architectural decisions, followed by the Project Summary you requested.
+
+### Part 1: Final Architecture Decisions
+
+**1. Spawn Points: Option A (Fixed)**
+*   **Decision:** Fixed `(x,y)` coordinates defined in the Map Editor.
+*   **Reasoning:** Deterministic behavior is critical for debugging. "Random zones" introduce edge cases (spawning inside a wall or on top of another player). In a turn-based grid game, starting positions are tactical; they should be designed, not random.
+
+**2. Game State Persistence: Option B (In-Memory + Snapshot)**
+*   **Decision:** State lives in Java Heap (`GameRoom` object). Scheduled task snapshots to Postgres every 30 seconds + on `RoomClose`.
+*   **Reasoning:** Even in turn-based games, writing to disk (DB) on every packet (movement, cursor hover, lock request) creates unnecessary I/O latency. Since we are running on your M1 Max, memory is fast and abundant. The snapshot protects against a server crash losing more than 30s of progress.
+
+**3. Asset Versioning: Option A (Immutable/Versioning)**
+*   **Decision:** Editing an asset creates `v2`. Existing games keep `v1`. New games use `v2`.
+*   **Reasoning:** "Safety Critical" mindset. If a kid is running a game and the map author deletes a bridge in `v2`, the running game breaks if it auto-updates. Assets must be immutable once approved.
+
+**4. Deletion Policy: Option A (Soft Delete)**
+*   **Decision:** `status = 'ARCHIVED'`. Data remains in S3/DB.
+*   **Reasoning:** Audit trails. If someone uploads something inappropriate, you need the evidence even after removing it from public view.
+
+**5. Public Metrics: Show Player Count**
+*   **Decision:** Show "3/5 Players" or "Active".
+*   **Reasoning:** Social proof. Empty servers discourage new joins. Seeing numbers encourages participation.
+
+---
+
+### Part 2: Project Summary & Execution Path
+
+You are building a **Community-Driven Game Platform**, not just a game. You provide the **Engine** (Editors, Auth, Networking), and the users (Kids) provide the **Content** (Art, Maps, Stories).
+
+#### 1. Long-Term Objective (The North Star)
+To create a "Minecraft/Roblox-lite" ecosystem where:
+*   **Creativity is Currency:** Players gain status by contributing high-quality assets (tanks, terrain, skins) to the global library.
+*   **Persistent Worlds:** Players create private servers (Aternos-style) that persist over weeks. They build bases, gather resources, and recruit armies.
+*   **Asynchronous & Synchronous Play:** Players can log in alone to manage their base (Locking system) or coordinate live for turn-based tactical combat (XCOM style) against other bases.
+*   **Hybrid Infrastructure:** The heavy compute runs on your hardware (M1 Max), utilizing Cloudflare Tunnels for access, while AWS handles the "stateless truth" (Auth/Storage) to ensure data safety.
+
+#### 2. Short-Term MVP (The "Walking Simulator")
+A functional **Creative Suite** and **Lobby System**.
+*   **No Combat, No Resources.**
+*   **The Loop:**
+    1.  User logs in (Cognito).
+    2.  User draws a "Hero" and "Grass Tile" in the browser.
+    3.  User submits to You (Admin) for approval.
+    4.  User creates a Game Room using a blank map + their assets.
+    5.  User invites a friend via URL.
+    6.  They both see each other move their custom avatars on the custom tiles.
+*   *Success Metric:* A full round-trip from "Pixel Drawn" to "Pixel Seen by Friend on a different computer."
+
+#### 3. Execution Roadmap: Zero to Hero
+
+**Phase 1: The Factory (Weeks 1-3)**
+*   **Goal:** Asset Ingestion Pipeline.
+*   **Tech:** React (Canvas API), Spring Boot (Rest API), S3, Postgres.
+*   **Deliverable:**
+    *   Pixel Editor (Auto-scale imports).
+    *   S3 Storage layout implementation.
+    *   Admin Dashboard to Click "Approve".
+    *   *Result:* A populated database of JSON/PNG assets.
+
+**Phase 2: The Showroom (Weeks 4-5)**
+*   **Goal:** Display and Map Assembly.
+*   **Tech:** Map Editor (Grid logic).
+*   **Deliverable:**
+    *   Map Editor using assets from Phase 1.
+    *   JSON Map definitions stored in S3.
+    *   "My Library" UI.
+
+**Phase 3: The Playground (Weeks 6-8)**
+*   **Goal:** Multiplayer Runtime (The MVP).
+*   **Tech:** WebSocket (Spring Boot), Phaser 3 (Client), Logic Rooms.
+*   **Deliverable:**
+    *   Lobby Creator (URL generation).
+    *   WebSocket Handshake & Auth.
+    *   Phaser client rendering the Map JSON.
+    *   Movement interpolation (Lerp).
+    *   *Result:* Users walking around together.
+
+**Phase 4: The Mechanics (Post-MVP)**
+*   **Goal:** Gameplay.
+*   **Tech:** Game Loop, State Machine, Locking.
+*   **Deliverable:**
+    *   Implement "Base Building" (Lock grid -> Place Building).
+    *   Implement "Recruitment" (UI to add numbers).
+    *   Implement "Combat" (Turn-based state machine).
+
+---
+
+**Confidence Score: 10/10**
+I fully understand the mission. We are building a **Content Pipeline** first, and a **Game Client** second.
+
+maybe I am going to generate pixel art via AI as well! keep in mind - how does this change the MVP plan and what can we use for generating 32x32 sprites? or generate entire sprite sheets at once?
+
+This is a force multiplier for content creation, but it introduces **Noise** into the pipeline. AI models are terrible at "exact pixel perfect 32x32 grids" without post-processing. They tend to produce "fuzzy" pixel art or mismatched resolutions.
+
+Here is how we integrate AI without breaking the Clean Architecture or the MVP scope.
+
+### 1. Architectural Impact: The "Input Source"
+Strictly speaking, AI is just another **Input Method** for the Pixel Editor, identical to "File Upload."
+
+*   **Current:** `Canvas <--- (Draw) | (Upload PNG)`
+*   **New:** `Canvas <--- (Draw) | (Upload PNG) | (AI Generate)`
+
+**The Data Flow:**
+1.  User opens Character Editor.
+2.  User types prompt: "Cyberpunk Knight, red armor".
+3.  User clicks "Generate".
+4.  **Backend** (or ext. API) returns a 512x512 image.
+5.  **Frontend** (Client) runs the "Auto-Scale" logic (Downsample to 32x32 + Color Quantization) we defined earlier.
+6.  **User** sees the rough 32x32 result on the grid and **manually fixes** the messy pixels.
+    *   *Critical:* AI is the "Draftsman", User is the "Polisher". Do not trust raw AI output for final assets.
+
+### 2. Technology Selection (32x32 & Sheets)
+
+Generating a coherent *Animation Sprite Sheet* (Idle, Walk, Attack) in one prompt is currently **unreliable** for a generic MVP. It often results in hallucinated frames or misaligned grids.
+
+**Recommendation for MVP:**
+Generate **Single Keyframes** (e.g., "Idle Front"). The user creates the animation frames by modifying that base in the editor.
+
+**Engine Options:**
+
+**Option A: The "M1 Max Native" (Local Inference)**
+*   **Tech:** Run **Stable Diffusion XL (SDXL)** or **Flux** locally using CoreML optimization (e.g., `DrawThings` app or a Python script with `diffusers`).
+*   **Model:** Use a checkpoint trained on pixel art (e.g., **Pixel Art XL** or **Retro Diffusion**).
+*   **Pros:** Free, infinite generations, private.
+*   **Cons:** High engineering effort. You need to build a Python microservice to expose the model to your Java Spring Boot app (or call it via shell execution).
+*   **Latency:** ~10-20 seconds per generation.
+
+**Option B: The "API Wrapper" (OpenAI / Stability)**
+*   **Tech:** `DALL-E 3` or `Stability AI API`.
+*   **Pros:** trivial implementation (REST call). Fast.
+*   **Cons:** Costs money per click. DALL-E 3 refuses to generate true 32x32; it generates 1024x1024 which looks bad when downscaled unless prompted perfectly.
+
+**The Winner:** **Option B (Stability AI)** for MVP.
+*   Why: They have specific "Pixel Art" presets in their SDXL API. It is cheap enough for testing. You can swap to Local M1 later without changing the Frontend (just the Backend service logic).
+
+### 3. Updated Phase 1 Plan (The Workshop)
+
+We add an `AiGenerationService` to the backend.
+
+**Backend (`AiController.java`):**
+```java
+@PostMapping("/generate")
+public ResponseEntity<String> generateSprite(@RequestBody PromptRequest request) {
+    // 1. Calls External API (or Local Python Service)
+    // 2. Returns Base64 Image (High Res)
+}
+```
+
+**Frontend (`PixelEditor.tsx`):**
+*   Add a "Magic Wand" tool.
+*   **Prompt Modal:** Input text.
+*   **Post-Process:**
+    1.  Receive 512px image.
+    2.  Draw to offscreen canvas `ctx.drawImage(img, 0, 0, 32, 32)`.
+    3.  `ctx.getImageData` to get the pixels.
+    4.  Inject into the Editor Grid.
+
+### 4. How to generate Sprite Sheets (The "Advance Move")
+
+If you *really* want sheets, don't generate the sheet directly. Use **ControlNet**.
+
+*   *This is likely Post-MVP due to complexity.*
+*   You feed the AI a "Skeleton" image (stick figures walking).
+*   You tell AI "turn this skeleton into a robot".
+*   AI paints over the skeleton, maintaining the exact positions.
+
+**For now:** Stick to single-frame generation. It solves the "Blank Canvas Paralysis" for kids. They get a base, then they edit it.
+
+
+
+ HEXMANOS: Project Understanding Summary
+
+  The Vision
+
+  You're building a Community-Driven Pixel Art Game Platform - not just a game. You provide the Engine (editors,
+  auth, networking), users provide the Content (art, maps, stories). Think "Roblox-lite meets Stardew Valley editor."
+
+  ---
+  Long-Term Objective (North Star)
+
+  A creative ecosystem where:
+  1. Creativity = Currency: Kids gain status by contributing quality assets to a global library
+  2. Persistent Worlds: Private servers that persist over weeks (base building, resource accumulation, recruitment)
+  3. Hybrid Play: Async solo base management + live turn-based tactical combat (XCOM-style)
+  4. Sustainable Infrastructure: M1 Max runs compute (free), AWS handles truth (auth/storage/CDN)
+
+  ---
+  Short-Term MVP ("Walking Simulator")
+
+  The Loop:
+  1. User logs in (Cognito)
+  2. User draws a 32x32 "Hero" and "Grass Tile" in browser (or generates via AI + polishes)
+  3. User submits → Admin approves
+  4. User creates Game Room with their assets
+  5. User invites friend via URL
+  6. Both see each other's custom avatars walking on custom tiles
+
+  Success Metric: Full round-trip from "Pixel Drawn" → "Pixel Seen by Friend on different computer"
+
+  No combat. No resources. No building. Just the creative pipeline + networked rendering.
+
+  ---
+  The Path: Zero → MVP → Long-Term
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                         PHASE 0: FOUNDATION                             │
+  │  ✓ Spring Boot + Postgres + S3 Pointer Pattern                          │
+  │  ✓ Clean Architecture (Core/External/App layers)                        │
+  │  ✓ Flyway migrations, FileStorageService                                │
+  │  ✓ React 19 + Vite + Tailwind scaffold                                  │
+  │  ✓ PixelCanvas component (32x32, zoom/pan)                              │
+  └─────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                    PHASE 1: THE FACTORY (Weeks 1-3)                     │
+  │  Asset Ingestion Pipeline                                               │
+  │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐   │
+  │  │ Character Editor │    │   Tile Editor    │    │  Admin Dashboard │   │
+  │  │ - Animation FSM  │    │ - Passable flag  │    │ - Approve/Reject │   │
+  │  │ - IDLE/WALK/etc  │    │ - Single frame   │    │ - Moderation Q   │   │
+  │  └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘   │
+  │           │                       │                       │             │
+  │           ▼                       ▼                       ▼             │
+  │  ┌─────────────────────────────────────────────────────────────────┐    │
+  │  │                    S3 Upload (Presigned URLs)                   │    │
+  │  │   characters/{uuid}/sprite.png, definition.json                 │    │
+  │  │   tiles/{uuid}/tile.png, properties.json                        │    │
+  │  └─────────────────────────────────────────────────────────────────┘    │
+  │                                                                         │
+  │  + AI Generation Service (Stability API → 512px → downsample to 32x32)  │
+  │  + Auto-Scale Import (upload any image → nearest-neighbor → 32x32)      │
+  └─────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                   PHASE 2: THE SHOWROOM (Weeks 4-5)                     │
+  │  Map Assembly                                                           │
+  │  ┌─────────────────────────────────────────────────────────────────┐    │
+  │  │                         Map Editor                              │    │
+  │  │  - Dual Layer: Ground (L0) + Objects (L1)                       │    │
+  │  │  - Tile Palette (approved assets from Phase 1)                  │    │
+  │  │  - Spawn Point placement (fixed x,y coordinates)                │    │
+  │  │  - Export: maps/{uuid}/layout.json (2D array of tile UUIDs)     │    │
+  │  └─────────────────────────────────────────────────────────────────┘    │
+  │                                                                         │
+  │  + "My Library" UI (user's submitted assets, status tracking)           │
+  │  + Asset Versioning (edit approved → creates v2, v1 stays in use)       │
+  └─────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                  PHASE 3: THE PLAYGROUND (Weeks 6-8)                    │
+  │  Multiplayer Runtime - THIS IS THE MVP                                  │
+  │                                                                         │
+  │  Backend:                                                               │
+  │  ┌─────────────────────────────────────────────────────────────────┐    │
+  │  │  WebSocket Server (Spring Boot)                                 │    │
+  │  │  - Logical Rooms (GameRoom.java in-memory)                      │    │
+  │  │  - Auth handshake (Cognito JWT validation)                      │    │
+  │  │  - State snapshot to DB every 30s                               │    │
+  │  │  - Packet types: JOIN, MOVE, PING, LEAVE                        │    │
+  │  └─────────────────────────────────────────────────────────────────┘    │
+  │                                                                         │
+  │  Frontend:                                                              │
+  │  ┌─────────────────────────────────────────────────────────────────┐    │
+  │  │  Phaser 3 Game Client                                           │    │
+  │  │  - Load map JSON → construct tilemap                            │    │
+  │  │  - Load character sprites from CDN                              │    │
+  │  │  - Movement interpolation (lerp for smooth remote players)      │    │
+  │  │  - Grid-based collision (L1 passable check)                     │    │
+  │  └─────────────────────────────────────────────────────────────────┘    │
+  │                                                                         │
+  │  Lobby:                                                                 │
+  │  - Create Game → get room code (TR4X-99)                                │
+  │  - Join via URL: /play/{roomCode}                                       │
+  │  - Show player count (social proof)                                     │
+  └─────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                   PHASE 4: THE MECHANICS (Post-MVP)                     │
+  │  Actual Gameplay                                                        │
+  │  - Locking System (exclusive zone control for building)                 │
+  │  - Base Building (place structures on locked tiles)                     │
+  │  - Recruitment (accumulate units over time)                             │
+  │  - Turn-Based Combat (XCOM-style state machine)                         │
+  │  - Resources / Economy                                                  │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+  ---
+  Critical Architecture Decisions (Locked In)
+  ┌──────────────────┬───────────────────────────────┬────────────────────────────────────────────────────────┐
+  │     Decision     │            Choice             │                          Why                           │
+  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
+  │ Storage          │ Pointer Pattern               │ DB = index, S3 = truth. Resilient, CDN-cacheable       │
+  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
+  │ Spawn Points     │ Fixed (x,y)                   │ Deterministic, tactical, debuggable                    │
+  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
+  │ Game State       │ In-memory + 30s snapshots     │ Fast writes, acceptable 30s data loss on crash         │
+  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
+  │ Asset Versioning │ Immutable                     │ v2 doesn't break games using v1                        │
+  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
+  │ Deletion         │ Soft (ARCHIVED)               │ Audit trail, recoverable                               │
+  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
+  │ AI Generation    │ Single keyframe + user polish │ Sheets are unreliable; AI = draftsman, user = polisher │
+  └──────────────────┴───────────────────────────────┴────────────────────────────────────────────────────────┘
+  ---
+  Current State (What's Built)
+  ┌────────────────────────────────┬─────────┐
+  │           Component            │ Status  │
+  ├────────────────────────────────┼─────────┤
+  │ Backend scaffold (Clean Arch)  │ ✅ Done │
+  ├────────────────────────────────┼─────────┤
+  │ Postgres + Flyway              │ ✅ Done │
+  ├────────────────────────────────┼─────────┤
+  │ FileStorageService (local/S3)  │ ✅ Done │
+  ├────────────────────────────────┼─────────┤
+  │ Asset REST API (CRUD + upload) │ ✅ Done │
+  ├────────────────────────────────┼─────────┤
+  │ PixelCanvas (32x32 editor)     │ ✅ Done │
+  ├────────────────────────────────┼─────────┤
+  │ EditorPage + ImageImporter     │ ✅ Done │
+  ├────────────────────────────────┼─────────┤
+  │ Frontend routing               │ ✅ Done │
+  ├────────────────────────────────┼─────────┤
+  │ Playwright e2e tests           │ ✅ Done │
+  └────────────────────────────────┴─────────┘
+  ---
+  What's Next (To Complete Phase 1)
+
+  1. Animation Timeline - Character Editor needs frame management (IDLE: [0,1], WALK: [2,3,4,5])
+  2. Tile Editor - Single-frame mode with passable toggle
+  3. S3 Presigned URL endpoint for direct uploads
+  4. Asset Registration endpoint (validates S3 files exist, creates index row)
+  5. Admin Dashboard - Moderation queue (PENDING → APPROVED/REJECTED)
+  6. Cognito Integration - Two pools (Admin, Player), JWT validation
+  7. AI Generation Service (optional for MVP) - Stability API → downsample → inject to canvas
+
+  ---
+  I understand the mission: Build the Content Pipeline first, Game Client second. The MVP is proving the creative
+  loop works end-to-end, not implementing combat mechanics.
+
+

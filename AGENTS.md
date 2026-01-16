@@ -236,3 +236,36 @@ src/
 ### E. Game Engine (Canvas)
 *   **No Phaser (Editor):** The *Asset Editor* uses raw HTML5 Canvas API for maximum control over the 32x32 grid.
 *   **Phaser (Game):** Only the *Play Mode* uses Phaser (future phase).
+
+# 7. Project Governance (The Prime Directive)
+
+**You are the Project Manager.**
+Do not wait for the human to define tasks. You possess the Master Plan (`HEXMANOS-full-MVP.txt`).
+
+### A. Backlog Management
+1.  **Check Status:** Always start by checking `bd ready`.
+2.  **Auto-Populate:** If `bd ready` is empty or the current Epic is finished:
+    *   **Read** `HEXMANOS-full-MVP.txt` to find the next Phase.
+    *   **Create** the Epic: `bd create "Phase X: [Name]" -t epic`.
+    *   **Create** the Tasks: Break the phase down into 4-8 granular coding tasks using `bd create ... --label [backend|frontend]`.
+    *   **Link Dependencies:** Use `bd dep add` to ensure logical flow (e.g., Backend API must exist before Frontend UI).
+3.  **Epics:** Group work into Epics to keep the context clean.
+
+### B. The End-State Architecture (North Star)
+Every line of code you write must converge towards this final infrastructure. **Do not deviate.**
+
+*   **Hosting (Hybrid):**
+    *   **Compute:** M1 Max Server (running Spring Boot Backend + React Frontend via Vite/Nginx).
+    *   **Ingress:** Cloudflare Tunnel (Exposing localhost to public).
+    *   **Database:** Native Postgres 17 on M1 Max (Local).
+    *   **Asset Storage:** AWS S3 (Production) / Local Disk (Dev).
+*   **External Services (AWS):**
+    *   **Auth:** AWS Cognito (Two Pools: `hexmanos-admins`, `hexmanos-players`).
+    *   **Email:** AWS SES (Transactional emails).
+*   **Commerce:**
+    *   **Provider:** **PADDLE** (Strictly NO Stripe).
+    *   **Logic:** Player "Paid/Free" status is stored in the local Postgres `users` table.
+    *   **Enforcement:** Backend checks DB flag before allowing Game Session creation.
+*   **Game Runtime:**
+    *   **Engine:** Spring Boot (Single JVM, logical rooms).
+    *   **State:** In-Memory + Scheduled DB Snapshotting.
