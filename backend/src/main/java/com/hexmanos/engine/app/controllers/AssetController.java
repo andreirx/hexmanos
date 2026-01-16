@@ -1,12 +1,16 @@
 package com.hexmanos.engine.app.controllers;
 
 import com.hexmanos.engine.app.dtos.AssetDTO;
+import com.hexmanos.engine.app.dtos.UploadResponse;
 import com.hexmanos.engine.core.asset.Asset;
 import com.hexmanos.engine.core.asset.AssetService;
+import com.hexmanos.engine.core.files.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
@@ -17,6 +21,7 @@ import java.util.UUID;
 public class AssetController {
 
     private final AssetService assetService;
+    private final FileStorageService fileStorageService;
 
     @GetMapping
     public ResponseEntity<List<AssetDTO>> getAllAssets() {
@@ -62,5 +67,30 @@ public class AssetController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
         }
+    }
+
+    @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<UploadResponse> uploadFile(@RequestParam("file") MultipartFile file) {
+        if (file.isEmpty()) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        String url = fileStorageService.uploadFile(file);
+        String storageKey = extractStorageKey(url);
+
+        UploadResponse response = UploadResponse.builder()
+                .url(url)
+                .storageKey(storageKey)
+                .build();
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    private String extractStorageKey(String url) {
+        // Extract filename from URL path
+        // Local: /cdn/files/filename.png -> filename.png
+        // S3: https://bucket.s3.amazonaws.com/prefix/filename.png -> filename.png
+        int lastSlash = url.lastIndexOf('/');
+        return lastSlash >= 0 ? url.substring(lastSlash + 1) : url;
     }
 }

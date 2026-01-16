@@ -1,4 +1,32 @@
-node_modules/
-.gradle/
-build/
-dist/
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.iml
+
+# OS
+.DS_Store
+
+# Version Control & Beads
+.git/
+.beads/
+.claude/
+
+# Logs
+*.log
+
+# Backend
+backend/.gradle/
+backend/build/
+backend/local.env
+backend/src/main/resources/application-local.properties
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
+
+# Misc
+hexmanos-repo_snapshot.txt
+repo-text-blob.py
