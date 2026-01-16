@@ -1,4 +1,5 @@
 import axios from "axios"
+import { fetchAuthSession } from "aws-amplify/auth"
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "http://localhost:8080/api",
@@ -9,12 +10,16 @@ const api = axios.create({
 
 // Request interceptor for auth token
 api.interceptors.request.use(
-  (config) => {
-    // TODO: Add Cognito token injection when auth is implemented
-    // const token = await getAuthToken()
-    // if (token) {
-    //   config.headers.Authorization = `Bearer ${token}`
-    // }
+  async (config) => {
+    try {
+      const session = await fetchAuthSession()
+      const token = session.tokens?.accessToken?.toString()
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+      }
+    } catch {
+      // No authenticated session, continue without token
+    }
     return config
   },
   (error) => Promise.reject(error)
@@ -25,8 +30,8 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // TODO: Handle unauthorized - redirect to login
-      console.error("Unauthorized - redirect to login")
+      // Redirect to login on 401
+      window.location.href = "/auth/login"
     }
     return Promise.reject(error)
   }
