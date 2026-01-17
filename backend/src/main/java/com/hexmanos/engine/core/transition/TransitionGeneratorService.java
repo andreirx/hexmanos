@@ -72,6 +72,21 @@ public class TransitionGeneratorService {
     }
 
     /**
+     * Delete all transition files for tile_0 in the given storage prefix.
+     * Used to force regeneration when the transition algorithm changes.
+     *
+     * @param storageKeyPrefix The storage prefix (e.g., "tiles/uuid")
+     */
+    public void deleteTransitionsForTile0(String storageKeyPrefix) {
+        try {
+            fileStorageService.deleteFilesWithPrefix(storageKeyPrefix, "tile_0_transition_");
+            log.info("Deleted transitions for {} - will be regenerated", storageKeyPrefix);
+        } catch (Exception e) {
+            log.error("Failed to delete transitions for {}: {}", storageKeyPrefix, e.getMessage());
+        }
+    }
+
+    /**
      * Check if the base tile_0.png exists in storage.
      *
      * @param storageKeyPrefix The storage prefix (e.g., "tiles/uuid")
@@ -161,17 +176,27 @@ public class TransitionGeneratorService {
     /**
      * Calculate the alpha value for a pixel based on the transition direction.
      * Returns 0-255 alpha value.
+     *
+     * IMPORTANT: The direction indicates WHERE the transition will be PLACED (the neighbor cell).
+     * So transition_n.png is placed in the cell NORTH of the source - it needs solid at BOTTOM
+     * to connect to the source tile below it.
+     *
+     * Therefore we INVERT the logic:
+     * - N (placed north) -> solid at bottom (use South logic)
+     * - S (placed south) -> solid at top (use North logic)
+     * - E (placed east) -> solid at left (use West logic)
+     * - W (placed west) -> solid at right (use East logic)
      */
     private int calculateAlpha(Direction direction, int x, int y, int width, int height) {
         return switch (direction) {
-            case N -> calculateNorthAlpha(y, height);
-            case S -> calculateSouthAlpha(y, height);
-            case E -> calculateEastAlpha(x, width);
-            case W -> calculateWestAlpha(x, width);
-            case NE -> calculateCornerAlpha(width - 1 - x, y);
-            case NW -> calculateCornerAlpha(x, y);
-            case SE -> calculateCornerAlpha(width - 1 - x, height - 1 - y);
-            case SW -> calculateCornerAlpha(x, height - 1 - y);
+            case N -> calculateSouthAlpha(y, height);  // Solid at bottom
+            case S -> calculateNorthAlpha(y, height);  // Solid at top
+            case E -> calculateWestAlpha(x, width);    // Solid at left
+            case W -> calculateEastAlpha(x, width);    // Solid at right
+            case NE -> calculateCornerAlpha(x, height - 1 - y);          // Solid at bottom-left (SW corner)
+            case NW -> calculateCornerAlpha(width - 1 - x, height - 1 - y); // Solid at bottom-right (SE corner)
+            case SE -> calculateCornerAlpha(x, y);                        // Solid at top-left (NW corner)
+            case SW -> calculateCornerAlpha(width - 1 - x, y);           // Solid at top-right (NE corner)
         };
     }
 

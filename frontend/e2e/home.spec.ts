@@ -32,6 +32,22 @@ test.describe("Home Page", () => {
     await expect(tileLink).toHaveAttribute("href", "/editor/tile")
   })
 
+  test("should have link to map editor", async ({ page }) => {
+    await page.goto("/")
+
+    const mapLink = page.getByRole("link", { name: "Map Editor" })
+    await expect(mapLink).toBeVisible()
+    await expect(mapLink).toHaveAttribute("href", "/editor/map")
+  })
+
+  test("should navigate to map editor when clicking link", async ({ page }) => {
+    await page.goto("/")
+
+    await page.getByRole("link", { name: "Map Editor" }).click()
+
+    await expect(page).toHaveURL("/editor/map")
+  })
+
   test("should navigate to character editor when clicking link", async ({ page }) => {
     await page.goto("/")
 

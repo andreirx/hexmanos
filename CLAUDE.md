@@ -19,7 +19,7 @@
 - **No Blobs in DB:** Never store JSON payloads or Images in Postgres columns.
 - **Reference:** Entities store a `s3Key` string, not the file content.
 
-## 2. Backend Architecture (Spring Boot + Java 17)
+## 2. Backend Architecture (Spring Boot + Java 17 + gradle)
 We follow a strict **Clean Architecture** separating `App` (Driver), `Core` (Domain), and `External` (Driven).
 
 ### Package Structure
