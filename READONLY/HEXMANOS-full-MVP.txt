@@ -1,3 +1,4 @@
+## initial starter plan
 
 ### 1. The Physics Constants (The "Grid")
 *   **Sprite Resolution:** `128x128` pixels.
@@ -459,32 +460,6 @@ No DB persistence needed. If server restarts, locks are gone — acceptable sinc
 
 ---
 
-## Questions
-
-### 1. Spawn Points
-
-Maps have spawn points in the definition. Two options:
-
-**Option A:** Fixed spawn points defined in map editor. Players assigned to them in order of joining.
-
-**Option B:** Spawn zone — a region where players can appear randomly.
-
-For MVP, **Option A** is simpler. Confirm?
-
----
-
-### 2. Game State Persistence
-
-As mentioned above:
-
-**Option A:** DB-only (JSONB column, update on every state change). Simpler. Write amplification.
-
-**Option B:** In-memory primary, snapshot to DB every N seconds. Faster. Loses up to N seconds on crash.
-
-**Your preference?**
-
----
-
 ### 3. Asset Versioning
 
 When a player edits an approved character (to fix something), should it:
@@ -507,7 +482,7 @@ When admin removes an asset from library:
 
 **Option B:** Hard delete — remove DB record and S3 files.
 
-Soft delete is safer (can undo, audit trail). **Confirm soft delete?**
+Soft delete is safer (can undo, audit trail). **OK for SOFT DELETE**
 
 ---
 
@@ -515,17 +490,10 @@ Soft delete is safer (can undo, audit trail). **Confirm soft delete?**
 
 Home page shows:
 - Library assets (approved characters, maps)
-- Running games (no user details)
-
-**Question:** Should running games show player *count* (e.g., "3 players") or nothing at all?
+- Running games (no user details, but player counts)
 
 ---
 
-Once you answer these, I can diagram the component relationships and API surface.
-
----
-
-**Confidence: 9/10** — Data model is coherent. The five questions are genuine decision points affecting schema and behavior." and SUMMARIZE THE PROJECT LONG TERM OBJECTIVES AND SHORT TERM MVP AND HOW TO GET FROM zero to MVP to long term goal and I will see that you understand or not
 
 This is a rock-solid convergence of requirements. The "Pointer Pattern" coupled with the Hybrid Hosting model is the correct architectural choice for a system that needs to be both cost-effective (M1 Max) and reliable (AWS).
 
@@ -617,90 +585,7 @@ A functional **Creative Suite** and **Lobby System**.
 
 ---
 
-**Confidence Score: 10/10**
-I fully understand the mission. We are building a **Content Pipeline** first, and a **Game Client** second.
-
-maybe I am going to generate pixel art via AI as well! keep in mind - how does this change the MVP plan and what can we use for generating 128x128 sprites? or generate entire sprite sheets at once?
-
-This is a force multiplier for content creation, but it introduces **Noise** into the pipeline. AI models are terrible at "exact pixel perfect 128x128 grids" without post-processing. They tend to produce "fuzzy" pixel art or mismatched resolutions.
-
-Here is how we integrate AI without breaking the Clean Architecture or the MVP scope.
-
-### 1. Architectural Impact: The "Input Source"
-Strictly speaking, AI is just another **Input Method** for the Pixel Editor, identical to "File Upload."
-
-*   **Current:** `Canvas <--- (Draw) | (Upload PNG)`
-*   **New:** `Canvas <--- (Draw) | (Upload PNG) | (AI Generate)`
-
-**The Data Flow:**
-1.  User opens Character Editor.
-2.  User types prompt: "Cyberpunk Knight, red armor".
-3.  User clicks "Generate".
-4.  **Backend** (or ext. API) returns a 512x512 image.
-5.  **Frontend** (Client) runs the "Auto-Scale" logic (Downsample to 128x128 + Color Quantization) we defined earlier.
-6.  **User** sees the rough 128x128 result on the grid and **manually fixes** the messy pixels.
-    *   *Critical:* AI is the "Draftsman", User is the "Polisher". Do not trust raw AI output for final assets.
-
-### 2. Technology Selection (128x128 & Sheets)
-
-Generating a coherent *Animation Sprite Sheet* (Idle, Walk, Attack) in one prompt is currently **unreliable** for a generic MVP. It often results in hallucinated frames or misaligned grids.
-
-**Recommendation for MVP:**
-Generate **Single Keyframes** (e.g., "Idle Front"). The user creates the animation frames by modifying that base in the editor.
-
-**Engine Options:**
-
-**Option A: The "M1 Max Native" (Local Inference)**
-*   **Tech:** Run **Stable Diffusion XL (SDXL)** or **Flux** locally using CoreML optimization (e.g., `DrawThings` app or a Python script with `diffusers`).
-*   **Model:** Use a checkpoint trained on pixel art (e.g., **Pixel Art XL** or **Retro Diffusion**).
-*   **Pros:** Free, infinite generations, private.
-*   **Cons:** High engineering effort. You need to build a Python microservice to expose the model to your Java Spring Boot app (or call it via shell execution).
-*   **Latency:** ~10-20 seconds per generation.
-
-**Option B: The "API Wrapper" (OpenAI / Stability)**
-*   **Tech:** `DALL-E 3` or `Stability AI API`.
-*   **Pros:** trivial implementation (REST call). Fast.
-*   **Cons:** Costs money per click. DALL-E 3 refuses to generate true 128x128; it generates 1024x1024 which looks bad when downscaled unless prompted perfectly.
-
-**The Winner:** **Option B (Stability AI)** for MVP.
-*   Why: They have specific "Pixel Art" presets in their SDXL API. It is cheap enough for testing. You can swap to Local M1 later without changing the Frontend (just the Backend service logic).
-
-### 3. Updated Phase 1 Plan (The Workshop)
-
-We add an `AiGenerationService` to the backend.
-
-**Backend (`AiController.java`):**
-```java
-@PostMapping("/generate")
-public ResponseEntity<String> generateSprite(@RequestBody PromptRequest request) {
-    // 1. Calls External API (or Local Python Service)
-    // 2. Returns Base64 Image (High Res)
-}
-```
-
-**Frontend (`PixelEditor.tsx`):**
-*   Add a "Magic Wand" tool.
-*   **Prompt Modal:** Input text.
-*   **Post-Process:**
-    1.  Receive 512px image.
-    2.  Draw to offscreen canvas `ctx.drawImage(img, 0, 0, 128, 128)`.
-    3.  `ctx.getImageData` to get the pixels.
-    4.  Inject into the Editor Grid.
-
-### 4. How to generate Sprite Sheets (The "Advance Move")
-
-If you *really* want sheets, don't generate the sheet directly. Use **ControlNet**.
-
-*   *This is likely Post-MVP due to complexity.*
-*   You feed the AI a "Skeleton" image (stick figures walking).
-*   You tell AI "turn this skeleton into a robot".
-*   AI paints over the skeleton, maintaining the exact positions.
-
-**For now:** Stick to single-frame generation. It solves the "Blank Canvas Paralysis" for kids. They get a base, then they edit it.
-
-
-
- HEXMANOS: Project Understanding Summary
+# HEXMANOS: Project Understanding Summary
 
   The Vision
 
@@ -731,149 +616,77 @@ If you *really* want sheets, don't generate the sheet directly. Use **ControlNet
 
   No combat. No resources. No building. Just the creative pipeline + networked rendering.
 
-  ---
-  The Path: Zero → MVP → Long-Term
-
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │                         PHASE 0: FOUNDATION                             │
-  │  ✓ Spring Boot + Postgres + S3 Pointer Pattern                          │
-  │  ✓ Clean Architecture (Core/External/App layers)                        │
-  │  ✓ Flyway migrations, FileStorageService                                │
-  │  ✓ React 19 + Vite + Tailwind scaffold                                  │
-  │  ✓ PixelCanvas component (128x128, zoom/pan)                              │
-  └─────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │                    PHASE 1: THE FACTORY (Weeks 1-3)                     │
-  │  Asset Ingestion Pipeline                                               │
-  │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐   │
-  │  │ Character Editor │    │   Tile Editor    │    │  Admin Dashboard │   │
-  │  │ - Animation FSM  │    │ - Passable flag  │    │ - Approve/Reject │   │
-  │  │ - IDLE/WALK/etc  │    │ - Single frame   │    │ - Moderation Q   │   │
-  │  └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘   │
-  │           │                       │                       │             │
-  │           ▼                       ▼                       ▼             │
-  │  ┌─────────────────────────────────────────────────────────────────┐    │
-  │  │                    S3 Upload (Presigned URLs)                   │    │
-  │  │   characters/{uuid}/sprite.png, definition.json                 │    │
-  │  │   tiles/{uuid}/tile.png, properties.json                        │    │
-  │  └─────────────────────────────────────────────────────────────────┘    │
-  │                                                                         │
-  │  + AI Generation Service (Stability API → 512px → downsample to 128x128)  │
-  │  + Auto-Scale Import (upload any image → nearest-neighbor → 128x128)      │
-  └─────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │                   PHASE 2: THE SHOWROOM (Weeks 4-5)                     │
-  │  Map Assembly                                                           │
-  │  ┌─────────────────────────────────────────────────────────────────┐    │
-  │  │                         Map Editor                              │    │
-  │  │  - Dual Layer: Ground (L0) + Objects (L1)                       │    │
-  │  │  - Tile Palette (approved assets from Phase 1)                  │    │
-  │  │  - Spawn Point placement (fixed x,y coordinates)                │    │
-  │  │  - Export: maps/{uuid}/layout.json (2D array of tile UUIDs)     │    │
-  │  └─────────────────────────────────────────────────────────────────┘    │
-  │                                                                         │
-  │  + "My Library" UI (user's submitted assets, status tracking)           │
-  │  + Asset Versioning (edit approved → creates v2, v1 stays in use)       │
-  └─────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │                  PHASE 3: THE PLAYGROUND (Weeks 6-8)                    │
-  │  Multiplayer Runtime - THIS IS THE MVP                                  │
-  │                                                                         │
-  │  Backend:                                                               │
-  │  ┌─────────────────────────────────────────────────────────────────┐    │
-  │  │  WebSocket Server (Spring Boot)                                 │    │
-  │  │  - Logical Rooms (GameRoom.java in-memory)                      │    │
-  │  │  - Auth handshake (Cognito JWT validation)                      │    │
-  │  │  - State snapshot to DB every 30s                               │    │
-  │  │  - Packet types: JOIN, MOVE, PING, LEAVE                        │    │
-  │  └─────────────────────────────────────────────────────────────────┘    │
-  │                                                                         │
-  │  Frontend:                                                              │
-  │  ┌─────────────────────────────────────────────────────────────────┐    │
-  │  │  Phaser 3 Game Client                                           │    │
-  │  │  - Load map JSON → construct tilemap                            │    │
-  │  │  - Load character sprites from CDN                              │    │
-  │  │  - Movement interpolation (lerp for smooth remote players)      │    │
-  │  │  - Grid-based collision (L1 passable check)                     │    │
-  │  └─────────────────────────────────────────────────────────────────┘    │
-  │                                                                         │
-  │  Lobby:                                                                 │
-  │  - Create Game → get room code (TR4X-99)                                │
-  │  - Join via URL: /play/{roomCode}                                       │
-  │  - Show player count (social proof)                                     │
-  └─────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │                   PHASE 4: THE MECHANICS (Post-MVP)                     │
-  │  Actual Gameplay                                                        │
-  │  - Locking System (exclusive zone control for building)                 │
-  │  - Base Building (place structures on locked tiles)                     │
-  │  - Recruitment (accumulate units over time)                             │
-  │  - Turn-Based Combat (XCOM-style state machine)                         │
-  │  - Resources / Economy                                                  │
-  └─────────────────────────────────────────────────────────────────────────┘
-
-  ---
-  Critical Architecture Decisions (Locked In)
-  ┌──────────────────┬───────────────────────────────┬────────────────────────────────────────────────────────┐
-  │     Decision     │            Choice             │                          Why                           │
-  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
-  │ Storage          │ Pointer Pattern               │ DB = index, S3 = truth. Resilient, CDN-cacheable       │
-  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
-  │ Spawn Points     │ Fixed (x,y)                   │ Deterministic, tactical, debuggable                    │
-  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
-  │ Game State       │ In-memory + 30s snapshots     │ Fast writes, acceptable 30s data loss on crash         │
-  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
-  │ Asset Versioning │ Immutable                     │ v2 doesn't break games using v1                        │
-  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
-  │ Deletion         │ Soft (ARCHIVED)               │ Audit trail, recoverable                               │
-  ├──────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────┤
-  │ AI Generation    │ Single keyframe + user polish │ Sheets are unreliable; AI = draftsman, user = polisher │
-  └──────────────────┴───────────────────────────────┴────────────────────────────────────────────────────────┘
-  ---
-  Current State (What's Built)
-  ┌────────────────────────────────┬─────────┐
-  │           Component            │ Status  │
-  ├────────────────────────────────┼─────────┤
-  │ Backend scaffold (Clean Arch)  │ ✅ Done │
-  ├────────────────────────────────┼─────────┤
-  │ Postgres + Flyway              │ ✅ Done │
-  ├────────────────────────────────┼─────────┤
-  │ FileStorageService (local/S3)  │ ✅ Done │
-  ├────────────────────────────────┼─────────┤
-  │ Asset REST API (CRUD + upload) │ ✅ Done │
-  ├────────────────────────────────┼─────────┤
-  │ PixelCanvas (128x128 editor)     │ ✅ Done │
-  ├────────────────────────────────┼─────────┤
-  │ EditorPage + ImageImporter     │ ✅ Done │
-  ├────────────────────────────────┼─────────┤
-  │ Frontend routing               │ ✅ Done │
-  ├────────────────────────────────┼─────────┤
-  │ Playwright e2e tests           │ ✅ Done │
-  └────────────────────────────────┴─────────┘
-  ---
-  What's Next (To Complete Phase 1)
-
-  1. Animation Timeline - Character Editor needs frame management (IDLE: [0,1], WALK: [2,3,4,5])
-  2. Tile Editor - Single-frame mode with passable toggle
-  3. S3 Presigned URL endpoint for direct uploads
-  4. Asset Registration endpoint (validates S3 files exist, creates index row)
-  5. Admin Dashboard - Moderation queue (PENDING → APPROVED/REJECTED)
-  6. Cognito Integration - Two pools (Admin, Player), JWT validation
-  7. AI Generation Service (optional for MVP) - Stability API → downsample → inject to canvas
-
-  ---
-  I understand the mission: Build the Content Pipeline first, Game Client second. The MVP is proving the creative
-  loop works end-to-end, not implementing combat mechanics.
+Build the Content Pipeline first, Game Client second. The MVP is proving the creative loop works end-to-end, not implementing combat mechanics.
 
 PHASE 1 IS ALMOST COMPLETE with the character editor, tile editor AND starting the map editor
+
+# HEXMANOS ENGINE: Master Architecture & Roadmap
+
+## 1. Core Philosophy
+A Community-Driven Pixel Art Game Platform.
+*   **Role:** Users provide Content (Art, Maps). We provide the Engine (Auth, Networking, Simulation).
+*   **Infrastructure:** Hybrid Hosting.
+    *   **Compute:** M1 Max (Local Native) via Cloudflare Tunnel.
+    *   **Data Authority:** AWS S3 (Assets) + AWS Cognito (Auth) + Native Postgres (Index/State).
+*   **Commerce:** Paddle (No Stripe). Paid status stored in Postgres.
+
+## 2. Technical Constraints (The Law)
+*   **Grid Physics:** 128x128 pixels (1 Unit).
+*   **Rendering:** HTML5 Canvas (Editor) / Phaser 3 (Game Client).
+    *   *Rule:* Always use `image-rendering: pixelated` and `imageSmoothingEnabled = false`.
+*   **Storage Pattern:** "The Pointer Pattern".
+    *   DB stores Metadata + S3 Key.
+    *   S3 stores Binary (PNG) + JSON Definitions.
+*   **Versioning:** Immutable Assets. Editing creates `v2`. Games using `v1` are unaffected.
+
+## 3. The Asset Pipeline (Phase 1 - COMPLETED)
+*   **Characters:** 128x128 Sprites. Fixed Animation FSM (IDLE, WALK, ACTION).
+*   **Tiles:** 128x128.
+    *   **Type: TILE:** Standard terrain.
+        *   *Transitions:* Backend auto-generates 8 alpha-blended transition tiles on register.
+    *   **Type: PATH:** Exactly 15 variations (4-bit bitmask directions). Transparent background.
+*   **Editors:** React-based. Local `Uint8ClampedArray` manipulation -> Offscreen Buffer -> Canvas Draw.
+
+## 4. The World Editor (Phase 2 - IN PROGRESS)
+**Goal:** Assemble Assets into Maps (`.json` 2D Arrays).
+
+### Layering Architecture (Rendering Order)
+1.  **L0 (Ground):** Base opaque tile (e.g., Dirt).
+2.  **L0.5 (Transitions):** Auto-generated transition overlays (Alpha blended).
+3.  **L0.7 (Paths):** Transparent path tiles (e.g., Road).
+4.  **L1 (Objects):** Trees, Walls, Buildings (can be larger than 1x1).
+5.  **L2 (Collision):** Boolean grid (Passable/Solid). Defaults to Tile property, overridable.
+
+### Map Data Model (S3 `layout.json`)
+```json
+{
+  "width": 100,
+  "height": 100,
+  "spawnPoints": [{"x": 10, "y": 10, "team": "RED"}],
+  "layers": {
+    "ground": [[uuid, uuid], ...],
+    "paths": [[uuid, uuid], ...],
+    "objects": [[uuid, uuid], ...]
+  }
+}
+```
+
+## 5. The Multiplayer Runtime (Phase 3 - NEXT)
+**Goal:** Real-time synchronization of Game State.
+
+*   **Protocol:** WebSockets (Spring Boot STOMP).
+*   **Session Manager:** In-Memory `GameRoom` objects.
+*   **Persistence:**
+    *   Hot State: RAM.
+    *   Cold State: Scheduled Snapshot to Postgres every 30s + `onRoomClose`.
+*   **Client:** Phaser 3.
+    *   Interpolation: Lerp movement updates (100ms buffer).
+    *   Input: Send Intent (Move North), receive State Update.
+
+## 6. Gameplay Mechanics (Phase 4 - FUTURE)
+*   **Locking:** Players "Lock" a grid region to build base structures (Async concurrency).
+*   **Combat:** Turn-based state machine (XCOM style).
+*   **Economy:** Resources accumulate over real-time days.
 
 Current folder structure:
 
