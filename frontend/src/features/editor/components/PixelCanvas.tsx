@@ -55,6 +55,12 @@ export function PixelCanvas({
 
   const [zoom, setZoom] = useState(initialZoom)
   const [pan, setPan] = useState({ x: 0, y: 0 })
+
+  // Refs to track latest values for wheel handler (avoids stale closures)
+  const zoomRef = useRef(zoom)
+  const panRef = useRef(pan)
+  useEffect(() => { zoomRef.current = zoom }, [zoom])
+  useEffect(() => { panRef.current = pan }, [pan])
   const [isDrawing, setIsDrawing] = useState(false)
   const [isPanning, setIsPanning] = useState(false)
   const lastPanPoint = useRef({ x: 0, y: 0 })
@@ -538,12 +544,44 @@ export function PixelCanvas({
     render()
   }, [render])
 
-  // Handle mouse wheel for zoom
+  // Handle mouse wheel for zoom - zoom centered on mouse position
   const handleWheel = useCallback(
     (e: WheelEvent) => {
       e.preventDefault()
-      const delta = e.deltaY > 0 ? -1 : 1
-      setZoom((prevZoom) => Math.max(minZoom, Math.min(maxZoom, prevZoom + delta)))
+
+      const container = containerRef.current
+      if (!container) return
+
+      // Get mouse position relative to container
+      const rect = container.getBoundingClientRect()
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
+
+      // Use refs to get latest values (avoids stale closure)
+      const currentZoom = zoomRef.current
+      const currentPan = panRef.current
+
+      // Calculate world coordinate under mouse before zoom
+      const worldX = (mouseX - currentPan.x) / currentZoom
+      const worldY = (mouseY - currentPan.y) / currentZoom
+
+      // Calculate new zoom level
+      const zoomFactor = 1.15
+      const newZoom = e.deltaY < 0
+        ? Math.min(maxZoom, currentZoom * zoomFactor)
+        : Math.max(minZoom, currentZoom / zoomFactor)
+
+      // Calculate new pan offset so the world point stays under the mouse
+      const newPanX = mouseX - worldX * newZoom
+      const newPanY = mouseY - worldY * newZoom
+
+      // Update refs immediately for next scroll event
+      zoomRef.current = newZoom
+      panRef.current = { x: newPanX, y: newPanY }
+
+      // Update state
+      setZoom(newZoom)
+      setPan({ x: newPanX, y: newPanY })
     },
     [minZoom, maxZoom]
   )
@@ -556,7 +594,9 @@ export function PixelCanvas({
   }, [handleWheel])
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+    // Right click, middle mouse, or Alt+left click: start panning
+    if (e.button === 2 || e.button === 1 || (e.button === 0 && e.altKey)) {
+      e.preventDefault()
       setIsPanning(true)
       lastPanPoint.current = { x: e.clientX, y: e.clientY }
       return
@@ -767,8 +807,9 @@ export function PixelCanvas({
     }
   }
 
-  const canvasWidth = Math.max(width * zoom + Math.abs(pan.x) * 2, 512)
-  const canvasHeight = Math.max(height * zoom + Math.abs(pan.y) * 2, 512)
+  // Fixed canvas size - don't grow based on pan (prevents layout issues)
+  const canvasWidth = 960
+  const canvasHeight = 960
 
   return (
     <div className={className}>
@@ -784,6 +825,7 @@ export function PixelCanvas({
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseLeave}
+          onContextMenu={(e) => e.preventDefault()}
           style={{ display: "block" }}
         />
       </div>

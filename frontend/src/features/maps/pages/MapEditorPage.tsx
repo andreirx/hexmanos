@@ -453,7 +453,7 @@ export function MapEditorPage() {
                     size="sm"
                     variant="outline"
                     className="flex-1 bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
-                    onClick={() => setZoom(z => Math.max(0.1, z - 0.1))}
+                    onClick={() => setZoom(z => Math.max(0.1, z / 1.2))}
                   >
                     <ZoomOut className="w-4 h-4" />
                   </Button>
@@ -461,7 +461,7 @@ export function MapEditorPage() {
                     size="sm"
                     variant="outline"
                     className="flex-1 bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
-                    onClick={() => setZoom(z => Math.min(2, z + 0.1))}
+                    onClick={() => setZoom(z => Math.min(4, z * 1.2))}
                   >
                     <ZoomIn className="w-4 h-4" />
                   </Button>
@@ -598,8 +598,11 @@ export function MapEditorPage() {
           <MapCanvas
             mapData={mapData}
             zoom={zoom}
+            minZoom={0.1}
+            maxZoom={4}
             panOffset={panOffset}
             onPanChange={setPanOffset}
+            onZoomChange={setZoom}
             showGrid={showGrid}
             showPaths={showPaths}
             showCharacters={showCharacters}

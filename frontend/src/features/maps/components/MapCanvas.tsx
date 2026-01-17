@@ -26,8 +26,11 @@ const ANIMATION_FRAME_MS = 200
 interface MapCanvasProps {
   mapData: MapData
   zoom: number
+  minZoom?: number
+  maxZoom?: number
   panOffset: { x: number; y: number }
   onPanChange: (offset: { x: number; y: number }) => void
+  onZoomChange?: (zoom: number) => void
   showGrid: boolean
   showPaths: boolean
   showCharacters: boolean
@@ -125,8 +128,11 @@ function calculatePathVariation(
 export function MapCanvas({
   mapData,
   zoom,
+  minZoom = 0.1,
+  maxZoom = 4,
   panOffset,
   onPanChange,
+  onZoomChange,
   showGrid,
   showPaths,
   showCharacters,
@@ -144,9 +150,11 @@ export function MapCanvas({
   // Interaction state (refs for performance)
   const isDraggingRef = useRef(false)
   const isDrawingRef = useRef(false)
+  const isPanningRef = useRef(false) // Middle mouse / Alt+click panning
   const dragStartRef = useRef({ x: 0, y: 0 })
   const panOffsetRef = useRef(panOffset)
   const lastCellRef = useRef<{ x: number; y: number } | null>(null)
+  const lastPanPointRef = useRef({ x: 0, y: 0 })
 
   // Force re-render trigger
   const [renderTrigger, setRenderTrigger] = useState(0)
@@ -162,10 +170,14 @@ export function MapCanvas({
   // Animation state
   const [animationFrame, setAnimationFrame] = useState(0)
 
-  // Keep refs in sync
+  // Keep refs in sync with props
+  const zoomRef = useRef(zoom)
   useEffect(() => {
     panOffsetRef.current = panOffset
   }, [panOffset])
+  useEffect(() => {
+    zoomRef.current = zoom
+  }, [zoom])
 
   // Set up image load callback - MUST mark terrain dirty when images arrive
   useEffect(() => {
@@ -253,6 +265,54 @@ export function MapCanvas({
 
     return () => clearInterval(timer)
   }, [showCharacters, mapData.characters.length])
+
+  // Mouse wheel zoom handler - zoom centered on mouse position
+  const handleWheel = useCallback(
+    (e: WheelEvent) => {
+      if (!onZoomChange) return
+      e.preventDefault()
+
+      const container = containerRef.current
+      if (!container) return
+
+      // Get mouse position relative to container
+      const rect = container.getBoundingClientRect()
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
+
+      // Use refs to get the latest values (avoids stale closure)
+      const currentZoom = zoomRef.current
+      const currentPan = panOffsetRef.current
+
+      // Calculate world coordinate under mouse before zoom
+      const worldX = (mouseX - currentPan.x) / currentZoom
+      const worldY = (mouseY - currentPan.y) / currentZoom
+
+      // Calculate new zoom level
+      const zoomFactor = 1.1
+      const newZoom = e.deltaY < 0
+        ? Math.min(maxZoom, currentZoom * zoomFactor)
+        : Math.max(minZoom, currentZoom / zoomFactor)
+
+      // Calculate new pan offset so the world point stays under the mouse
+      const newPanX = mouseX - worldX * newZoom
+      const newPanY = mouseY - worldY * newZoom
+
+      // Update both zoom and pan
+      panOffsetRef.current = { x: newPanX, y: newPanY }
+      zoomRef.current = newZoom
+      onPanChange({ x: newPanX, y: newPanY })
+      onZoomChange(newZoom)
+    },
+    [minZoom, maxZoom, onZoomChange, onPanChange]
+  )
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    container.addEventListener("wheel", handleWheel, { passive: false })
+    return () => container.removeEventListener("wheel", handleWheel)
+  }, [handleWheel])
 
   // ============================================================
   // SYNCHRONOUS TERRAIN RENDER (to offscreen canvas)
@@ -497,6 +557,14 @@ export function MapCanvas({
   }, [zoom, mapData.width, mapData.height, mapData.tileSize])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    // Right click, middle mouse, or Alt+left click: start panning regardless of tool
+    if (e.button === 2 || e.button === 1 || (e.button === 0 && e.altKey)) {
+      e.preventDefault()
+      isPanningRef.current = true
+      lastPanPointRef.current = { x: e.clientX, y: e.clientY }
+      return
+    }
+
     if (currentTool === "pan") {
       isDraggingRef.current = true
       dragStartRef.current = { x: e.clientX - panOffsetRef.current.x, y: e.clientY - panOffsetRef.current.y }
@@ -516,6 +584,21 @@ export function MapCanvas({
   }, [currentTool, getCellFromEvent, onCellClick])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    // Handle middle mouse / Alt+click panning
+    if (isPanningRef.current) {
+      const dx = e.clientX - lastPanPointRef.current.x
+      const dy = e.clientY - lastPanPointRef.current.y
+      const newPan = {
+        x: panOffsetRef.current.x + dx,
+        y: panOffsetRef.current.y + dy
+      }
+      panOffsetRef.current = newPan
+      lastPanPointRef.current = { x: e.clientX, y: e.clientY }
+      onPanChange(newPan)
+      requestAnimationFrame(render)
+      return
+    }
+
     if (isDraggingRef.current && currentTool === "pan") {
       const newPan = {
         x: e.clientX - dragStartRef.current.x,
@@ -536,10 +619,14 @@ export function MapCanvas({
   const handleMouseUp = useCallback(() => {
     isDraggingRef.current = false
     isDrawingRef.current = false
+    isPanningRef.current = false
     lastCellRef.current = null
   }, [])
 
   const getCursor = () => {
+    // Panning takes priority (middle mouse / Alt+click)
+    if (isPanningRef.current) return "grabbing"
+
     switch (currentTool) {
       case "pan": return isDraggingRef.current ? "grabbing" : "grab"
       case "paint": return "crosshair"
@@ -562,6 +649,7 @@ export function MapCanvas({
         style={{ cursor: getCursor() }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
+        onContextMenu={(e) => e.preventDefault()}
       />
     </div>
   )

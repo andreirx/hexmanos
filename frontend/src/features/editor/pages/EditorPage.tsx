@@ -657,7 +657,7 @@ export function EditorPage() {
       )}
 
       {/* Left Sidebar - Tools */}
-      <div className="w-64 border-r border-zinc-700 p-4 flex flex-col gap-4 overflow-y-auto">
+      <div className="w-80 border-r border-zinc-700 p-4 flex flex-col gap-4 overflow-y-auto">
         {/* File Operations */}
         <Card className="bg-zinc-800 border-zinc-700">
           <CardHeader className="pb-2">
