@@ -58,10 +58,10 @@ export function TileEditorPage() {
   const [backendUser, setBackendUser] = useState<UserDTO | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Fill tool state
-  const [fillColor2, setFillColor2] = useState("#808080")
-  const [fillColor3, setFillColor3] = useState("#404040")
-  const [useRandomFill, setUseRandomFill] = useState(false)
+  // Fill tool state - 3 dedicated colors for random fill
+  const [fillColor1, setFillColor1] = useState("#228b22")
+  const [fillColor2, setFillColor2] = useState("#2e8b57")
+  const [fillColor3, setFillColor3] = useState("#32cd32")
 
   // Undo/Redo history per variation
   const historyRef = useRef<Map<VariationHistoryKey, VariationHistory>>(new Map())
@@ -262,7 +262,7 @@ export function TileEditorPage() {
 
   const handleFillRandom = () => {
     const colors = [
-      hexToRgba(currentColor),
+      hexToRgba(fillColor1),
       hexToRgba(fillColor2),
       hexToRgba(fillColor3),
     ]
@@ -442,7 +442,8 @@ export function TileEditorPage() {
     setStatusMessage(null)
 
     try {
-      const assetId = crypto.randomUUID()
+      // Use existing asset ID when editing, or create new one
+      const assetId = loadedAsset?.id || crypto.randomUUID()
 
       const properties: TileProperties = {
         name: tileName,
@@ -490,7 +491,12 @@ export function TileEditorPage() {
       })
 
       if (result.success) {
-        setStatusMessage({ type: "success", text: `Tile "${tileName}" saved with ${variations.length} variation(s)!` })
+        const action = loadedAsset ? "updated" : "saved"
+        setStatusMessage({ type: "success", text: `Tile "${tileName}" ${action} with ${variations.length} variation(s)!` })
+        // Update loadedAsset to reflect we're now editing this asset
+        if (!loadedAsset) {
+          setLoadedAsset({ id: assetId, name: tileName, type: "TILE", authorId, storageKeyPrefix: `tiles/${assetId}` } as AssetDTO)
+        }
       } else {
         const missingInfo = result.missingFiles?.length
           ? ` Missing: ${result.missingFiles.join(", ")}`
@@ -673,31 +679,74 @@ export function TileEditorPage() {
               </div>
               <div>
                 <label className="text-xs text-zinc-400 block mb-2">Random Fill Colors</label>
-                <div className="flex gap-2 items-center">
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-zinc-500">1:</span>
-                    <div
-                      className="w-6 h-6 rounded border border-zinc-600"
-                      style={{ backgroundColor: currentColor }}
-                      title="Uses current color"
+                <div className="space-y-2">
+                  {/* Color 1 */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-500 w-3">1:</span>
+                    <input
+                      type="color"
+                      value={fillColor1}
+                      onChange={(e) => setFillColor1(e.target.value)}
+                      className="w-6 h-6 rounded cursor-pointer border-0"
+                    />
+                    <input
+                      type="text"
+                      value={fillColor1}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) setFillColor1(val)
+                      }}
+                      onBlur={(e) => {
+                        if (!/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) setFillColor1("#228b22")
+                      }}
+                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono"
+                      placeholder="#228b22"
                     />
                   </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-zinc-500">2:</span>
+                  {/* Color 2 */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-500 w-3">2:</span>
                     <input
                       type="color"
                       value={fillColor2}
                       onChange={(e) => setFillColor2(e.target.value)}
                       className="w-6 h-6 rounded cursor-pointer border-0"
                     />
+                    <input
+                      type="text"
+                      value={fillColor2}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) setFillColor2(val)
+                      }}
+                      onBlur={(e) => {
+                        if (!/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) setFillColor2("#2e8b57")
+                      }}
+                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono"
+                      placeholder="#2e8b57"
+                    />
                   </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-zinc-500">3:</span>
+                  {/* Color 3 */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-500 w-3">3:</span>
                     <input
                       type="color"
                       value={fillColor3}
                       onChange={(e) => setFillColor3(e.target.value)}
                       className="w-6 h-6 rounded cursor-pointer border-0"
+                    />
+                    <input
+                      type="text"
+                      value={fillColor3}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) setFillColor3(val)
+                      }}
+                      onBlur={(e) => {
+                        if (!/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) setFillColor3("#32cd32")
+                      }}
+                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono"
+                      placeholder="#32cd32"
                     />
                   </div>
                 </div>
