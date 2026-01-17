@@ -545,7 +545,7 @@ export function TileEditorPage() {
 
     const colors = [hexToRgba(fillColor1), hexToRgba(fillColor2), hexToRgba(fillColor3)]
 
-    setVariations(prev => prev.map(variation => {
+    setVariations(prev => prev.map(() => {
       const newPixels = new Uint8ClampedArray(TILE_SIZE * TILE_SIZE * 4)
       for (let i = 0; i < TILE_SIZE * TILE_SIZE; i++) {
         const color = colors[Math.floor(Math.random() * colors.length)]

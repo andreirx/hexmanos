@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, Link } from "react-router-dom"
 import { EditorPage } from "@/features/editor"
 import { TileEditorPage } from "@/features/tiles"
+import { MapEditorPage } from "@/features/maps"
 import {
   LoginPage,
   RegisterPage,
@@ -42,12 +43,11 @@ function HomePage() {
 
             <Link
               to="/editor/map"
-              className="block p-6 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors border border-zinc-700 opacity-50 cursor-not-allowed"
-              onClick={(e) => e.preventDefault()}
+              className="block p-6 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors border border-zinc-700"
             >
               <div className="text-2xl mb-2">&#128506;&#65039;</div>
               <h2 className="font-semibold">Map Editor</h2>
-              <p className="text-sm text-zinc-400 mt-1">Coming soon...</p>
+              <p className="text-sm text-zinc-400 mt-1">Create game maps</p>
             </Link>
 
             <Link
@@ -81,6 +81,7 @@ function App() {
           <Route path="/editor" element={<Navigate to="/editor/character" replace />} />
           <Route path="/editor/character" element={<EditorPage />} />
           <Route path="/editor/tile" element={<TileEditorPage />} />
+          <Route path="/editor/map" element={<MapEditorPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
