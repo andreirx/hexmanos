@@ -120,4 +120,16 @@ public class LocalFileStorageService implements FileStorageService {
             throw new RuntimeException("Failed to upload file to key: " + storageKey, ex);
         }
     }
+
+    @Override
+    public void uploadBytes(byte[] data, String storageKey, String contentType) {
+        try {
+            Path targetPath = fileStorageLocation.resolve(storageKey).normalize();
+            Files.createDirectories(targetPath.getParent());
+            Files.write(targetPath, data);
+            log.info("Bytes uploaded to local path: {} ({} bytes)", targetPath, data.length);
+        } catch (IOException ex) {
+            throw new RuntimeException("Failed to upload bytes to key: " + storageKey, ex);
+        }
+    }
 }

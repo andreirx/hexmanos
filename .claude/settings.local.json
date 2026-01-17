@@ -30,7 +30,11 @@
       "Bash(git stash:*)",
       "Bash(npm run type-check:*)",
       "Bash(npx tsc:*)",
-      "Bash(npx playwright test:*)"
+      "Bash(npx playwright test:*)",
+      "Bash(npm run e2e:*)",
+      "Bash(npm run)",
+      "Bash(npm test)",
+      "Bash(./gradlew test:*)"
     ]
   }
 }

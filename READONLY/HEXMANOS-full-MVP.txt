@@ -1,10 +1,9 @@
 
 ### 1. The Physics Constants (The "Grid")
-*   **Sprite Resolution:** `32x32` pixels.
-    *   *Why:* 16x16 is too abstract for kids; 64x64 takes too long to draw. 32x32 is the industry standard for this genre (e.g., Stardew Valley).
-*   **Tile Resolution:** `32x32` pixels (1:1 with Sprites).
+*   **Sprite Resolution:** `128x128` pixels.
+*   **Tile Resolution:** `128x128` pixels (1:1 with Sprites).
 *   **Map Coordinate System:** Integer-based `(x, y)` where 1 unit = 128 pixels.
-*   **Canvas Zoom:** Client-side scaling (e.g., 2x or 3x) to make the 32px sprites look chunky on modern monitors.
+*   **Canvas Zoom:** Client-side scaling (e.g., 2x or 3x) to make the 128px sprites look chunky on modern monitors.
 
 ### 2. The Animation Schema
 We need a **Fixed State Machine** so the game engine knows what to play when.
@@ -126,7 +125,7 @@ bucket-game-assets/
 │       └── meta.json         # The animation definitions (e.g. "walk": [0,1,2])
 ├── tiles/
 │   └── {uuid}/
-│       ├── tile.png          # The 32x32 image
+│       ├── tile.png          # The 128x128 image
 │       └── properties.json   # Physics (e.g. { "collidable": true })
 └── maps/
     └── {uuid}/
@@ -621,9 +620,9 @@ A functional **Creative Suite** and **Lobby System**.
 **Confidence Score: 10/10**
 I fully understand the mission. We are building a **Content Pipeline** first, and a **Game Client** second.
 
-maybe I am going to generate pixel art via AI as well! keep in mind - how does this change the MVP plan and what can we use for generating 32x32 sprites? or generate entire sprite sheets at once?
+maybe I am going to generate pixel art via AI as well! keep in mind - how does this change the MVP plan and what can we use for generating 128x128 sprites? or generate entire sprite sheets at once?
 
-This is a force multiplier for content creation, but it introduces **Noise** into the pipeline. AI models are terrible at "exact pixel perfect 32x32 grids" without post-processing. They tend to produce "fuzzy" pixel art or mismatched resolutions.
+This is a force multiplier for content creation, but it introduces **Noise** into the pipeline. AI models are terrible at "exact pixel perfect 128x128 grids" without post-processing. They tend to produce "fuzzy" pixel art or mismatched resolutions.
 
 Here is how we integrate AI without breaking the Clean Architecture or the MVP scope.
 
@@ -638,11 +637,11 @@ Strictly speaking, AI is just another **Input Method** for the Pixel Editor, ide
 2.  User types prompt: "Cyberpunk Knight, red armor".
 3.  User clicks "Generate".
 4.  **Backend** (or ext. API) returns a 512x512 image.
-5.  **Frontend** (Client) runs the "Auto-Scale" logic (Downsample to 32x32 + Color Quantization) we defined earlier.
-6.  **User** sees the rough 32x32 result on the grid and **manually fixes** the messy pixels.
+5.  **Frontend** (Client) runs the "Auto-Scale" logic (Downsample to 128x128 + Color Quantization) we defined earlier.
+6.  **User** sees the rough 128x128 result on the grid and **manually fixes** the messy pixels.
     *   *Critical:* AI is the "Draftsman", User is the "Polisher". Do not trust raw AI output for final assets.
 
-### 2. Technology Selection (32x32 & Sheets)
+### 2. Technology Selection (128x128 & Sheets)
 
 Generating a coherent *Animation Sprite Sheet* (Idle, Walk, Attack) in one prompt is currently **unreliable** for a generic MVP. It often results in hallucinated frames or misaligned grids.
 
@@ -661,7 +660,7 @@ Generate **Single Keyframes** (e.g., "Idle Front"). The user creates the animati
 **Option B: The "API Wrapper" (OpenAI / Stability)**
 *   **Tech:** `DALL-E 3` or `Stability AI API`.
 *   **Pros:** trivial implementation (REST call). Fast.
-*   **Cons:** Costs money per click. DALL-E 3 refuses to generate true 32x32; it generates 1024x1024 which looks bad when downscaled unless prompted perfectly.
+*   **Cons:** Costs money per click. DALL-E 3 refuses to generate true 128x128; it generates 1024x1024 which looks bad when downscaled unless prompted perfectly.
 
 **The Winner:** **Option B (Stability AI)** for MVP.
 *   Why: They have specific "Pixel Art" presets in their SDXL API. It is cheap enough for testing. You can swap to Local M1 later without changing the Frontend (just the Backend service logic).
@@ -722,7 +721,7 @@ If you *really* want sheets, don't generate the sheet directly. Use **ControlNet
 
   The Loop:
   1. User logs in (Cognito)
-  2. User draws a 32x32 "Hero" and "Grass Tile" in browser (or generates via AI + polishes)
+  2. User draws a 128x128 "Hero" and "Grass Tile" in browser (or generates via AI + polishes)
   3. User submits → Admin approves
   4. User creates Game Room with their assets
   5. User invites friend via URL
@@ -741,7 +740,7 @@ If you *really* want sheets, don't generate the sheet directly. Use **ControlNet
   │  ✓ Clean Architecture (Core/External/App layers)                        │
   │  ✓ Flyway migrations, FileStorageService                                │
   │  ✓ React 19 + Vite + Tailwind scaffold                                  │
-  │  ✓ PixelCanvas component (32x32, zoom/pan)                              │
+  │  ✓ PixelCanvas component (128x128, zoom/pan)                              │
   └─────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
@@ -761,8 +760,8 @@ If you *really* want sheets, don't generate the sheet directly. Use **ControlNet
   │  │   tiles/{uuid}/tile.png, properties.json                        │    │
   │  └─────────────────────────────────────────────────────────────────┘    │
   │                                                                         │
-  │  + AI Generation Service (Stability API → 512px → downsample to 32x32)  │
-  │  + Auto-Scale Import (upload any image → nearest-neighbor → 32x32)      │
+  │  + AI Generation Service (Stability API → 512px → downsample to 128x128)  │
+  │  + Auto-Scale Import (upload any image → nearest-neighbor → 128x128)      │
   └─────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
@@ -851,7 +850,7 @@ If you *really* want sheets, don't generate the sheet directly. Use **ControlNet
   ├────────────────────────────────┼─────────┤
   │ Asset REST API (CRUD + upload) │ ✅ Done │
   ├────────────────────────────────┼─────────┤
-  │ PixelCanvas (32x32 editor)     │ ✅ Done │
+  │ PixelCanvas (128x128 editor)     │ ✅ Done │
   ├────────────────────────────────┼─────────┤
   │ EditorPage + ImageImporter     │ ✅ Done │
   ├────────────────────────────────┼─────────┤
@@ -874,4 +873,203 @@ If you *really* want sheets, don't generate the sheet directly. Use **ControlNet
   I understand the mission: Build the Content Pipeline first, Game Client second. The MVP is proving the creative
   loop works end-to-end, not implementing combat mechanics.
 
+PHASE 1 IS ALMOST COMPLETE with the character editor, tile editor AND starting the map editor
 
+Current folder structure:
+
+hexmanos/
+├── .claude
+│   └── settings.local.json
+├── READONLY
+│   └── HEXMANOS-full-MVP.txt
+├── backend
+│   ├── gradle
+│   │   └── wrapper
+│   │       ├── gradle-wrapper.jar
+│   │       └── gradle-wrapper.properties
+│   ├── src
+│   │   ├── main
+│   │   │   ├── java
+│   │   │   │   ├── com
+│   │   │   │   │   ├── hexmanos
+│   │   │   │   │   │   ├── engine
+│   │   │   │   │   │   │   ├── app
+│   │   │   │   │   │   │   │   ├── config
+│   │   │   │   │   │   │   │   │   ├── core
+│   │   │   │   │   │   │   │   │   │   ├── AssetConfig.java
+│   │   │   │   │   │   │   │   │   │   ├── FileStorageConfig.java
+│   │   │   │   │   │   │   │   │   │   ├── TransitionConfig.java
+│   │   │   │   │   │   │   │   │   │   └── UserConfig.java
+│   │   │   │   │   │   │   │   │   └── security
+│   │   │   │   │   │   │   │   │       └── SecurityConfig.java
+│   │   │   │   │   │   │   │   ├── controllers
+│   │   │   │   │   │   │   │   │   ├── AssetController.java
+│   │   │   │   │   │   │   │   │   └── UserController.java
+│   │   │   │   │   │   │   │   └── dtos
+│   │   │   │   │   │   │   │       ├── AssetDTO.java
+│   │   │   │   │   │   │   │       ├── PresignedUrlRequest.java
+│   │   │   │   │   │   │   │       ├── PresignedUrlResponse.java
+│   │   │   │   │   │   │   │       ├── RegisterAssetRequest.java
+│   │   │   │   │   │   │   │       ├── RegisterAssetResponse.java
+│   │   │   │   │   │   │   │       ├── UploadResponse.java
+│   │   │   │   │   │   │   │       └── UserDTO.java
+│   │   │   │   │   │   │   ├── core
+│   │   │   │   │   │   │   │   ├── asset
+│   │   │   │   │   │   │   │   │   ├── Asset.java
+│   │   │   │   │   │   │   │   │   ├── AssetRepository.java
+│   │   │   │   │   │   │   │   │   └── AssetService.java
+│   │   │   │   │   │   │   │   ├── files
+│   │   │   │   │   │   │   │   │   ├── FileStorageService.java
+│   │   │   │   │   │   │   │   │   └── PresignedUploadUrl.java
+│   │   │   │   │   │   │   │   ├── transition
+│   │   │   │   │   │   │   │   │   └── TransitionGeneratorService.java
+│   │   │   │   │   │   │   │   └── user
+│   │   │   │   │   │   │   │       ├── User.java
+│   │   │   │   │   │   │   │       ├── UserRepository.java
+│   │   │   │   │   │   │   │       └── UserService.java
+│   │   │   │   │   │   │   ├── external
+│   │   │   │   │   │   │   │   ├── files
+│   │   │   │   │   │   │   │   │   └── storage
+│   │   │   │   │   │   │   │   │       ├── LocalFileStorageService.java
+│   │   │   │   │   │   │   │   │       └── S3FileStorageService.java
+│   │   │   │   │   │   │   │   └── postgres
+│   │   │   │   │   │   │   │       ├── asset
+│   │   │   │   │   │   │   │       │   ├── AssetDB.java
+│   │   │   │   │   │   │   │       │   ├── AssetEntity.java
+│   │   │   │   │   │   │   │       │   └── PostgresAssetRepository.java
+│   │   │   │   │   │   │   │       └── user
+│   │   │   │   │   │   │   │           ├── PostgresUserRepository.java
+│   │   │   │   │   │   │   │           ├── UserDB.java
+│   │   │   │   │   │   │   │           └── UserEntity.java
+│   │   │   │   │   │   │   └── HexmanosEngineApplication.java
+│   │   │   │   │   │   └── .DS_Store
+│   │   │   │   │   └── .DS_Store
+│   │   │   │   └── .DS_Store
+│   │   │   ├── resources
+│   │   │   │   ├── db
+│   │   │   │   │   ├── migration
+│   │   │   │   │   │   ├── V1__init_schema.sql
+│   │   │   │   │   │   ├── V20260116113411__seed_sample_assets.sql
+│   │   │   │   │   │   └── V20260116160205__create_users_table.sql
+│   │   │   │   │   └── .DS_Store
+│   │   │   │   ├── .DS_Store
+│   │   │   │   ├── application-local.properties
+│   │   │   │   ├── application-m1max.properties
+│   │   │   │   └── application.properties
+│   │   │   └── .DS_Store
+│   │   └── .DS_Store
+│   ├── .DS_Store
+│   ├── build.gradle
+│   ├── gradlew
+│   ├── gradlew.bat
+│   ├── local.env
+│   ├── repo-text-blob.py
+│   └── settings.gradle
+├── frontend
+│   ├── e2e
+│   │   ├── editor.spec.ts
+│   │   ├── home.spec.ts
+│   │   └── tile-editor.spec.ts
+│   ├── playwright-report
+│   │   └── index.html
+│   ├── public
+│   │   └── vite.svg
+│   ├── src
+│   │   ├── api
+│   │   │   ├── assets.ts
+│   │   │   ├── types.ts
+│   │   │   └── users.ts
+│   │   ├── assets
+│   │   │   └── react.svg
+│   │   ├── components
+│   │   │   ├── layout
+│   │   │   │   ├── Header.tsx
+│   │   │   │   └── index.ts
+│   │   │   ├── ui
+│   │   │   │   ├── button.tsx
+│   │   │   │   └── card.tsx
+│   │   │   └── .DS_Store
+│   │   ├── context
+│   │   │   └── AuthContext.tsx
+│   │   ├── features
+│   │   │   ├── auth
+│   │   │   │   ├── components
+│   │   │   │   ├── pages
+│   │   │   │   │   ├── AuthCallbackPage.tsx
+│   │   │   │   │   ├── ConfirmPage.tsx
+│   │   │   │   │   ├── LoginPage.tsx
+│   │   │   │   │   └── RegisterPage.tsx
+│   │   │   │   └── index.ts
+│   │   │   ├── editor
+│   │   │   │   ├── components
+│   │   │   │   │   ├── CharacterGallery.tsx
+│   │   │   │   │   └── PixelCanvas.tsx
+│   │   │   │   ├── pages
+│   │   │   │   │   └── EditorPage.tsx
+│   │   │   │   └── index.ts
+│   │   │   ├── tiles
+│   │   │   │   ├── components
+│   │   │   │   │   └── TileGallery.tsx
+│   │   │   │   ├── pages
+│   │   │   │   │   └── TileEditorPage.tsx
+│   │   │   │   └── index.ts
+│   │   │   └── .DS_Store
+│   │   ├── lib
+│   │   │   ├── amplify.ts
+│   │   │   ├── api.ts
+│   │   │   └── utils.ts
+│   │   ├── .DS_Store
+│   │   ├── App.css
+│   │   ├── App.tsx
+│   │   ├── index.css
+│   │   ├── main.tsx
+│   │   └── repo-text-blob.py
+│   ├── test-results
+│   │   └── .last-run.json
+│   ├── .DS_Store
+│   ├── .gitignore
+│   ├── README.md
+│   ├── eslint.config.js
+│   ├── index.html
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── playwright.config.ts
+│   ├── repo-text-blob.py
+│   ├── tsconfig.app.json
+│   ├── tsconfig.json
+│   ├── tsconfig.node.json
+│   └── vite.config.ts
+├── infra
+│   ├── bin
+│   │   ├── infra.d.ts
+│   │   ├── infra.js
+│   │   └── infra.ts
+│   ├── cdk.out
+│   │   ├── InfraStack.assets.json
+│   │   ├── InfraStack.template.json
+│   │   ├── cdk.out
+│   │   ├── manifest.json
+│   │   └── tree.json
+│   ├── lib
+│   │   ├── infra-stack.d.ts
+│   │   ├── infra-stack.js
+│   │   └── infra-stack.ts
+│   ├── test
+│   │   ├── infra.test.d.ts
+│   │   ├── infra.test.js
+│   │   └── infra.test.ts
+│   ├── .gitignore
+│   ├── .npmignore
+│   ├── README.md
+│   ├── cdk.json
+│   ├── jest.config.js
+│   ├── package-lock.json
+│   ├── package.json
+│   └── tsconfig.json
+├── .DS_Store
+├── .gitattributes
+├── .gitignore
+├── AGENTS.md
+├── CLAUDE.md
+├── hexmanos.iml
+└── repo-text-blob.py

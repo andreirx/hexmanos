@@ -37,4 +37,14 @@ public interface FileStorageService {
     default String uploadFileToKey(MultipartFile file, String storageKey) {
         throw new UnsupportedOperationException("Direct upload not supported for this storage type");
     }
+
+    /**
+     * Upload raw bytes to a specific storage key.
+     * Used for server-side generated content like transition tiles.
+     *
+     * @param data The raw bytes to upload
+     * @param storageKey The full storage key (e.g., "tiles/uuid/transition_n.png")
+     * @param contentType The MIME type (e.g., "image/png")
+     */
+    void uploadBytes(byte[] data, String storageKey, String contentType);
 }

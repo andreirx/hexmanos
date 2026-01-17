@@ -1,7 +1,7 @@
 package com.hexmanos.engine.core.asset;
 
 import com.hexmanos.engine.core.files.FileStorageService;
-import lombok.RequiredArgsConstructor;
+import com.hexmanos.engine.core.transition.TransitionGeneratorService;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
@@ -11,10 +11,17 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Slf4j
-@RequiredArgsConstructor
 public class AssetService {
     private final AssetRepository assetRepository;
     private final FileStorageService fileStorageService;
+    private final TransitionGeneratorService transitionGeneratorService;
+
+    public AssetService(AssetRepository assetRepository, FileStorageService fileStorageService,
+                        TransitionGeneratorService transitionGeneratorService) {
+        this.assetRepository = assetRepository;
+        this.fileStorageService = fileStorageService;
+        this.transitionGeneratorService = transitionGeneratorService;
+    }
 
     public List<Asset> getAll() {
         return assetRepository.findAll();
@@ -84,27 +91,52 @@ public class AssetService {
         // Check if asset already exists - if so, update it (upsert pattern)
         Optional<Asset> existingAsset = assetRepository.findById(assetId);
 
+        Asset savedAsset;
         if (existingAsset.isPresent()) {
             // Update existing asset
             Asset asset = existingAsset.get();
             asset.setName(name);
             // Note: we don't change type, authorId, or storageKeyPrefix on update
             log.info("Updating existing asset {} with {} validated files", name, files.size());
-            return assetRepository.save(asset);
+            savedAsset = assetRepository.save(asset);
+        } else {
+            // Create new asset record
+            Asset asset = new Asset();
+            asset.setId(assetId);
+            asset.setType(type);
+            asset.setName(name);
+            asset.setAuthorId(authorId);
+            asset.setStatus(Asset.AssetStatus.PENDING);
+            asset.setStorageKeyPrefix(storageKeyPrefix);
+            asset.setCreatedAt(LocalDateTime.now());
+
+            log.info("Registering new asset {} with {} validated files at {}", name, files.size(), storageKeyPrefix);
+            savedAsset = assetRepository.save(asset);
         }
 
-        // Create new asset record
-        Asset asset = new Asset();
-        asset.setId(assetId);
-        asset.setType(type);
-        asset.setName(name);
-        asset.setAuthorId(authorId);
-        asset.setStatus(Asset.AssetStatus.PENDING);
-        asset.setStorageKeyPrefix(storageKeyPrefix);
-        asset.setCreatedAt(LocalDateTime.now());
+        // Generate transitions for TILE assets
+        if (type == Asset.AssetType.TILE) {
+            generateTileTransitions(storageKeyPrefix, files);
+        }
 
-        log.info("Registering new asset {} with {} validated files at {}", name, files.size(), storageKeyPrefix);
-        return assetRepository.save(asset);
+        return savedAsset;
+    }
+
+    /**
+     * Generate transition tiles for each variation of a TILE asset.
+     */
+    private void generateTileTransitions(String storageKeyPrefix, List<String> files) {
+        // Find all tile_N.png files and generate transitions for each
+        for (String fileName : files) {
+            if (fileName.startsWith("tile_") && fileName.endsWith(".png")) {
+                try {
+                    transitionGeneratorService.generateTransitions(storageKeyPrefix, fileName);
+                } catch (Exception e) {
+                    log.error("Failed to generate transitions for {}/{}: {}", storageKeyPrefix, fileName, e.getMessage());
+                    // Continue with other files even if one fails
+                }
+            }
+        }
     }
 
     private String getAssetTypeFolder(Asset.AssetType type) {

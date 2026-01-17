@@ -130,4 +130,16 @@ public class S3FileStorageService implements FileStorageService {
     private String generateUniqueFileName(String originalFileName) {
         return System.currentTimeMillis() + "_" + UUID.randomUUID() + "_" + originalFileName;
     }
+
+    @Override
+    public void uploadBytes(byte[] data, String storageKey, String contentType) {
+        PutObjectRequest request = PutObjectRequest.builder()
+                .bucket(bucketName)
+                .key(storageKey)
+                .contentType(contentType)
+                .build();
+
+        s3Client.putObject(request, RequestBody.fromBytes(data));
+        log.info("Bytes uploaded to S3: {} ({} bytes)", storageKey, data.length);
+    }
 }
