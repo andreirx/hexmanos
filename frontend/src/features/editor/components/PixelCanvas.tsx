@@ -8,6 +8,8 @@ export interface Selection {
   width: number
   height: number
   pixels: Uint8ClampedArray | null // The selected pixels (copied when selection is made)
+  originalWidth: number // Original width when pixels were captured (for resize scaling)
+  originalHeight: number // Original height when pixels were captured (for resize scaling)
 }
 
 interface PixelCanvasProps {
@@ -225,16 +227,13 @@ export function PixelCanvas({
 
   // Commit selection back to canvas
   const commitSelection = useCallback(() => {
-    if (!selection || !selection.pixels) return
+    if (!selection || !selection.pixels || selection.originalWidth <= 0 || selection.originalHeight <= 0) return
 
-    // Paste the selection pixels at current position
-    const origW = Math.round(selection.pixels.length / 4 / (selection.height || 1))
-    const origH = selection.pixels.length / 4 / origW
-
+    // Paste the selection pixels at current position with scaling
     pasteRegion(
       selection.pixels,
-      origW,
-      origH,
+      selection.originalWidth,
+      selection.originalHeight,
       selection.x,
       selection.y,
       selection.width,
@@ -307,14 +306,16 @@ export function PixelCanvas({
       ctx.translate(pan.x, pan.y)
 
       // Draw selection pixels if we have them (floating selection)
-      if (selection.pixels) {
+      if (selection.pixels && selection.originalWidth > 0 && selection.originalHeight > 0) {
         const selCanvas = document.createElement("canvas")
-        const origW = Math.round(selection.pixels.length / 4 / (selection.height || 1))
-        const origH = selection.pixels.length / 4 / origW
-        selCanvas.width = origW
-        selCanvas.height = origH
+        selCanvas.width = selection.originalWidth
+        selCanvas.height = selection.originalHeight
         const selCtx = selCanvas.getContext("2d")!
-        const selImageData = new ImageData(new Uint8ClampedArray(selection.pixels), origW, origH)
+        const selImageData = new ImageData(
+          new Uint8ClampedArray(selection.pixels),
+          selection.originalWidth,
+          selection.originalHeight
+        )
         selCtx.putImageData(selImageData, 0, 0)
 
         ctx.imageSmoothingEnabled = false
@@ -452,6 +453,8 @@ export function PixelCanvas({
           width: 0,
           height: 0,
           pixels: null,
+          originalWidth: 0,
+          originalHeight: 0,
         })
       }
     } else {
@@ -493,6 +496,8 @@ export function PixelCanvas({
           width: Math.min(width, endX) - Math.max(0, startX),
           height: Math.min(height, endY) - Math.max(0, startY),
           pixels: null,
+          originalWidth: 0,
+          originalHeight: 0,
         })
       } else if (isDraggingSelection && dragStart.current && selection) {
         // Move selection
@@ -565,6 +570,8 @@ export function PixelCanvas({
       setSelection({
         ...selection,
         pixels: copiedPixels,
+        originalWidth: selection.width,
+        originalHeight: selection.height,
       })
       isDirty.current = true
       render()

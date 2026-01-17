@@ -338,6 +338,16 @@ export function EditorPage() {
       setStatusMessage({ type: "error", text: "Must have at least 1 frame" })
       return
     }
+
+    // Check if frame has any non-transparent pixels
+    const hasContent = currentFrame.pixels.some((v, i) => i % 4 === 3 && v > 0)
+    if (hasContent) {
+      const confirmed = window.confirm(
+        "This frame contains pixel data. Are you sure you want to delete it?"
+      )
+      if (!confirmed) return
+    }
+
     setAnimationData((prev) => {
       const newData = { ...prev }
       const newFrames = [...newData[currentState].frames]
