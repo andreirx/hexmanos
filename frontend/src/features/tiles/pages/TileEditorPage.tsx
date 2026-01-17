@@ -687,7 +687,8 @@ export function TileEditorPage() {
                       type="color"
                       value={fillColor1}
                       onChange={(e) => setFillColor1(e.target.value)}
-                      className="w-6 h-6 rounded cursor-pointer border-0"
+                      className="w-8 h-8 rounded cursor-pointer border-2 border-zinc-600 bg-transparent p-0"
+                      style={{ appearance: "none", WebkitAppearance: "none" }}
                     />
                     <input
                       type="text"
@@ -710,7 +711,8 @@ export function TileEditorPage() {
                       type="color"
                       value={fillColor2}
                       onChange={(e) => setFillColor2(e.target.value)}
-                      className="w-6 h-6 rounded cursor-pointer border-0"
+                      className="w-8 h-8 rounded cursor-pointer border-2 border-zinc-600 bg-transparent p-0"
+                      style={{ appearance: "none", WebkitAppearance: "none" }}
                     />
                     <input
                       type="text"
@@ -733,7 +735,8 @@ export function TileEditorPage() {
                       type="color"
                       value={fillColor3}
                       onChange={(e) => setFillColor3(e.target.value)}
-                      className="w-6 h-6 rounded cursor-pointer border-0"
+                      className="w-8 h-8 rounded cursor-pointer border-2 border-zinc-600 bg-transparent p-0"
+                      style={{ appearance: "none", WebkitAppearance: "none" }}
                     />
                     <input
                       type="text"

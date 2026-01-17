@@ -109,26 +109,30 @@ export function TileGallery({ isOpen, onClose, onSelect, currentUserId }: TileGa
 
                       {/* Actions */}
                       <div className="flex gap-1 mt-2">
-                        {isOwner ? (
-                          <Button
-                            size="sm"
-                            className="flex-1 h-7 text-xs bg-blue-600 hover:bg-blue-700"
-                            onClick={() => onSelect(tile, "edit")}
-                          >
-                            <Edit2 className="w-3 h-3 mr-1" />
-                            Edit
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="flex-1 h-7 text-xs border-zinc-600 hover:bg-zinc-700"
-                            onClick={() => onSelect(tile, "copy")}
-                          >
-                            <Copy className="w-3 h-3 mr-1" />
-                            Copy
-                          </Button>
-                        )}
+                        <Button
+                          size="sm"
+                          className={`flex-1 h-7 text-xs ${
+                            isOwner
+                              ? "bg-blue-600 hover:bg-blue-700 text-white"
+                              : "bg-zinc-700 text-zinc-500 cursor-not-allowed"
+                          }`}
+                          onClick={() => isOwner && onSelect(tile, "edit")}
+                          disabled={!isOwner}
+                          title={isOwner ? "Edit this tile" : "You can only edit your own tiles"}
+                        >
+                          <Edit2 className="w-3 h-3 mr-1" />
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 h-7 text-xs border-zinc-600 text-zinc-200 hover:bg-zinc-700"
+                          onClick={() => onSelect(tile, "copy")}
+                          title="Copy this tile to edit as your own"
+                        >
+                          <Copy className="w-3 h-3 mr-1" />
+                          Copy
+                        </Button>
                       </div>
                     </div>
                   </div>
