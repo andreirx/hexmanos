@@ -76,7 +76,7 @@ export function CharacterGallery({ isOpen, onClose, onSelect, currentUserId }: C
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
               {characters.map((character) => {
                 const isOwner = currentUserId && character.authorId === currentUserId
-                const thumbnailUrl = getAssetFileUrl(character.storageKeyPrefix, "idle_0.png")
+                const thumbnailUrl = getAssetFileUrl(character.storageKeyPrefix, "idle_0.png", true)
 
                 return (
                   <div

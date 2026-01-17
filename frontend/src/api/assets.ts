@@ -116,17 +116,20 @@ export async function getAssetsByType(type: "CHARACTER" | "TILE" | "MAP"): Promi
 /**
  * Get a file from an asset's storage.
  * Returns the URL to fetch the file from.
+ * @param bustCache If true, adds a timestamp to bypass browser cache
  */
-export function getAssetFileUrl(storageKeyPrefix: string, fileName: string): string {
+export function getAssetFileUrl(storageKeyPrefix: string, fileName: string, bustCache = false): string {
   const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:8080/api"
-  return `${baseUrl}/assets/files/${storageKeyPrefix}/${fileName}`
+  const url = `${baseUrl}/assets/files/${storageKeyPrefix}/${fileName}`
+  return bustCache ? `${url}?t=${Date.now()}` : url
 }
 
 /**
  * Fetch an asset file as JSON.
+ * Always busts cache to ensure fresh data.
  */
 export async function getAssetFile<T>(storageKeyPrefix: string, fileName: string): Promise<T> {
-  const url = getAssetFileUrl(storageKeyPrefix, fileName)
+  const url = getAssetFileUrl(storageKeyPrefix, fileName, true) // Always bust cache for JSON
   const response = await fetch(url)
   if (!response.ok) {
     throw new Error(`Failed to fetch ${fileName}: ${response.statusText}`)
@@ -136,9 +139,10 @@ export async function getAssetFile<T>(storageKeyPrefix: string, fileName: string
 
 /**
  * Load an image from asset storage and return as ImageData.
+ * Always busts cache to ensure fresh data.
  */
 export async function loadAssetImage(storageKeyPrefix: string, fileName: string): Promise<Uint8ClampedArray> {
-  const url = getAssetFileUrl(storageKeyPrefix, fileName)
+  const url = getAssetFileUrl(storageKeyPrefix, fileName, true) // Always bust cache for images
 
   return new Promise((resolve, reject) => {
     const img = document.createElement("img")
