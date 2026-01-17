@@ -19,6 +19,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Slf4j
@@ -141,5 +143,58 @@ public class S3FileStorageService implements FileStorageService {
 
         s3Client.putObject(request, RequestBody.fromBytes(data));
         log.info("Bytes uploaded to S3: {} ({} bytes)", storageKey, data.length);
+    }
+
+    @Override
+    public List<String> listFiles(String directoryKey) {
+        List<String> fileNames = new ArrayList<>();
+        String s3Prefix = String.format("%s/%s/", prefix, directoryKey);
+
+        try {
+            ListObjectsV2Request listRequest = ListObjectsV2Request.builder()
+                    .bucket(bucketName)
+                    .prefix(s3Prefix)
+                    .build();
+
+            ListObjectsV2Response response = s3Client.listObjectsV2(listRequest);
+
+            for (S3Object s3Object : response.contents()) {
+                String key = s3Object.key();
+                // Extract just the filename from the full key
+                String fileName = key.substring(s3Prefix.length());
+                if (!fileName.isEmpty() && !fileName.contains("/")) {
+                    fileNames.add(fileName);
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to list files in S3 prefix {}: {}", s3Prefix, e.getMessage());
+        }
+
+        return fileNames;
+    }
+
+    @Override
+    public void deleteFilesWithPrefix(String directoryKey, String fileNamePrefix) {
+        String s3Prefix = String.format("%s/%s/%s", prefix, directoryKey, fileNamePrefix);
+
+        try {
+            ListObjectsV2Request listRequest = ListObjectsV2Request.builder()
+                    .bucket(bucketName)
+                    .prefix(s3Prefix)
+                    .build();
+
+            ListObjectsV2Response response = s3Client.listObjectsV2(listRequest);
+
+            for (S3Object s3Object : response.contents()) {
+                DeleteObjectRequest deleteRequest = DeleteObjectRequest.builder()
+                        .bucket(bucketName)
+                        .key(s3Object.key())
+                        .build();
+                s3Client.deleteObject(deleteRequest);
+                log.info("Deleted S3 object: {}", s3Object.key());
+            }
+        } catch (Exception e) {
+            log.error("Failed to delete files with prefix {} in S3: {}", s3Prefix, e.getMessage());
+        }
     }
 }

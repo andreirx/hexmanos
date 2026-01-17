@@ -16,7 +16,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
+import java.util.stream.Stream;
 
 @Slf4j
 public class LocalFileStorageService implements FileStorageService {
@@ -130,6 +133,50 @@ public class LocalFileStorageService implements FileStorageService {
             log.info("Bytes uploaded to local path: {} ({} bytes)", targetPath, data.length);
         } catch (IOException ex) {
             throw new RuntimeException("Failed to upload bytes to key: " + storageKey, ex);
+        }
+    }
+
+    @Override
+    public List<String> listFiles(String directoryKey) {
+        Path dirPath = fileStorageLocation.resolve(directoryKey).normalize();
+        List<String> fileNames = new ArrayList<>();
+
+        if (!Files.exists(dirPath) || !Files.isDirectory(dirPath)) {
+            return fileNames;
+        }
+
+        try (Stream<Path> stream = Files.list(dirPath)) {
+            stream.filter(Files::isRegularFile)
+                    .map(path -> path.getFileName().toString())
+                    .forEach(fileNames::add);
+        } catch (IOException e) {
+            log.error("Failed to list files in {}: {}", directoryKey, e.getMessage());
+        }
+
+        return fileNames;
+    }
+
+    @Override
+    public void deleteFilesWithPrefix(String directoryKey, String fileNamePrefix) {
+        Path dirPath = fileStorageLocation.resolve(directoryKey).normalize();
+
+        if (!Files.exists(dirPath) || !Files.isDirectory(dirPath)) {
+            return;
+        }
+
+        try (Stream<Path> stream = Files.list(dirPath)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().startsWith(fileNamePrefix))
+                    .forEach(path -> {
+                        try {
+                            Files.delete(path);
+                            log.info("Deleted file: {}", path);
+                        } catch (IOException e) {
+                            log.error("Failed to delete file {}: {}", path, e.getMessage());
+                        }
+                    });
+        } catch (IOException e) {
+            log.error("Failed to list files for deletion in {}: {}", directoryKey, e.getMessage());
         }
     }
 }

@@ -34,7 +34,11 @@
       "Bash(npm run e2e:*)",
       "Bash(npm run)",
       "Bash(npm test)",
-      "Bash(./gradlew test:*)"
+      "Bash(./gradlew test:*)",
+      "Bash(find . *)",
+      "Bash(cd /Users/apple/Documents/APLICATII BIJUTERIE/hexmanos && find:*)",
+      "Bash(find frontend -path */tile* -o -path */Tile*)",
+      "Bash(./mvnw compile:*)"
     ]
   }
 }

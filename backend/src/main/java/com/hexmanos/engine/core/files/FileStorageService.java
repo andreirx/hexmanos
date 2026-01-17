@@ -47,4 +47,21 @@ public interface FileStorageService {
      * @param contentType The MIME type (e.g., "image/png")
      */
     void uploadBytes(byte[] data, String storageKey, String contentType);
+
+    /**
+     * List all files in a directory/prefix.
+     * Returns just the file names (not the full path).
+     *
+     * @param directoryKey The directory/prefix to list (e.g., "tiles/uuid")
+     * @return List of file names in the directory
+     */
+    java.util.List<String> listFiles(String directoryKey);
+
+    /**
+     * Delete multiple files matching a prefix pattern.
+     *
+     * @param directoryKey The directory/prefix
+     * @param fileNamePrefix The prefix of files to delete (e.g., "tile_0_transition_")
+     */
+    void deleteFilesWithPrefix(String directoryKey, String fileNamePrefix);
 }

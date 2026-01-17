@@ -60,6 +60,39 @@ public class TransitionGeneratorService {
     }
 
     /**
+     * Check if transitions already exist for the first tile variation (tile_0).
+     * We only check for one transition file (north) as they are always generated together.
+     *
+     * @param storageKeyPrefix The storage prefix (e.g., "tiles/uuid")
+     * @return true if transitions exist for tile_0
+     */
+    public boolean hasTransitionsForTile0(String storageKeyPrefix) {
+        String transitionKey = storageKeyPrefix + "/" + Direction.N.getFileName("tile_0.png");
+        return fileStorageService.fileExists(transitionKey);
+    }
+
+    /**
+     * Check if the base tile_0.png exists in storage.
+     *
+     * @param storageKeyPrefix The storage prefix (e.g., "tiles/uuid")
+     * @return true if tile_0.png exists
+     */
+    public boolean hasTile0(String storageKeyPrefix) {
+        String tile0Key = storageKeyPrefix + "/tile_0.png";
+        return fileStorageService.fileExists(tile0Key);
+    }
+
+    /**
+     * Generate transitions for tile_0 only (first variation).
+     * This is the method called by the background scheduler.
+     *
+     * @param storageKeyPrefix The storage prefix (e.g., "tiles/uuid")
+     */
+    public void generateTransitionsForTile0(String storageKeyPrefix) {
+        generateTransitions(storageKeyPrefix, "tile_0.png");
+    }
+
+    /**
      * Generate all 8 transition images from a base tile.
      *
      * @param storageKeyPrefix The storage prefix where the base tile is stored (e.g., "tiles/uuid")
