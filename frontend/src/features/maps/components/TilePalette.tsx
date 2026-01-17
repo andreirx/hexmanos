@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { ChevronDown, ChevronUp, Grid3X3 } from "lucide-react"
+import { Grid3X3 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { getAssetsByType, getAssetFileUrl, getAssetFile } from "@/api/assets"
 import type { AssetDTO } from "@/api/types"
@@ -13,35 +13,15 @@ interface TileProperties {
 }
 
 interface TilePaletteProps {
-  selectedTile: { assetId: string; variation: number } | null
-  onSelectTile: (tile: { assetId: string; variation: number } | null) => void
+  selectedAssetId: string | null
+  onSelectAsset: (assetId: string | null) => void
   tileType: "TILE" | "PATH"
 }
 
-// Path direction labels
-const PATH_LABELS = [
-  "→",      // 0001 - Right
-  "←",      // 0010 - Left
-  "←→",     // 0011 - Left+Right
-  "↓",      // 0100 - Down
-  "↓→",     // 0101 - Down+Right
-  "↓←",     // 0110 - Down+Left
-  "↓←→",    // 0111 - Down+Left+Right
-  "↑",      // 1000 - Up
-  "↑→",     // 1001 - Up+Right
-  "↑←",     // 1010 - Up+Left
-  "↑←→",    // 1011 - Up+Left+Right
-  "↑↓",     // 1100 - Up+Down
-  "↑↓→",    // 1101 - Up+Down+Right
-  "↑↓←",    // 1110 - Up+Down+Left
-  "↑↓←→",   // 1111 - All
-]
-
-export function TilePalette({ selectedTile, onSelectTile, tileType }: TilePaletteProps) {
+export function TilePalette({ selectedAssetId, onSelectAsset, tileType }: TilePaletteProps) {
   const [tiles, setTiles] = useState<AssetDTO[]>([])
   const [tileProperties, setTileProperties] = useState<Map<string, TileProperties>>(new Map())
   const [isLoading, setIsLoading] = useState(false)
-  const [expandedTiles, setExpandedTiles] = useState<Set<string>>(new Set())
 
   // Load tiles on mount and when tileType changes
   useEffect(() => {
@@ -87,28 +67,12 @@ export function TilePalette({ selectedTile, onSelectTile, tileType }: TilePalett
     loadTiles()
   }, [tileType])
 
-  const toggleExpanded = (assetId: string) => {
-    setExpandedTiles(prev => {
-      const next = new Set(prev)
-      if (next.has(assetId)) {
-        next.delete(assetId)
-      } else {
-        next.add(assetId)
-      }
-      return next
-    })
-  }
-
-  const isSelected = (assetId: string, variation: number) => {
-    return selectedTile?.assetId === assetId && selectedTile?.variation === variation
-  }
-
   return (
     <Card className="bg-zinc-800 border-zinc-700">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm text-zinc-300 flex items-center gap-2">
           <Grid3X3 className="w-4 h-4" />
-          {tileType === "PATH" ? "Path Tiles" : "Terrain Tiles"}
+          {tileType === "PATH" ? "Path Types" : "Terrain Types"}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2 max-h-[400px] overflow-y-auto">
@@ -121,35 +85,25 @@ export function TilePalette({ selectedTile, onSelectTile, tileType }: TilePalett
             Create some in the Tile Editor!
           </div>
         ) : (
-          tiles.map(tile => {
-            const props = tileProperties.get(tile.id)
-            const variations = props?.variations || 1
-            const isExpanded = expandedTiles.has(tile.id)
-            const thumbnailUrl = getAssetFileUrl(tile.storageKeyPrefix, "tile_0.png", true)
+          <div className="grid grid-cols-2 gap-2">
+            {tiles.map(tile => {
+              const props = tileProperties.get(tile.id)
+              const isSelected = selectedAssetId === tile.id
+              const thumbnailUrl = getAssetFileUrl(tile.storageKeyPrefix, "tile_0.png", true)
 
-            return (
-              <div key={tile.id} className="bg-zinc-900 rounded border border-zinc-700">
-                {/* Tile header with first variation */}
-                <div
-                  className="flex items-center gap-2 p-2 cursor-pointer hover:bg-zinc-800 transition-colors"
-                  onClick={() => {
-                    if (variations > 1) {
-                      toggleExpanded(tile.id)
-                    } else {
-                      onSelectTile({ assetId: tile.id, variation: 0 })
-                    }
-                  }}
+              return (
+                <button
+                  key={tile.id}
+                  onClick={() => onSelectAsset(isSelected ? null : tile.id)}
+                  className={`flex flex-col items-center p-2 rounded border-2 transition-all ${
+                    isSelected
+                      ? "border-blue-500 bg-blue-500/10"
+                      : "border-zinc-700 hover:border-zinc-500 bg-zinc-900"
+                  }`}
+                  title={`${tile.name}${props ? ` (${props.variations} variations)` : ""}`}
                 >
                   {/* Thumbnail */}
-                  <div
-                    className={`w-12 h-12 flex-shrink-0 rounded border-2 overflow-hidden ${
-                      isSelected(tile.id, 0) ? "border-blue-500" : "border-zinc-700"
-                    }`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onSelectTile({ assetId: tile.id, variation: 0 })
-                    }}
-                  >
+                  <div className="w-16 h-16 flex items-center justify-center overflow-hidden rounded">
                     <img
                       src={thumbnailUrl}
                       alt={tile.name}
@@ -158,84 +112,33 @@ export function TilePalette({ selectedTile, onSelectTile, tileType }: TilePalett
                       onError={(e) => {
                         const target = e.target as HTMLImageElement
                         target.style.display = "none"
+                        target.parentElement!.innerHTML = '<span class="text-2xl text-zinc-600">?</span>'
                       }}
                     />
                   </div>
 
-                  {/* Name and info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-zinc-200 truncate" title={tile.name}>
-                      {tile.name}
-                    </div>
-                    <div className="text-xs text-zinc-500">
-                      {variations} variation{variations !== 1 ? "s" : ""}
-                    </div>
-                  </div>
+                  {/* Name */}
+                  <span className="text-xs text-zinc-300 truncate w-full text-center mt-1">
+                    {tile.name}
+                  </span>
 
-                  {/* Expand button */}
-                  {variations > 1 && (
-                    <div className="text-zinc-500">
-                      {isExpanded ? (
-                        <ChevronUp className="w-4 h-4" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4" />
-                      )}
-                    </div>
+                  {/* Variations count */}
+                  {props && (
+                    <span className="text-xs text-zinc-500">
+                      {props.variations} var{props.variations !== 1 ? "s" : ""}
+                    </span>
                   )}
-                </div>
-
-                {/* Expanded variations */}
-                {isExpanded && variations > 1 && (
-                  <div className="border-t border-zinc-700 p-2">
-                    <div className="grid grid-cols-4 gap-1">
-                      {Array.from({ length: variations }).map((_, idx) => {
-                        const varUrl = getAssetFileUrl(tile.storageKeyPrefix, `tile_${idx}.png`, true)
-                        const label = tileType === "PATH" && idx < PATH_LABELS.length ? PATH_LABELS[idx] : null
-
-                        return (
-                          <button
-                            key={idx}
-                            onClick={() => onSelectTile({ assetId: tile.id, variation: idx })}
-                            className={`relative aspect-square rounded border-2 overflow-hidden transition-all ${
-                              isSelected(tile.id, idx)
-                                ? "border-blue-500 scale-105"
-                                : "border-zinc-700 hover:border-zinc-500"
-                            }`}
-                            title={label ? `Variation ${idx + 1}: ${label}` : `Variation ${idx + 1}`}
-                          >
-                            <img
-                              src={varUrl}
-                              alt={`Variation ${idx + 1}`}
-                              className="w-full h-full object-contain"
-                              style={{ imageRendering: "pixelated" }}
-                              onError={(e) => {
-                                const target = e.target as HTMLImageElement
-                                target.style.opacity = "0.3"
-                              }}
-                            />
-                            {label && (
-                              <div className="absolute inset-0 flex items-center justify-center">
-                                <span className="text-xs text-white/80 font-bold drop-shadow-lg bg-black/30 px-1 rounded">
-                                  {label}
-                                </span>
-                              </div>
-                            )}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )
-          })
+                </button>
+              )
+            })}
+          </div>
         )}
 
         {/* Clear selection */}
-        {selectedTile && (
+        {selectedAssetId && (
           <button
-            onClick={() => onSelectTile(null)}
-            className="w-full py-2 px-3 text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 rounded transition-colors"
+            onClick={() => onSelectAsset(null)}
+            className="w-full py-2 px-3 text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 rounded transition-colors mt-2"
           >
             Clear Selection
           </button>

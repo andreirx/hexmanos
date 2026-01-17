@@ -11,19 +11,21 @@ import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
 import {
   Save, FolderOpen, FilePlus, Grid3X3, Users, Layers, Trash2, Eye, EyeOff,
-  ZoomIn, ZoomOut, Move, MousePointer2
+  ZoomIn, ZoomOut, Move, MousePointer2, Route
 } from "lucide-react"
 import type { UserDTO, AssetDTO } from "@/api/types"
 
-// Map data structures
+// Map data structures - simplified for auto-variation selection
 export interface MapTile {
   tileAssetId: string
-  variation: number
+  // Note: variation is NOT stored - it's picked randomly at render time
+  // We store a seed per cell for consistent random variation
+  seed: number
 }
 
 export interface MapPath {
   pathAssetId: string
-  variation: number  // 0-14 based on direction combo
+  // variation is calculated automatically based on neighbors (0-14)
 }
 
 export interface MapCharacter {
@@ -39,7 +41,7 @@ export interface MapData {
   tileSize: number
   layers: {
     terrain: (MapTile | null)[][]  // 2D array [y][x]
-    paths: (MapPath | null)[][]     // 2D array [y][x]
+    paths: (MapPath | null)[][]     // 2D array [y][x] - variation calculated at render
   }
   characters: MapCharacter[]
 }
@@ -75,6 +77,11 @@ function createEmptyMap(width: number, height: number): MapData {
   }
 }
 
+// Generate a random seed for consistent variation selection
+function generateSeed(): number {
+  return Math.floor(Math.random() * 1000000)
+}
+
 export function MapEditorPage() {
   const { isAuthenticated, user: authUser } = useAuth()
 
@@ -88,10 +95,11 @@ export function MapEditorPage() {
   const [showGrid, setShowGrid] = useState(true)
   const [showPaths, setShowPaths] = useState(true)
   const [showCharacters, setShowCharacters] = useState(true)
+  const [showTransitions, setShowTransitions] = useState(true)
 
-  // Selection state
-  const [selectedTile, setSelectedTile] = useState<{ assetId: string; variation: number } | null>(null)
-  const [selectedPath, setSelectedPath] = useState<{ assetId: string; variation: number } | null>(null)
+  // Selection state - only asset ID, no variation needed
+  const [selectedTileAsset, setSelectedTileAsset] = useState<string | null>(null)
+  const [selectedPathAsset, setSelectedPathAsset] = useState<string | null>(null)
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null)
 
   // UI state
@@ -155,65 +163,90 @@ export function MapEditorPage() {
     setStatusMessage(null)
   }
 
-  // Handle canvas cell click
-  const handleCellClick = useCallback((x: number, y: number) => {
+  // Handle canvas cell click for terrain
+  const handleTerrainClick = useCallback((x: number, y: number) => {
     if (currentTool === "pan" || currentTool === "select") return
 
     setMapData(prev => {
-      const newData = { ...prev }
+      const newTerrain = prev.layers.terrain.map((row, rowY) =>
+        row.map((cell, cellX) => {
+          if (cellX === x && rowY === y) {
+            if (currentTool === "erase") return null
+            if (currentTool === "paint" && selectedTileAsset) {
+              return { tileAssetId: selectedTileAsset, seed: generateSeed() }
+            }
+          }
+          return cell
+        })
+      )
 
-      if (activeLayer === "terrain") {
-        newData.layers = {
-          ...prev.layers,
-          terrain: prev.layers.terrain.map((row, rowY) =>
-            row.map((cell, cellX) => {
-              if (cellX === x && rowY === y) {
-                if (currentTool === "erase") return null
-                if (currentTool === "paint" && selectedTile) {
-                  return { tileAssetId: selectedTile.assetId, variation: selectedTile.variation }
-                }
-              }
-              return cell
-            })
-          )
+      return {
+        ...prev,
+        layers: { ...prev.layers, terrain: newTerrain }
+      }
+    })
+  }, [currentTool, selectedTileAsset])
+
+  // Handle canvas cell click for paths - auto-calculates connections
+  const handlePathClick = useCallback((x: number, y: number) => {
+    if (currentTool === "pan" || currentTool === "select") return
+
+    setMapData(prev => {
+      const newPaths = prev.layers.paths.map(row => [...row])
+
+      if (currentTool === "erase") {
+        // Remove path at this position
+        newPaths[y][x] = null
+      } else if (currentTool === "paint" && selectedPathAsset) {
+        // Add or update path at this position
+        // Variation will be calculated at render time based on neighbors
+        newPaths[y][x] = { pathAssetId: selectedPathAsset }
+      }
+
+      return {
+        ...prev,
+        layers: { ...prev.layers, paths: newPaths }
+      }
+    })
+  }, [currentTool, selectedPathAsset])
+
+  // Handle canvas cell click for characters
+  const handleCharacterClick = useCallback((x: number, y: number) => {
+    if (currentTool === "pan" || currentTool === "select") return
+
+    setMapData(prev => {
+      if (currentTool === "erase") {
+        return {
+          ...prev,
+          characters: prev.characters.filter(c => c.x !== x || c.y !== y)
         }
-      } else if (activeLayer === "paths") {
-        newData.layers = {
-          ...prev.layers,
-          paths: prev.layers.paths.map((row, rowY) =>
-            row.map((cell, cellX) => {
-              if (cellX === x && rowY === y) {
-                if (currentTool === "erase") return null
-                if (currentTool === "paint" && selectedPath) {
-                  return { pathAssetId: selectedPath.assetId, variation: selectedPath.variation }
-                }
-              }
-              return cell
-            })
-          )
-        }
-      } else if (activeLayer === "characters") {
-        if (currentTool === "erase") {
-          // Remove character at this position
-          newData.characters = prev.characters.filter(c => c.x !== x || c.y !== y)
-        } else if (currentTool === "paint" && selectedCharacter) {
-          // Add or move character
-          const existingIndex = prev.characters.findIndex(c => c.x === x && c.y === y)
-          if (existingIndex >= 0) {
-            // Replace existing character at this position
-            const newChars = [...prev.characters]
-            newChars[existingIndex] = { characterAssetId: selectedCharacter, x, y }
-            newData.characters = newChars
-          } else {
-            // Add new character
-            newData.characters = [...prev.characters, { characterAssetId: selectedCharacter, x, y }]
+      } else if (currentTool === "paint" && selectedCharacter) {
+        const existingIndex = prev.characters.findIndex(c => c.x === x && c.y === y)
+        if (existingIndex >= 0) {
+          const newChars = [...prev.characters]
+          newChars[existingIndex] = { characterAssetId: selectedCharacter, x, y }
+          return { ...prev, characters: newChars }
+        } else {
+          return {
+            ...prev,
+            characters: [...prev.characters, { characterAssetId: selectedCharacter, x, y }]
           }
         }
       }
-
-      return newData
+      return prev
     })
-  }, [currentTool, activeLayer, selectedTile, selectedPath, selectedCharacter])
+  }, [currentTool, selectedCharacter])
+
+  // Main cell click handler that delegates based on active layer
+  const handleCellClick = useCallback((x: number, y: number) => {
+    if (activeLayer === "terrain") {
+      handleTerrainClick(x, y)
+    } else if (activeLayer === "paths") {
+      handlePathClick(x, y)
+    } else if (activeLayer === "characters") {
+      handleCharacterClick(x, y)
+    }
+  }, [activeLayer, handleTerrainClick, handlePathClick, handleCharacterClick])
 
   // Handle saving the map
   const handleSave = async () => {
@@ -299,7 +332,6 @@ export function MapEditorPage() {
         }
       }
 
-      // Filter characters that are now out of bounds
       const newCharacters = prev.characters.filter(c => c.x < newWidth && c.y < newHeight)
 
       return {
@@ -475,7 +507,7 @@ export function MapEditorPage() {
                         : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
                     }`}
                   >
-                    <Grid3X3 className="w-4 h-4 inline mr-2" />
+                    <Route className="w-4 h-4 inline mr-2" />
                     Paths
                   </button>
                   <button
@@ -507,6 +539,19 @@ export function MapEditorPage() {
                     {showCharacters ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                   </button>
                 </div>
+              </div>
+
+              {/* Transitions toggle */}
+              <div className="pt-2 border-t border-zinc-700">
+                <button
+                  onClick={() => setShowTransitions(!showTransitions)}
+                  className={`w-full py-2 px-3 rounded text-sm flex items-center justify-center gap-2 transition-colors ${
+                    showTransitions ? "bg-zinc-600 text-white" : "bg-zinc-700 text-zinc-400"
+                  }`}
+                >
+                  {showTransitions ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                  Auto-Transitions
+                </button>
               </div>
             </CardContent>
           </Card>
@@ -558,6 +603,7 @@ export function MapEditorPage() {
             showGrid={showGrid}
             showPaths={showPaths}
             showCharacters={showCharacters}
+            showTransitions={showTransitions}
             activeLayer={activeLayer}
             currentTool={currentTool}
             onCellClick={handleCellClick}
@@ -569,16 +615,16 @@ export function MapEditorPage() {
           {/* Tile/Path/Character Palette based on active layer */}
           {activeLayer === "terrain" && (
             <TilePalette
-              selectedTile={selectedTile}
-              onSelectTile={setSelectedTile}
+              selectedAssetId={selectedTileAsset}
+              onSelectAsset={setSelectedTileAsset}
               tileType="TILE"
             />
           )}
 
           {activeLayer === "paths" && (
             <TilePalette
-              selectedTile={selectedPath}
-              onSelectTile={setSelectedPath}
+              selectedAssetId={selectedPathAsset}
+              onSelectAsset={setSelectedPathAsset}
               tileType="PATH"
             />
           )}
@@ -589,6 +635,29 @@ export function MapEditorPage() {
               onSelectCharacter={setSelectedCharacter}
             />
           )}
+
+          {/* Layer hints */}
+          <Card className="bg-zinc-800 border-zinc-700">
+            <CardContent className="pt-4">
+              {activeLayer === "terrain" && (
+                <p className="text-xs text-zinc-400">
+                  Select a tile type and paint. Variations are picked randomly.
+                  Transitions blend automatically at boundaries.
+                </p>
+              )}
+              {activeLayer === "paths" && (
+                <p className="text-xs text-zinc-400">
+                  Select a path type and paint. The correct directional variation
+                  is calculated automatically based on adjacent paths.
+                </p>
+              )}
+              {activeLayer === "characters" && (
+                <p className="text-xs text-zinc-400">
+                  Select a character and click to place. Only one character per cell.
+                </p>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Map Properties */}
           <Card className="bg-zinc-800 border-zinc-700">

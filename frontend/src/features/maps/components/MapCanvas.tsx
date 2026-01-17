@@ -1,7 +1,15 @@
 import { useRef, useEffect, useCallback, useState } from "react"
-import { getAssetFileUrl, getAssetsByType } from "@/api/assets"
+import { getAssetFileUrl, getAssetsByType, getAssetFile } from "@/api/assets"
 import type { MapData } from "../pages/MapEditorPage"
 import type { AssetDTO } from "@/api/types"
+
+interface TileProperties {
+  name: string
+  tileSize: number
+  passable: boolean
+  variations: number
+  tileType?: "TILE" | "PATH"
+}
 
 interface MapCanvasProps {
   mapData: MapData
@@ -11,6 +19,7 @@ interface MapCanvasProps {
   showGrid: boolean
   showPaths: boolean
   showCharacters: boolean
+  showTransitions: boolean
   activeLayer: "terrain" | "paths" | "characters"
   currentTool: "select" | "paint" | "erase" | "pan"
   onCellClick: (x: number, y: number) => void
@@ -19,6 +28,82 @@ interface MapCanvasProps {
 // Cache for loaded images
 const imageCache = new Map<string, HTMLImageElement>()
 const assetCache = new Map<string, AssetDTO>()
+const propertiesCache = new Map<string, TileProperties>()
+
+// Seeded random number generator for consistent variation selection
+function seededRandom(seed: number): number {
+  const x = Math.sin(seed * 9999) * 10000
+  return x - Math.floor(x)
+}
+
+// Calculate variation from seed and number of variations
+function getVariationFromSeed(seed: number, variations: number): number {
+  return Math.floor(seededRandom(seed) * variations)
+}
+
+// Direction names for transitions (8 directions)
+const TRANSITION_DIRECTIONS = ["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const
+type TransitionDirection = typeof TRANSITION_DIRECTIONS[number]
+
+// Direction offsets for checking neighbors
+const DIRECTION_OFFSETS: Record<TransitionDirection, { dx: number; dy: number }> = {
+  n:  { dx: 0,  dy: -1 },
+  ne: { dx: 1,  dy: -1 },
+  e:  { dx: 1,  dy: 0 },
+  se: { dx: 1,  dy: 1 },
+  s:  { dx: 0,  dy: 1 },
+  sw: { dx: -1, dy: 1 },
+  w:  { dx: -1, dy: 0 },
+  nw: { dx: -1, dy: -1 }
+}
+
+// Get opposite direction for transition overlay
+const OPPOSITE_DIRECTION: Record<TransitionDirection, TransitionDirection> = {
+  n: "s",
+  ne: "sw",
+  e: "w",
+  se: "nw",
+  s: "n",
+  sw: "ne",
+  w: "e",
+  nw: "se"
+}
+
+// Path variation calculation based on neighbors
+// Bits: Up=8, Down=4, Left=2, Right=1
+// Variations 0-14 map to different connection combinations
+function calculatePathVariation(
+  paths: (import("../pages/MapEditorPage").MapPath | null)[][],
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  currentPathAssetId: string
+): number {
+  let bits = 0
+
+  // Check up (y - 1)
+  if (y > 0 && paths[y - 1]?.[x]?.pathAssetId === currentPathAssetId) {
+    bits |= 8
+  }
+  // Check down (y + 1)
+  if (y < height - 1 && paths[y + 1]?.[x]?.pathAssetId === currentPathAssetId) {
+    bits |= 4
+  }
+  // Check left (x - 1)
+  if (x > 0 && paths[y]?.[x - 1]?.pathAssetId === currentPathAssetId) {
+    bits |= 2
+  }
+  // Check right (x + 1)
+  if (x < width - 1 && paths[y]?.[x + 1]?.pathAssetId === currentPathAssetId) {
+    bits |= 1
+  }
+
+  // bits = 0 means isolated path, use variation 0
+  // bits = 1-15 map to variations 0-14
+  // We return max(0, bits - 1) to map 1-15 to 0-14, and 0 stays 0
+  return bits === 0 ? 0 : bits - 1
+}
 
 async function loadImage(url: string): Promise<HTMLImageElement> {
   if (imageCache.has(url)) {
@@ -45,6 +130,7 @@ export function MapCanvas({
   showGrid,
   showPaths,
   showCharacters,
+  showTransitions,
   activeLayer,
   currentTool,
   onCellClick
@@ -55,6 +141,7 @@ export function MapCanvas({
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [tileAssets, setTileAssets] = useState<AssetDTO[]>([])
   const [characterAssets, setCharacterAssets] = useState<AssetDTO[]>([])
+  const [tileProperties, setTileProperties] = useState<Map<string, TileProperties>>(new Map())
   const [isDrawing, setIsDrawing] = useState(false)
 
   // Load all tile and character assets on mount
@@ -71,6 +158,26 @@ export function MapCanvas({
         // Populate asset cache
         tiles.forEach(t => assetCache.set(t.id, t))
         characters.forEach(c => assetCache.set(c.id, c))
+
+        // Load properties for each tile asset to get variation counts
+        const propsPromises = tiles.map(async (asset) => {
+          try {
+            const props = await getAssetFile<TileProperties>(asset.storageKeyPrefix, "properties.json")
+            propertiesCache.set(asset.id, props)
+            return { assetId: asset.id, props }
+          } catch {
+            return { assetId: asset.id, props: null }
+          }
+        })
+
+        const propsResults = await Promise.all(propsPromises)
+        const propsMap = new Map<string, TileProperties>()
+        propsResults.forEach(({ assetId, props }) => {
+          if (props) {
+            propsMap.set(assetId, props)
+          }
+        })
+        setTileProperties(propsMap)
       } catch (err) {
         console.error("Failed to load assets:", err)
       }
@@ -103,15 +210,19 @@ export function MapCanvas({
 
     const tileSize = mapData.tileSize
 
-    // Draw terrain layer
+    // Draw terrain layer - using seed for random variation selection
     for (let y = 0; y < mapData.height; y++) {
       for (let x = 0; x < mapData.width; x++) {
         const tile = mapData.layers.terrain[y]?.[x]
         if (tile) {
           const asset = assetCache.get(tile.tileAssetId)
+          const props = tileProperties.get(tile.tileAssetId)
           if (asset) {
             try {
-              const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${tile.variation}.png`, true)
+              // Calculate variation from seed and available variations
+              const variations = props?.variations ?? 1
+              const variation = getVariationFromSeed(tile.seed, variations)
+              const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${variation}.png`, true)
               const img = await loadImage(url)
               ctx.drawImage(img, x * tileSize, y * tileSize, tileSize, tileSize)
             } catch (err) {
@@ -124,7 +235,50 @@ export function MapCanvas({
       }
     }
 
-    // Draw paths layer (on top of terrain)
+    // Draw auto-transitions between different terrain types
+    if (showTransitions) {
+      for (let y = 0; y < mapData.height; y++) {
+        for (let x = 0; x < mapData.width; x++) {
+          const tile = mapData.layers.terrain[y]?.[x]
+          if (!tile) continue
+
+          // Check each of the 8 directions for neighbors with different tile types
+          for (const direction of TRANSITION_DIRECTIONS) {
+            const { dx, dy } = DIRECTION_OFFSETS[direction]
+            const nx = x + dx
+            const ny = y + dy
+
+            // Skip if out of bounds
+            if (nx < 0 || nx >= mapData.width || ny < 0 || ny >= mapData.height) continue
+
+            const neighbor = mapData.layers.terrain[ny]?.[nx]
+
+            // If neighbor has a different tile type, draw the neighbor's transition into current cell
+            if (neighbor && neighbor.tileAssetId !== tile.tileAssetId) {
+              const neighborAsset = assetCache.get(neighbor.tileAssetId)
+              if (neighborAsset) {
+                try {
+                  // Draw the neighbor's transition tile facing INTO this cell
+                  // e.g., if neighbor is to the North, we draw neighbor's south transition on current cell
+                  const oppositeDir = OPPOSITE_DIRECTION[direction]
+                  const transitionUrl = getAssetFileUrl(
+                    neighborAsset.storageKeyPrefix,
+                    `tile_0_transition_${oppositeDir}.png`,
+                    true
+                  )
+                  const transitionImg = await loadImage(transitionUrl)
+                  ctx.drawImage(transitionImg, x * tileSize, y * tileSize, tileSize, tileSize)
+                } catch {
+                  // Transition image doesn't exist, skip silently
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Draw paths layer (on top of terrain) - with auto-calculated variations
     if (showPaths) {
       for (let y = 0; y < mapData.height; y++) {
         for (let x = 0; x < mapData.width; x++) {
@@ -133,7 +287,14 @@ export function MapCanvas({
             const asset = assetCache.get(path.pathAssetId)
             if (asset) {
               try {
-                const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${path.variation}.png`, true)
+                // Calculate path variation based on adjacent paths
+                const variation = calculatePathVariation(
+                  mapData.layers.paths,
+                  x, y,
+                  mapData.width, mapData.height,
+                  path.pathAssetId
+                )
+                const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${variation}.png`, true)
                 const img = await loadImage(url)
                 ctx.drawImage(img, x * tileSize, y * tileSize, tileSize, tileSize)
               } catch (err) {
@@ -203,7 +364,7 @@ export function MapCanvas({
       ctx.fillStyle = "#a855f711"
       ctx.fillRect(0, 0, canvas.width, canvas.height)
     }
-  }, [mapData, showGrid, showPaths, showCharacters, activeLayer, tileAssets, characterAssets])
+  }, [mapData, showGrid, showPaths, showCharacters, showTransitions, activeLayer, tileAssets, characterAssets, tileProperties])
 
   // Re-render when map data or visibility settings change
   useEffect(() => {
