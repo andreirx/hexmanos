@@ -9,7 +9,8 @@ import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
 import {
   Save, Trash2, Image, Check, X, Pencil, Eraser, Square, Undo2, Redo2,
-  FolderOpen, FilePlus, Plus, Copy, ChevronLeft, ChevronRight, PaintBucket, Shuffle
+  FolderOpen, FilePlus, Plus, Copy, ChevronLeft, ChevronRight, PaintBucket, Shuffle,
+  ArrowUp, ArrowDown, ArrowLeft, ArrowRight
 } from "lucide-react"
 import type { UserDTO, AssetDTO } from "@/api/types"
 
@@ -25,6 +26,11 @@ const TILE_SIZE = 128
 const MAX_HISTORY = 10
 const MAX_VARIATIONS = 8
 const BRUSH_SIZES = [1, 2, 4, 8, 16]
+
+// Path constants
+const PATH_CENTER_START = 32  // Center rectangle starts at 32
+const PATH_CENTER_END = 96    // Center rectangle ends at 96
+const PATH_FADE_PIXELS = 4    // Number of pixels for border fade
 
 interface VariationFrame {
   pixels: Uint8ClampedArray
@@ -58,10 +64,16 @@ export function TileEditorPage() {
   const [backendUser, setBackendUser] = useState<UserDTO | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Fill tool state - 3 dedicated colors for random fill
+  // Fill tool state - 3 dedicated colors for random fill (background)
   const [fillColor1, setFillColor1] = useState("#228b22")
   const [fillColor2, setFillColor2] = useState("#2e8b57")
   const [fillColor3, setFillColor3] = useState("#32cd32")
+
+  // Path tool state - 3 dedicated colors for path drawing
+  const [pathColor1, setPathColor1] = useState("#8b7355")
+  const [pathColor2, setPathColor2] = useState("#a0826d")
+  const [pathColor3, setPathColor3] = useState("#c4a882")
+  const [useRandomPath, setUseRandomPath] = useState(true)
 
   // Undo/Redo history per variation
   const historyRef = useRef<Map<VariationHistoryKey, VariationHistory>>(new Map())
@@ -274,6 +286,129 @@ export function TileEditorPage() {
       newPixels[i * 4 + 2] = color[2]
       newPixels[i * 4 + 3] = color[3]
     }
+    handleCommit(newPixels)
+  }
+
+  // Path drawing functions
+  const getPathColor = (): [number, number, number, number] => {
+    if (useRandomPath) {
+      const colors = [hexToRgba(pathColor1), hexToRgba(pathColor2), hexToRgba(pathColor3)]
+      return colors[Math.floor(Math.random() * colors.length)]
+    }
+    return hexToRgba(pathColor1)
+  }
+
+  // Blend a path color with the background pixel based on fade factor (0 = full path, 1 = full background)
+  const blendPixel = (
+    pixels: Uint8ClampedArray,
+    index: number,
+    pathColor: [number, number, number, number],
+    fadeFactor: number
+  ) => {
+    const bgR = pixels[index]
+    const bgG = pixels[index + 1]
+    const bgB = pixels[index + 2]
+    const bgA = pixels[index + 3]
+
+    pixels[index] = Math.round(pathColor[0] * (1 - fadeFactor) + bgR * fadeFactor)
+    pixels[index + 1] = Math.round(pathColor[1] * (1 - fadeFactor) + bgG * fadeFactor)
+    pixels[index + 2] = Math.round(pathColor[2] * (1 - fadeFactor) + bgB * fadeFactor)
+    pixels[index + 3] = Math.max(pathColor[3], bgA) // Keep max alpha
+  }
+
+  // Draw path in a direction with fading borders
+  const handleDrawPath = (direction: "up" | "down" | "left" | "right") => {
+    const newPixels = new Uint8ClampedArray(currentVariation.pixels)
+
+    // Define rectangle bounds based on direction
+    let xStart: number, xEnd: number, yStart: number, yEnd: number
+    // Define which edges should fade (not at image edges)
+    let fadeLeft = false, fadeRight = false, fadeTop = false, fadeBottom = false
+
+    switch (direction) {
+      case "up":
+        xStart = PATH_CENTER_START
+        xEnd = PATH_CENTER_END
+        yStart = 0
+        yEnd = PATH_CENTER_END
+        fadeLeft = true
+        fadeRight = true
+        fadeBottom = true
+        break
+      case "down":
+        xStart = PATH_CENTER_START
+        xEnd = PATH_CENTER_END
+        yStart = PATH_CENTER_START
+        yEnd = TILE_SIZE
+        fadeLeft = true
+        fadeRight = true
+        fadeTop = true
+        break
+      case "left":
+        xStart = 0
+        xEnd = PATH_CENTER_END
+        yStart = PATH_CENTER_START
+        yEnd = PATH_CENTER_END
+        fadeTop = true
+        fadeBottom = true
+        fadeRight = true
+        break
+      case "right":
+        xStart = PATH_CENTER_START
+        xEnd = TILE_SIZE
+        yStart = PATH_CENTER_START
+        yEnd = PATH_CENTER_END
+        fadeTop = true
+        fadeBottom = true
+        fadeLeft = true
+        break
+    }
+
+    // Draw the path rectangle with fading borders
+    for (let y = yStart; y < yEnd; y++) {
+      for (let x = xStart; x < xEnd; x++) {
+        const index = (y * TILE_SIZE + x) * 4
+        const pathColor = getPathColor()
+
+        // Calculate fade factors for each edge
+        let fadeFactor = 0
+
+        // Left edge fade (only if fadeLeft and not at image edge)
+        if (fadeLeft && x >= xStart && x < xStart + PATH_FADE_PIXELS) {
+          const edgeDist = x - xStart
+          fadeFactor = Math.max(fadeFactor, 1 - (edgeDist + 1) / PATH_FADE_PIXELS)
+        }
+
+        // Right edge fade (only if fadeRight and not at image edge)
+        if (fadeRight && x >= xEnd - PATH_FADE_PIXELS && x < xEnd) {
+          const edgeDist = xEnd - 1 - x
+          fadeFactor = Math.max(fadeFactor, 1 - (edgeDist + 1) / PATH_FADE_PIXELS)
+        }
+
+        // Top edge fade (only if fadeTop and not at image edge)
+        if (fadeTop && y >= yStart && y < yStart + PATH_FADE_PIXELS) {
+          const edgeDist = y - yStart
+          fadeFactor = Math.max(fadeFactor, 1 - (edgeDist + 1) / PATH_FADE_PIXELS)
+        }
+
+        // Bottom edge fade (only if fadeBottom and not at image edge)
+        if (fadeBottom && y >= yEnd - PATH_FADE_PIXELS && y < yEnd) {
+          const edgeDist = yEnd - 1 - y
+          fadeFactor = Math.max(fadeFactor, 1 - (edgeDist + 1) / PATH_FADE_PIXELS)
+        }
+
+        if (fadeFactor > 0) {
+          blendPixel(newPixels, index, pathColor, fadeFactor)
+        } else {
+          // Full path color
+          newPixels[index] = pathColor[0]
+          newPixels[index + 1] = pathColor[1]
+          newPixels[index + 2] = pathColor[2]
+          newPixels[index + 3] = pathColor[3]
+        }
+      }
+    }
+
     handleCommit(newPixels)
   }
 
@@ -768,6 +903,177 @@ export function TileEditorPage() {
                       }}
                       className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono min-w-0"
                       placeholder="#32cd32"
+                    />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Path Tool */}
+          <Card className="bg-zinc-800 border-zinc-700">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-zinc-300">Path</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-3 gap-1">
+                <div />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
+                  onClick={() => handleDrawPath("up")}
+                  title="Draw path upward"
+                >
+                  <ArrowUp className="w-4 h-4" />
+                </Button>
+                <div />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
+                  onClick={() => handleDrawPath("left")}
+                  title="Draw path left"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </Button>
+                <div className="flex items-center justify-center text-xs text-zinc-500">
+                  ●
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
+                  onClick={() => handleDrawPath("right")}
+                  title="Draw path right"
+                >
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+                <div />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
+                  onClick={() => handleDrawPath("down")}
+                  title="Draw path downward"
+                >
+                  <ArrowDown className="w-4 h-4" />
+                </Button>
+                <div />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setUseRandomPath(false)}
+                  className={`flex-1 py-1 px-2 rounded text-xs transition-colors ${
+                    !useRandomPath
+                      ? "bg-blue-600 text-white"
+                      : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  }`}
+                >
+                  Solid
+                </button>
+                <button
+                  onClick={() => setUseRandomPath(true)}
+                  className={`flex-1 py-1 px-2 rounded text-xs transition-colors ${
+                    useRandomPath
+                      ? "bg-blue-600 text-white"
+                      : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  }`}
+                >
+                  Random
+                </button>
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400 block mb-2">Path Colors</label>
+                <div className="space-y-2">
+                  {/* Path Color 1 */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-500 w-3">1:</span>
+                    <div
+                      className="w-8 h-8 rounded border-2 border-zinc-600 cursor-pointer overflow-hidden flex-shrink-0"
+                      style={{ backgroundColor: pathColor1 }}
+                      onClick={() => document.getElementById("pathColor1Input")?.click()}
+                    >
+                      <input
+                        id="pathColor1Input"
+                        type="color"
+                        value={pathColor1}
+                        onChange={(e) => setPathColor1(e.target.value)}
+                        className="opacity-0 w-full h-full cursor-pointer"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={pathColor1}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) setPathColor1(val)
+                      }}
+                      onBlur={(e) => {
+                        if (!/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) setPathColor1("#8b7355")
+                      }}
+                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono min-w-0"
+                      placeholder="#8b7355"
+                    />
+                  </div>
+                  {/* Path Color 2 */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-500 w-3">2:</span>
+                    <div
+                      className="w-8 h-8 rounded border-2 border-zinc-600 cursor-pointer overflow-hidden flex-shrink-0"
+                      style={{ backgroundColor: pathColor2 }}
+                      onClick={() => document.getElementById("pathColor2Input")?.click()}
+                    >
+                      <input
+                        id="pathColor2Input"
+                        type="color"
+                        value={pathColor2}
+                        onChange={(e) => setPathColor2(e.target.value)}
+                        className="opacity-0 w-full h-full cursor-pointer"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={pathColor2}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) setPathColor2(val)
+                      }}
+                      onBlur={(e) => {
+                        if (!/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) setPathColor2("#a0826d")
+                      }}
+                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono min-w-0"
+                      placeholder="#a0826d"
+                    />
+                  </div>
+                  {/* Path Color 3 */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-500 w-3">3:</span>
+                    <div
+                      className="w-8 h-8 rounded border-2 border-zinc-600 cursor-pointer overflow-hidden flex-shrink-0"
+                      style={{ backgroundColor: pathColor3 }}
+                      onClick={() => document.getElementById("pathColor3Input")?.click()}
+                    >
+                      <input
+                        id="pathColor3Input"
+                        type="color"
+                        value={pathColor3}
+                        onChange={(e) => setPathColor3(e.target.value)}
+                        className="opacity-0 w-full h-full cursor-pointer"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={pathColor3}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) setPathColor3(val)
+                      }}
+                      onBlur={(e) => {
+                        if (!/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) setPathColor3("#c4a882")
+                      }}
+                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono min-w-0"
+                      placeholder="#c4a882"
                     />
                   </div>
                 </div>
