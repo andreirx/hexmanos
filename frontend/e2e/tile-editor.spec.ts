@@ -11,13 +11,13 @@ test.describe("Tile Editor Page", () => {
 
   test("should display tools card", async ({ page }) => {
     await expect(page.getByText("Tools")).toBeVisible()
-    await expect(page.getByText("Current Color")).toBeVisible()
-    await expect(page.getByText("Terrain Colors")).toBeVisible()
+    await expect(page.getByText("Color", { exact: true })).toBeVisible()
+    await expect(page.getByText("Fill", { exact: true })).toBeVisible()
   })
 
   test("should display import card", async ({ page }) => {
     await expect(page.getByText("Import", { exact: true })).toBeVisible()
-    await expect(page.getByRole("button", { name: /Import Image/i })).toBeVisible()
+    await expect(page.getByRole("button", { name: /Import to Variation/i })).toBeVisible()
   })
 
   test("should display tile properties", async ({ page }) => {
@@ -29,11 +29,12 @@ test.describe("Tile Editor Page", () => {
   test("should display tile info", async ({ page }) => {
     await expect(page.getByText("Tile Info")).toBeVisible()
     await expect(page.getByText("Size: 128x128 pixels")).toBeVisible()
-    await expect(page.getByText("Format: PNG")).toBeVisible()
+    await expect(page.getByText("Variations: 1")).toBeVisible()
   })
 
   test("should have color picker", async ({ page }) => {
-    const colorPicker = page.locator('input[type="color"]')
+    // Main color picker is the last one (fill colors come first)
+    const colorPicker = page.locator('input[type="color"]').last()
     await expect(colorPicker).toBeVisible()
     await expect(colorPicker).toHaveValue("#ffffff")
   })
@@ -66,7 +67,9 @@ test.describe("Tile Editor Page", () => {
     await expect(page.getByRole("button", { name: /Save Tile/i })).toBeVisible()
   })
 
-  test("should have clear canvas button", async ({ page }) => {
-    await expect(page.getByRole("button", { name: /Clear Canvas/i })).toBeVisible()
+  test("should have variation controls", async ({ page }) => {
+    // Check for variation timeline controls
+    await expect(page.getByText("Variation 1/1")).toBeVisible()
+    await expect(page.getByRole("button", { name: /Add Variation/i })).toBeVisible()
   })
 })
