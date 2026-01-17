@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from "react"
+import { RotateCw, RotateCcw, FlipHorizontal2 } from "lucide-react"
 
 export type CanvasTool = "pencil" | "eraser" | "select"
 
@@ -246,68 +247,147 @@ export function PixelCanvas({
     onCommit(new Uint8ClampedArray(livePixelsRef.current))
   }, [selection, width, onCommit])
 
-  // Rotate selection pixels 90 degrees
-  const rotateSelection = useCallback((clockwise: boolean) => {
-    if (!selection || !selection.pixels || selection.originalWidth <= 0 || selection.originalHeight <= 0) return
+  // Rotate pixels 90 degrees - works on selection or whole frame
+  const handleRotate = useCallback((clockwise: boolean) => {
+    if (selection && selection.pixels && selection.originalWidth > 0 && selection.originalHeight > 0) {
+      // Rotate selection
+      const srcW = selection.originalWidth
+      const srcH = selection.originalHeight
+      const srcPixels = selection.pixels
 
-    const srcW = selection.originalWidth
-    const srcH = selection.originalHeight
-    const srcPixels = selection.pixels
+      const dstW = srcH
+      const dstH = srcW
+      const dstPixels = new Uint8ClampedArray(dstW * dstH * 4)
 
-    // After rotation, width and height swap
-    const dstW = srcH
-    const dstH = srcW
-    const dstPixels = new Uint8ClampedArray(dstW * dstH * 4)
-
-    for (let srcY = 0; srcY < srcH; srcY++) {
-      for (let srcX = 0; srcX < srcW; srcX++) {
-        const srcI = (srcY * srcW + srcX) * 4
-
-        let dstX: number, dstY: number
-        if (clockwise) {
-          // 90 degrees clockwise: (x, y) -> (h - 1 - y, x)
-          dstX = srcH - 1 - srcY
-          dstY = srcX
-        } else {
-          // 90 degrees counter-clockwise: (x, y) -> (y, w - 1 - x)
-          dstX = srcY
-          dstY = srcW - 1 - srcX
+      for (let srcY = 0; srcY < srcH; srcY++) {
+        for (let srcX = 0; srcX < srcW; srcX++) {
+          const srcI = (srcY * srcW + srcX) * 4
+          let dstX: number, dstY: number
+          if (clockwise) {
+            dstX = srcH - 1 - srcY
+            dstY = srcX
+          } else {
+            dstX = srcY
+            dstY = srcW - 1 - srcX
+          }
+          const dstI = (dstY * dstW + dstX) * 4
+          dstPixels[dstI] = srcPixels[srcI]
+          dstPixels[dstI + 1] = srcPixels[srcI + 1]
+          dstPixels[dstI + 2] = srcPixels[srcI + 2]
+          dstPixels[dstI + 3] = srcPixels[srcI + 3]
         }
-
-        const dstI = (dstY * dstW + dstX) * 4
-        dstPixels[dstI] = srcPixels[srcI]
-        dstPixels[dstI + 1] = srcPixels[srcI + 1]
-        dstPixels[dstI + 2] = srcPixels[srcI + 2]
-        dstPixels[dstI + 3] = srcPixels[srcI + 3]
       }
+
+      setSelection({
+        ...selection,
+        pixels: dstPixels,
+        originalWidth: dstW,
+        originalHeight: dstH,
+        width: Math.round(selection.width * (dstW / srcW)),
+        height: Math.round(selection.height * (dstH / srcH)),
+      })
+    } else {
+      // Rotate whole frame (only works for square canvases, otherwise skip)
+      if (width !== height) return
+
+      const srcPixels = livePixelsRef.current
+      const dstPixels = new Uint8ClampedArray(width * height * 4)
+
+      for (let srcY = 0; srcY < height; srcY++) {
+        for (let srcX = 0; srcX < width; srcX++) {
+          const srcI = (srcY * width + srcX) * 4
+          let dstX: number, dstY: number
+          if (clockwise) {
+            dstX = height - 1 - srcY
+            dstY = srcX
+          } else {
+            dstX = srcY
+            dstY = width - 1 - srcX
+          }
+          const dstI = (dstY * width + dstX) * 4
+          dstPixels[dstI] = srcPixels[srcI]
+          dstPixels[dstI + 1] = srcPixels[srcI + 1]
+          dstPixels[dstI + 2] = srcPixels[srcI + 2]
+          dstPixels[dstI + 3] = srcPixels[srcI + 3]
+        }
+      }
+
+      livePixelsRef.current = dstPixels
+      render()
+      onCommit(new Uint8ClampedArray(dstPixels))
     }
+  }, [selection, width, height, onCommit])
 
-    // Update selection with rotated pixels and swapped dimensions
-    setSelection({
-      ...selection,
-      pixels: dstPixels,
-      originalWidth: dstW,
-      originalHeight: dstH,
-      // Also swap the display width/height proportionally
-      width: Math.round(selection.width * (dstW / srcW)),
-      height: Math.round(selection.height * (dstH / srcH)),
-    })
-  }, [selection])
+  // Mirror pixels horizontally - works on selection or whole frame
+  const handleMirror = useCallback(() => {
+    if (selection && selection.pixels && selection.originalWidth > 0 && selection.originalHeight > 0) {
+      // Mirror selection
+      const w = selection.originalWidth
+      const h = selection.originalHeight
+      const srcPixels = selection.pixels
+      const dstPixels = new Uint8ClampedArray(w * h * 4)
 
-  // Handle keyboard events for rotation
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const srcI = (y * w + x) * 4
+          const dstX = w - 1 - x
+          const dstI = (y * w + dstX) * 4
+          dstPixels[dstI] = srcPixels[srcI]
+          dstPixels[dstI + 1] = srcPixels[srcI + 1]
+          dstPixels[dstI + 2] = srcPixels[srcI + 2]
+          dstPixels[dstI + 3] = srcPixels[srcI + 3]
+        }
+      }
+
+      setSelection({
+        ...selection,
+        pixels: dstPixels,
+      })
+    } else {
+      // Mirror whole frame
+      const srcPixels = livePixelsRef.current
+      const dstPixels = new Uint8ClampedArray(width * height * 4)
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const srcI = (y * width + x) * 4
+          const dstX = width - 1 - x
+          const dstI = (y * width + dstX) * 4
+          dstPixels[dstI] = srcPixels[srcI]
+          dstPixels[dstI + 1] = srcPixels[srcI + 1]
+          dstPixels[dstI + 2] = srcPixels[srcI + 2]
+          dstPixels[dstI + 3] = srcPixels[srcI + 3]
+        }
+      }
+
+      livePixelsRef.current = dstPixels
+      render()
+      onCommit(new Uint8ClampedArray(dstPixels))
+    }
+  }, [selection, width, height, onCommit])
+
+  // Handle keyboard events for transforms
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!selection || !selection.pixels) return
+      // Only handle if canvas container is focused or no specific element has focus
+      const activeElement = document.activeElement
+      const isInputFocused = activeElement instanceof HTMLInputElement ||
+                             activeElement instanceof HTMLTextAreaElement
+
+      if (isInputFocused) return
 
       if (e.key === "r" || e.key === "R") {
         e.preventDefault()
-        rotateSelection(!e.shiftKey) // R = clockwise, Shift+R = counter-clockwise
+        handleRotate(!e.shiftKey) // R = clockwise, Shift+R = counter-clockwise
+      } else if (e.key === "m" || e.key === "M") {
+        e.preventDefault()
+        handleMirror()
       }
     }
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [selection, rotateSelection])
+  }, [handleRotate, handleMirror])
 
   // Check if point is inside selection
   const isInSelection = (x: number, y: number): boolean => {
@@ -691,21 +771,48 @@ export function PixelCanvas({
   const canvasHeight = Math.max(height * zoom + Math.abs(pan.y) * 2, 512)
 
   return (
-    <div
-      ref={containerRef}
-      className={className}
-      style={{ overflow: "hidden", cursor }}
-    >
-      <canvas
-        ref={canvasRef}
-        width={canvasWidth}
-        height={canvasHeight}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseLeave}
-        style={{ display: "block" }}
-      />
+    <div className={className}>
+      <div
+        ref={containerRef}
+        style={{ overflow: "hidden", cursor }}
+      >
+        <canvas
+          ref={canvasRef}
+          width={canvasWidth}
+          height={canvasHeight}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
+          style={{ display: "block" }}
+        />
+      </div>
+      <div className="flex items-center justify-center gap-2 mt-2">
+        <button
+          onClick={() => handleRotate(false)}
+          className="p-2 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-300 transition-colors"
+          title="Rotate Counter-Clockwise (Shift+R)"
+        >
+          <RotateCcw className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => handleRotate(true)}
+          className="p-2 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-300 transition-colors"
+          title="Rotate Clockwise (R)"
+        >
+          <RotateCw className="w-4 h-4" />
+        </button>
+        <button
+          onClick={handleMirror}
+          className="p-2 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-300 transition-colors"
+          title="Mirror Horizontal (M)"
+        >
+          <FlipHorizontal2 className="w-4 h-4" />
+        </button>
+        <span className="text-xs text-zinc-500 ml-2">
+          {selection?.pixels ? "Selection" : "Frame"}
+        </span>
+      </div>
     </div>
   )
 }
