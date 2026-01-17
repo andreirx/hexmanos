@@ -22,6 +22,8 @@ test.describe("Map Editor Page", () => {
     await expect(page.getByRole("button", { name: "Select" })).toBeVisible()
     await expect(page.getByRole("button", { name: "Paint" })).toBeVisible()
     await expect(page.getByRole("button", { name: "Erase" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Rect" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Disc" })).toBeVisible()
     await expect(page.getByRole("button", { name: "Pan" })).toBeVisible()
   })
 

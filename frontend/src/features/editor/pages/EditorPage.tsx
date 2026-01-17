@@ -853,7 +853,6 @@ export function EditorPage() {
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="bg-zinc-900 rounded-lg p-4 shadow-xl">
             <PixelCanvas
-              key={`${currentState}_${currentFrameIndex}`}
               width={CANVAS_SIZE}
               height={CANVAS_SIZE}
               pixels={currentFrame.pixels}
@@ -861,7 +860,6 @@ export function EditorPage() {
               brushSize={brushSize}
               tool={currentTool}
               onCommit={handleCommit}
-              initialZoom={4}
               className="rounded"
             />
           </div>

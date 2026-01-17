@@ -36,8 +36,10 @@ interface MapCanvasProps {
   showCharacters: boolean
   showTransitions: boolean
   activeLayer: "terrain" | "paths" | "characters"
-  currentTool: "select" | "paint" | "erase" | "pan"
+  currentTool: "select" | "paint" | "erase" | "pan" | "rect" | "disc"
   onCellClick: (x: number, y: number) => void
+  onShapeStart?: (x: number, y: number) => void
+  onShapeEnd?: (x: number, y: number) => void
 }
 
 // ============================================================
@@ -139,7 +141,9 @@ export function MapCanvas({
   showTransitions,
   activeLayer,
   currentTool,
-  onCellClick
+  onCellClick,
+  onShapeStart,
+  onShapeEnd
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mainCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -193,10 +197,10 @@ export function MapCanvas({
     terrainCanvasRef.current = document.createElement("canvas")
   }, [])
 
-  // Mark terrain dirty when mapData or visibility settings change
+  // Mark terrain dirty when mapData, visibility settings, or assets change
   useEffect(() => {
     setTerrainDirty(true)
-  }, [mapData, showTransitions, showPaths, showCharacters])
+  }, [mapData, showTransitions, showPaths, showCharacters, assetsLoaded, tileProperties, characterDefs])
 
   // Load assets once
   useEffect(() => {
@@ -536,6 +540,35 @@ export function MapCanvas({
   // ============================================================
   // INTERACTION HANDLERS
   // ============================================================
+
+  // Bresenham line algorithm - returns all cells along a line
+  const getLineCells = useCallback((x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] => {
+    const cells: { x: number; y: number }[] = []
+    const dx = Math.abs(x1 - x0)
+    const dy = Math.abs(y1 - y0)
+    const sx = x0 < x1 ? 1 : -1
+    const sy = y0 < y1 ? 1 : -1
+    let err = dx - dy
+
+    let x = x0
+    let y = y0
+
+    while (true) {
+      cells.push({ x, y })
+      if (x === x1 && y === y1) break
+      const e2 = 2 * err
+      if (e2 > -dy) {
+        err -= dy
+        x += sx
+      }
+      if (e2 < dx) {
+        err += dx
+        y += sy
+      }
+    }
+    return cells
+  }, [])
+
   const getCellFromEvent = useCallback((e: React.MouseEvent): { x: number; y: number } | null => {
     const mainCanvas = mainCanvasRef.current
     if (!mainCanvas) return null
@@ -575,13 +608,21 @@ export function MapCanvas({
         lastCellRef.current = cell
         onCellClick(cell.x, cell.y)
       }
+    } else if (currentTool === "rect" || currentTool === "disc") {
+      // Shape tools: mark start point
+      isDrawingRef.current = true
+      const cell = getCellFromEvent(e)
+      if (cell) {
+        lastCellRef.current = cell
+        onShapeStart?.(cell.x, cell.y)
+      }
     } else if (currentTool === "select") {
       const cell = getCellFromEvent(e)
       if (cell) {
         onCellClick(cell.x, cell.y)
       }
     }
-  }, [currentTool, getCellFromEvent, onCellClick])
+  }, [currentTool, getCellFromEvent, onCellClick, onShapeStart])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     // Handle middle mouse / Alt+click panning
@@ -610,18 +651,35 @@ export function MapCanvas({
     } else if (isDrawingRef.current && (currentTool === "paint" || currentTool === "erase")) {
       const cell = getCellFromEvent(e)
       if (cell && (lastCellRef.current?.x !== cell.x || lastCellRef.current?.y !== cell.y)) {
+        // Use Bresenham line to fill in gaps when dragging fast
+        if (lastCellRef.current) {
+          const lineCells = getLineCells(lastCellRef.current.x, lastCellRef.current.y, cell.x, cell.y)
+          // Skip the first cell (it was already drawn), draw the rest
+          for (let i = 1; i < lineCells.length; i++) {
+            onCellClick(lineCells[i].x, lineCells[i].y)
+          }
+        } else {
+          onCellClick(cell.x, cell.y)
+        }
         lastCellRef.current = cell
-        onCellClick(cell.x, cell.y)
       }
     }
-  }, [currentTool, getCellFromEvent, onCellClick, onPanChange, render])
+  }, [currentTool, getCellFromEvent, onCellClick, onPanChange, render, getLineCells])
 
-  const handleMouseUp = useCallback(() => {
+  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    // For shape tools, call onShapeEnd with the end cell
+    if (isDrawingRef.current && (currentTool === "rect" || currentTool === "disc")) {
+      const cell = getCellFromEvent(e)
+      if (cell) {
+        onShapeEnd?.(cell.x, cell.y)
+      }
+    }
+
     isDraggingRef.current = false
     isDrawingRef.current = false
     isPanningRef.current = false
     lastCellRef.current = null
-  }, [])
+  }, [currentTool, getCellFromEvent, onShapeEnd])
 
   const getCursor = () => {
     // Panning takes priority (middle mouse / Alt+click)
@@ -631,17 +689,27 @@ export function MapCanvas({
       case "pan": return isDraggingRef.current ? "grabbing" : "grab"
       case "paint": return "crosshair"
       case "erase": return "crosshair"
+      case "rect": return "crosshair"
+      case "disc": return "crosshair"
       case "select": return "pointer"
       default: return "default"
     }
   }
+
+  const handleMouseLeave = useCallback(() => {
+    // Just cancel drawing on mouse leave - don't complete shapes
+    isDraggingRef.current = false
+    isDrawingRef.current = false
+    isPanningRef.current = false
+    lastCellRef.current = null
+  }, [])
 
   return (
     <div
       ref={containerRef}
       className="flex-1 overflow-hidden bg-zinc-950"
       onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onMouseLeave={handleMouseLeave}
     >
       <canvas
         ref={mainCanvasRef}

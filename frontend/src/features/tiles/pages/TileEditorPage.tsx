@@ -1328,7 +1328,6 @@ export function TileEditorPage() {
           <div className="flex-1 flex items-center justify-center p-8">
             <div className="bg-zinc-900 rounded-lg p-4 shadow-xl">
               <PixelCanvas
-                key={`tile_${currentVariationIndex}`}
                 width={TILE_SIZE}
                 height={TILE_SIZE}
                 pixels={currentVariation.pixels}
@@ -1336,7 +1335,6 @@ export function TileEditorPage() {
                 brushSize={brushSize}
                 tool={currentTool}
                 onCommit={handleCommit}
-                initialZoom={4}
                 className="rounded"
               />
             </div>

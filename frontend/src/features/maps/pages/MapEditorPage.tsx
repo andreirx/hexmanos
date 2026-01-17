@@ -11,7 +11,7 @@ import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
 import {
   Save, FolderOpen, FilePlus, Grid3X3, Users, Layers, Trash2, Eye, EyeOff,
-  ZoomIn, ZoomOut, Move, MousePointer2, Route
+  ZoomIn, ZoomOut, Move, MousePointer2, Route, Square, Circle
 } from "lucide-react"
 import type { UserDTO, AssetDTO } from "@/api/types"
 
@@ -47,7 +47,7 @@ export interface MapData {
 }
 
 // Tool types
-type MapTool = "select" | "paint" | "erase" | "pan"
+type MapTool = "select" | "paint" | "erase" | "pan" | "rect" | "disc"
 type ActiveLayer = "terrain" | "paths" | "characters"
 
 const DEFAULT_MAP_WIDTH = 16
@@ -113,6 +113,9 @@ export function MapEditorPage() {
   // Canvas state
   const [zoom, setZoom] = useState(0.5)
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
+
+  // Shape drawing state (for rect and disc tools)
+  const [shapeStart, setShapeStart] = useState<{ x: number; y: number } | null>(null)
 
   // Sync user with backend
   useEffect(() => {
@@ -247,6 +250,70 @@ export function MapEditorPage() {
       handleCharacterClick(x, y)
     }
   }, [activeLayer, handleTerrainClick, handlePathClick, handleCharacterClick])
+
+  // Shape tool handlers
+  const handleShapeStart = useCallback((x: number, y: number) => {
+    setShapeStart({ x, y })
+  }, [])
+
+  const handleShapeEnd = useCallback((x: number, y: number) => {
+    if (!shapeStart) return
+
+    const x0 = Math.min(shapeStart.x, x)
+    const y0 = Math.min(shapeStart.y, y)
+    const x1 = Math.max(shapeStart.x, x)
+    const y1 = Math.max(shapeStart.y, y)
+
+    setMapData(prev => {
+      const newTerrain = prev.layers.terrain.map(row => [...row])
+      const newPaths = prev.layers.paths.map(row => [...row])
+
+      if (currentTool === "rect") {
+        // Fill rectangle
+        for (let cy = y0; cy <= y1; cy++) {
+          for (let cx = x0; cx <= x1; cx++) {
+            if (cx >= 0 && cx < prev.width && cy >= 0 && cy < prev.height) {
+              if (activeLayer === "terrain" && selectedTileAsset) {
+                newTerrain[cy][cx] = { tileAssetId: selectedTileAsset, seed: generateSeed() }
+              } else if (activeLayer === "paths" && selectedPathAsset) {
+                newPaths[cy][cx] = { pathAssetId: selectedPathAsset }
+              }
+            }
+          }
+        }
+      } else if (currentTool === "disc") {
+        // Fill disc/ellipse
+        const centerX = (x0 + x1) / 2
+        const centerY = (y0 + y1) / 2
+        const radiusX = (x1 - x0) / 2
+        const radiusY = (y1 - y0) / 2
+
+        for (let cy = y0; cy <= y1; cy++) {
+          for (let cx = x0; cx <= x1; cx++) {
+            if (cx >= 0 && cx < prev.width && cy >= 0 && cy < prev.height) {
+              // Check if point is inside ellipse
+              const dx = (cx - centerX) / (radiusX || 0.5)
+              const dy = (cy - centerY) / (radiusY || 0.5)
+              if (dx * dx + dy * dy <= 1) {
+                if (activeLayer === "terrain" && selectedTileAsset) {
+                  newTerrain[cy][cx] = { tileAssetId: selectedTileAsset, seed: generateSeed() }
+                } else if (activeLayer === "paths" && selectedPathAsset) {
+                  newPaths[cy][cx] = { pathAssetId: selectedPathAsset }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      return {
+        ...prev,
+        layers: { terrain: newTerrain, paths: newPaths }
+      }
+    })
+
+    setShapeStart(null)
+  }, [shapeStart, currentTool, activeLayer, selectedTileAsset, selectedPathAsset])
 
   // Handle saving the map
   const handleSave = async () => {
@@ -398,10 +465,10 @@ export function MapEditorPage() {
               <CardTitle className="text-sm text-zinc-300">Tools</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   onClick={() => setCurrentTool("select")}
-                  className={`py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                  className={`py-2 px-2 rounded flex items-center justify-center gap-1 transition-colors text-xs ${
                     currentTool === "select"
                       ? "bg-blue-600 text-white"
                       : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
@@ -412,7 +479,7 @@ export function MapEditorPage() {
                 </button>
                 <button
                   onClick={() => setCurrentTool("paint")}
-                  className={`py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                  className={`py-2 px-2 rounded flex items-center justify-center gap-1 transition-colors text-xs ${
                     currentTool === "paint"
                       ? "bg-blue-600 text-white"
                       : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
@@ -423,7 +490,7 @@ export function MapEditorPage() {
                 </button>
                 <button
                   onClick={() => setCurrentTool("erase")}
-                  className={`py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                  className={`py-2 px-2 rounded flex items-center justify-center gap-1 transition-colors text-xs ${
                     currentTool === "erase"
                       ? "bg-blue-600 text-white"
                       : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
@@ -433,8 +500,30 @@ export function MapEditorPage() {
                   Erase
                 </button>
                 <button
+                  onClick={() => setCurrentTool("rect")}
+                  className={`py-2 px-2 rounded flex items-center justify-center gap-1 transition-colors text-xs ${
+                    currentTool === "rect"
+                      ? "bg-blue-600 text-white"
+                      : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  }`}
+                >
+                  <Square className="w-4 h-4" />
+                  Rect
+                </button>
+                <button
+                  onClick={() => setCurrentTool("disc")}
+                  className={`py-2 px-2 rounded flex items-center justify-center gap-1 transition-colors text-xs ${
+                    currentTool === "disc"
+                      ? "bg-blue-600 text-white"
+                      : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  }`}
+                >
+                  <Circle className="w-4 h-4" />
+                  Disc
+                </button>
+                <button
                   onClick={() => setCurrentTool("pan")}
-                  className={`py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
+                  className={`py-2 px-2 rounded flex items-center justify-center gap-1 transition-colors text-xs ${
                     currentTool === "pan"
                       ? "bg-blue-600 text-white"
                       : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
@@ -610,6 +699,8 @@ export function MapEditorPage() {
             activeLayer={activeLayer}
             currentTool={currentTool}
             onCellClick={handleCellClick}
+            onShapeStart={handleShapeStart}
+            onShapeEnd={handleShapeEnd}
           />
         </div>
 

@@ -16,7 +16,6 @@ export interface Selection {
 interface PixelCanvasProps {
   width: number
   height: number
-  initialZoom?: number
   minZoom?: number
   maxZoom?: number
   gridColor?: string
@@ -32,7 +31,6 @@ interface PixelCanvasProps {
 export function PixelCanvas({
   width,
   height,
-  initialZoom = 8,
   minZoom = 1,
   maxZoom = 64,
   gridColor = "#333333",
@@ -53,8 +51,29 @@ export function PixelCanvas({
   const lastDrawnPixel = useRef<{ x: number; y: number } | null>(null)
   const isDirty = useRef(false)
 
-  const [zoom, setZoom] = useState(initialZoom)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
+  // Calculate initial zoom and pan to fill and center the canvas
+  const CANVAS_WIDTH = 800
+  const CANVAS_HEIGHT = 700
+  const calculateInitialView = () => {
+    // Calculate zoom to fill canvas with some padding
+    const padding = 40
+    const availableWidth = CANVAS_WIDTH - padding * 2
+    const availableHeight = CANVAS_HEIGHT - padding * 2
+    const fitZoom = Math.min(availableWidth / width, availableHeight / height)
+    const zoom = Math.max(minZoom, Math.min(maxZoom, fitZoom))
+
+    // Calculate pan to center the content
+    const contentWidth = width * zoom
+    const contentHeight = height * zoom
+    const panX = (CANVAS_WIDTH - contentWidth) / 2
+    const panY = (CANVAS_HEIGHT - contentHeight) / 2
+
+    return { zoom, pan: { x: panX, y: panY } }
+  }
+
+  const initialView = calculateInitialView()
+  const [zoom, setZoom] = useState(initialView.zoom)
+  const [pan, setPan] = useState(initialView.pan)
 
   // Refs to track latest values for wheel handler (avoids stale closures)
   const zoomRef = useRef(zoom)
@@ -808,8 +827,8 @@ export function PixelCanvas({
   }
 
   // Fixed canvas size - don't grow based on pan (prevents layout issues)
-  const canvasWidth = 960
-  const canvasHeight = 960
+  const canvasWidth = CANVAS_WIDTH
+  const canvasHeight = CANVAS_HEIGHT
 
   return (
     <div className={className}>
