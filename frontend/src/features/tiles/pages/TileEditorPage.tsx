@@ -20,6 +20,7 @@ interface TileProperties {
   tileSize: number
   passable: boolean
   variations: number
+  tileType?: "TILE" | "PATH"  // PATH tiles have exactly 15 variations
 }
 
 const TILE_SIZE = 128
@@ -31,6 +32,36 @@ const BRUSH_SIZES = [1, 2, 4, 8, 16]
 const PATH_CENTER_START = 32  // Center rectangle starts at 32
 const PATH_CENTER_END = 96    // Center rectangle ends at 96
 const PATH_FADE_PIXELS = 4    // Number of pixels for border fade
+
+// PATH tile type: 15 variations for all direction combinations (excluding 0000)
+// Bits: Up=8, Down=4, Left=2, Right=1
+type PathDirection = { up: boolean; down: boolean; left: boolean; right: boolean }
+const PATH_COMBINATIONS: PathDirection[] = [
+  { up: false, down: false, left: false, right: true },  // 0001 - Right
+  { up: false, down: false, left: true, right: false },  // 0010 - Left
+  { up: false, down: false, left: true, right: true },   // 0011 - Left+Right (horizontal)
+  { up: false, down: true, left: false, right: false },  // 0100 - Down
+  { up: false, down: true, left: false, right: true },   // 0101 - Down+Right
+  { up: false, down: true, left: true, right: false },   // 0110 - Down+Left
+  { up: false, down: true, left: true, right: true },    // 0111 - Down+Left+Right (T-bottom)
+  { up: true, down: false, left: false, right: false },  // 1000 - Up
+  { up: true, down: false, left: false, right: true },   // 1001 - Up+Right
+  { up: true, down: false, left: true, right: false },   // 1010 - Up+Left
+  { up: true, down: false, left: true, right: true },    // 1011 - Up+Left+Right (T-top)
+  { up: true, down: true, left: false, right: false },   // 1100 - Up+Down (vertical)
+  { up: true, down: true, left: false, right: true },    // 1101 - Up+Down+Right (T-right)
+  { up: true, down: true, left: true, right: false },    // 1110 - Up+Down+Left (T-left)
+  { up: true, down: true, left: true, right: true },     // 1111 - All (crossroads)
+]
+
+function getPathLabel(dirs: PathDirection): string {
+  const parts: string[] = []
+  if (dirs.up) parts.push("↑")
+  if (dirs.down) parts.push("↓")
+  if (dirs.left) parts.push("←")
+  if (dirs.right) parts.push("→")
+  return parts.join("")
+}
 
 interface VariationFrame {
   pixels: Uint8ClampedArray
@@ -59,6 +90,7 @@ export function TileEditorPage() {
   const [brushSize, setBrushSize] = useState(1)
   const [tileName, setTileName] = useState("")
   const [passable, setPassable] = useState(true)
+  const [tileType, setTileType] = useState<"TILE" | "PATH">("TILE")
   const [isSaving, setIsSaving] = useState(false)
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [backendUser, setBackendUser] = useState<UserDTO | null>(null)
@@ -131,6 +163,7 @@ export function TileEditorPage() {
       setVariations(newVariations)
       setCurrentVariationIndex(0)
       setPassable(properties.passable)
+      setTileType(properties.tileType || "TILE")
       clearAllHistory()
 
       if (mode === "edit") {
@@ -158,6 +191,7 @@ export function TileEditorPage() {
     setCurrentVariationIndex(0)
     setTileName("")
     setPassable(true)
+    setTileType("TILE")
     setLoadedAsset(null)
     setIsReadOnly(false)
     setStatusMessage(null)
@@ -412,6 +446,135 @@ export function TileEditorPage() {
     handleCommit(newPixels)
   }
 
+  // Draw paths on a pixel array based on directions (for bulk generation)
+  const drawPathsOnPixels = (
+    pixels: Uint8ClampedArray,
+    directions: PathDirection
+  ): Uint8ClampedArray => {
+    const newPixels = new Uint8ClampedArray(pixels)
+
+    const drawDirection = (direction: "up" | "down" | "left" | "right") => {
+      let xStart: number, xEnd: number, yStart: number, yEnd: number
+      let fadeLeft = false, fadeRight = false, fadeTop = false, fadeBottom = false
+
+      switch (direction) {
+        case "up":
+          xStart = PATH_CENTER_START; xEnd = PATH_CENTER_END
+          yStart = 0; yEnd = PATH_CENTER_END
+          fadeLeft = true; fadeRight = true; fadeBottom = true
+          break
+        case "down":
+          xStart = PATH_CENTER_START; xEnd = PATH_CENTER_END
+          yStart = PATH_CENTER_START; yEnd = TILE_SIZE
+          fadeLeft = true; fadeRight = true; fadeTop = true
+          break
+        case "left":
+          xStart = 0; xEnd = PATH_CENTER_END
+          yStart = PATH_CENTER_START; yEnd = PATH_CENTER_END
+          fadeTop = true; fadeBottom = true; fadeRight = true
+          break
+        case "right":
+          xStart = PATH_CENTER_START; xEnd = TILE_SIZE
+          yStart = PATH_CENTER_START; yEnd = PATH_CENTER_END
+          fadeTop = true; fadeBottom = true; fadeLeft = true
+          break
+      }
+
+      for (let y = yStart; y < yEnd; y++) {
+        for (let x = xStart; x < xEnd; x++) {
+          const index = (y * TILE_SIZE + x) * 4
+          const pathColor = getPathColor()
+
+          let fadeFactor = 0
+          if (fadeLeft && x >= xStart && x < xStart + PATH_FADE_PIXELS) {
+            fadeFactor = Math.max(fadeFactor, 1 - (x - xStart + 1) / PATH_FADE_PIXELS)
+          }
+          if (fadeRight && x >= xEnd - PATH_FADE_PIXELS && x < xEnd) {
+            fadeFactor = Math.max(fadeFactor, 1 - (xEnd - 1 - x + 1) / PATH_FADE_PIXELS)
+          }
+          if (fadeTop && y >= yStart && y < yStart + PATH_FADE_PIXELS) {
+            fadeFactor = Math.max(fadeFactor, 1 - (y - yStart + 1) / PATH_FADE_PIXELS)
+          }
+          if (fadeBottom && y >= yEnd - PATH_FADE_PIXELS && y < yEnd) {
+            fadeFactor = Math.max(fadeFactor, 1 - (yEnd - 1 - y + 1) / PATH_FADE_PIXELS)
+          }
+
+          if (fadeFactor > 0) {
+            blendPixel(newPixels, index, pathColor, fadeFactor)
+          } else {
+            newPixels[index] = pathColor[0]
+            newPixels[index + 1] = pathColor[1]
+            newPixels[index + 2] = pathColor[2]
+            newPixels[index + 3] = pathColor[3]
+          }
+        }
+      }
+    }
+
+    if (directions.up) drawDirection("up")
+    if (directions.down) drawDirection("down")
+    if (directions.left) drawDirection("left")
+    if (directions.right) drawDirection("right")
+
+    return newPixels
+  }
+
+  // Switch tile type
+  const handleSwitchTileType = (newType: "TILE" | "PATH") => {
+    if (newType === tileType) return
+
+    if (newType === "PATH") {
+      // Create exactly 15 variations for PATH tile
+      const newVariations: VariationFrame[] = PATH_COMBINATIONS.map(() => createEmptyFrame())
+      setVariations(newVariations)
+      setCurrentVariationIndex(0)
+      setPassable(true) // PATH tiles are always passable
+      clearAllHistory()
+    } else {
+      // Switch back to regular TILE with single variation
+      setVariations([createEmptyFrame()])
+      setCurrentVariationIndex(0)
+      clearAllHistory()
+    }
+    setTileType(newType)
+  }
+
+  // Fill all PATH variations with background colors
+  const handleFillAllBackgrounds = () => {
+    if (tileType !== "PATH") return
+
+    const colors = [hexToRgba(fillColor1), hexToRgba(fillColor2), hexToRgba(fillColor3)]
+
+    setVariations(prev => prev.map(variation => {
+      const newPixels = new Uint8ClampedArray(TILE_SIZE * TILE_SIZE * 4)
+      for (let i = 0; i < TILE_SIZE * TILE_SIZE; i++) {
+        const color = colors[Math.floor(Math.random() * colors.length)]
+        newPixels[i * 4] = color[0]
+        newPixels[i * 4 + 1] = color[1]
+        newPixels[i * 4 + 2] = color[2]
+        newPixels[i * 4 + 3] = color[3]
+      }
+      return { pixels: newPixels }
+    }))
+
+    clearAllHistory()
+    setStatusMessage({ type: "success", text: "Filled all 15 variations with background" })
+  }
+
+  // Generate all paths on all variations
+  const handleGenerateAllPaths = () => {
+    if (tileType !== "PATH") return
+
+    setVariations(prev => prev.map((variation, index) => {
+      const directions = PATH_COMBINATIONS[index]
+      const newPixels = drawPathsOnPixels(variation.pixels, directions)
+      return { pixels: newPixels }
+    }))
+
+    clearAllHistory()
+    setStatusMessage({ type: "success", text: "Generated paths on all 15 variations" })
+  }
+
   // Variation management
   const handleAddVariation = () => {
     if (variations.length >= MAX_VARIATIONS) {
@@ -583,8 +746,9 @@ export function TileEditorPage() {
       const properties: TileProperties = {
         name: tileName,
         tileSize: TILE_SIZE,
-        passable: passable,
+        passable: tileType === "PATH" ? true : passable, // PATH tiles always passable
         variations: variations.length,
+        tileType: tileType,
       }
 
       const fileNames: string[] = ["properties.json"]
@@ -907,6 +1071,18 @@ export function TileEditorPage() {
                   </div>
                 </div>
               </div>
+              {/* Bulk fill button for PATH mode */}
+              {tileType === "PATH" && (
+                <Button
+                  variant="outline"
+                  className="w-full bg-green-700 border-green-600 text-white hover:bg-green-600"
+                  onClick={handleFillAllBackgrounds}
+                  title="Fill all 15 variations with random background colors"
+                >
+                  <PaintBucket className="w-4 h-4 mr-2" />
+                  Fill All 15 Backgrounds
+                </Button>
+              )}
             </CardContent>
           </Card>
 
@@ -1078,6 +1254,18 @@ export function TileEditorPage() {
                   </div>
                 </div>
               </div>
+              {/* Bulk generate paths button for PATH mode */}
+              {tileType === "PATH" && (
+                <Button
+                  variant="outline"
+                  className="w-full bg-amber-700 border-amber-600 text-white hover:bg-amber-600"
+                  onClick={handleGenerateAllPaths}
+                  title="Generate all path combinations on all 15 variations"
+                >
+                  <Shuffle className="w-4 h-4 mr-2" />
+                  Generate All 15 Paths
+                </Button>
+              )}
             </CardContent>
           </Card>
 
@@ -1158,22 +1346,38 @@ export function TileEditorPage() {
           <div className="border-t border-zinc-700 p-4 bg-zinc-900">
             <div className="flex items-center justify-between mb-3">
               <div className="text-sm text-zinc-400">
-                Variation {currentVariationIndex + 1}/{variations.length}
+                {tileType === "PATH" ? (
+                  <>
+                    Path {currentVariationIndex + 1}/15: {getPathLabel(PATH_COMBINATIONS[currentVariationIndex])}
+                  </>
+                ) : (
+                  <>Variation {currentVariationIndex + 1}/{variations.length}</>
+                )}
               </div>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleAddVariation} title="Add Variation">
-                  <Plus className="w-4 h-4" />
-                </Button>
-                <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleDuplicateVariation} title="Duplicate">
-                  <Copy className="w-4 h-4" />
-                </Button>
-                <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleDeleteVariation} title="Delete Variation">
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-                <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleClearVariation} title="Clear Variation">
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
+              {/* Hide add/delete for PATH mode */}
+              {tileType !== "PATH" && (
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleAddVariation} title="Add Variation">
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleDuplicateVariation} title="Duplicate">
+                    <Copy className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleDeleteVariation} title="Delete Variation">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleClearVariation} title="Clear Variation">
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
+              {tileType === "PATH" && (
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleClearVariation} title="Clear This Variation">
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -1185,20 +1389,32 @@ export function TileEditorPage() {
               </Button>
 
               <div className="flex-1 flex gap-1 ml-4 overflow-x-auto">
-                {variations.map((variation, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setCurrentVariationIndex(index)}
-                    className={`w-16 h-16 rounded border-2 flex-shrink-0 ${
-                      index === currentVariationIndex
-                        ? "border-blue-500"
-                        : "border-zinc-600 hover:border-zinc-500"
-                    }`}
-                    style={{ background: "#1a1a1a" }}
-                  >
-                    <VariationThumbnail pixels={variation.pixels} size={TILE_SIZE} />
-                  </button>
-                ))}
+                {variations.map((variation, index) => {
+                  const isPath = tileType === "PATH"
+                  const pathDirs = isPath ? PATH_COMBINATIONS[index] : null
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => setCurrentVariationIndex(index)}
+                      className={`relative flex-shrink-0 rounded border-2 ${
+                        index === currentVariationIndex
+                          ? "border-blue-500"
+                          : "border-zinc-600 hover:border-zinc-500"
+                      }`}
+                      style={{ background: "#1a1a1a", width: isPath ? "48px" : "64px", height: isPath ? "48px" : "64px" }}
+                      title={isPath && pathDirs ? getPathLabel(pathDirs) : `Variation ${index + 1}`}
+                    >
+                      <VariationThumbnail pixels={variation.pixels} size={TILE_SIZE} />
+                      {isPath && pathDirs && (
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                          <span className="text-xs text-white/70 font-bold drop-shadow-lg">
+                            {getPathLabel(pathDirs)}
+                          </span>
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             </div>
           </div>
@@ -1230,33 +1446,64 @@ export function TileEditorPage() {
               </div>
 
               <div>
+                <label className="text-xs text-zinc-400 block mb-2">Tile Type</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleSwitchTileType("TILE")}
+                    className={`flex-1 py-2 px-3 rounded text-sm transition-colors ${
+                      tileType === "TILE"
+                        ? "bg-blue-600 text-white"
+                        : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
+                    }`}
+                  >
+                    TILE
+                  </button>
+                  <button
+                    onClick={() => handleSwitchTileType("PATH")}
+                    className={`flex-1 py-2 px-3 rounded text-sm transition-colors ${
+                      tileType === "PATH"
+                        ? "bg-amber-600 text-white"
+                        : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
+                    }`}
+                  >
+                    PATH
+                  </button>
+                </div>
+                <p className="text-xs text-zinc-500 mt-2">
+                  {tileType === "PATH" ? "15 variations for all path directions" : "Custom variations (1-8)"}
+                </p>
+              </div>
+
+              <div>
                 <label className="text-xs text-zinc-400 block mb-2">Passable</label>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setPassable(true)}
+                    onClick={() => tileType !== "PATH" && setPassable(true)}
+                    disabled={tileType === "PATH"}
                     className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
                       passable
                         ? "bg-green-600 text-white"
                         : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
-                    }`}
+                    } ${tileType === "PATH" ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     <Check className="w-4 h-4" />
                     Yes
                   </button>
                   <button
-                    onClick={() => setPassable(false)}
+                    onClick={() => tileType !== "PATH" && setPassable(false)}
+                    disabled={tileType === "PATH"}
                     className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
                       !passable
                         ? "bg-red-600 text-white"
                         : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
-                    }`}
+                    } ${tileType === "PATH" ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     <X className="w-4 h-4" />
                     No
                   </button>
                 </div>
                 <p className="text-xs text-zinc-500 mt-2">
-                  {passable ? "Players can walk through" : "Blocks player movement"}
+                  {tileType === "PATH" ? "PATH tiles are always passable" : (passable ? "Players can walk through" : "Blocks player movement")}
                 </p>
               </div>
 
