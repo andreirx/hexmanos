@@ -246,6 +246,69 @@ export function PixelCanvas({
     onCommit(new Uint8ClampedArray(livePixelsRef.current))
   }, [selection, width, onCommit])
 
+  // Rotate selection pixels 90 degrees
+  const rotateSelection = useCallback((clockwise: boolean) => {
+    if (!selection || !selection.pixels || selection.originalWidth <= 0 || selection.originalHeight <= 0) return
+
+    const srcW = selection.originalWidth
+    const srcH = selection.originalHeight
+    const srcPixels = selection.pixels
+
+    // After rotation, width and height swap
+    const dstW = srcH
+    const dstH = srcW
+    const dstPixels = new Uint8ClampedArray(dstW * dstH * 4)
+
+    for (let srcY = 0; srcY < srcH; srcY++) {
+      for (let srcX = 0; srcX < srcW; srcX++) {
+        const srcI = (srcY * srcW + srcX) * 4
+
+        let dstX: number, dstY: number
+        if (clockwise) {
+          // 90 degrees clockwise: (x, y) -> (h - 1 - y, x)
+          dstX = srcH - 1 - srcY
+          dstY = srcX
+        } else {
+          // 90 degrees counter-clockwise: (x, y) -> (y, w - 1 - x)
+          dstX = srcY
+          dstY = srcW - 1 - srcX
+        }
+
+        const dstI = (dstY * dstW + dstX) * 4
+        dstPixels[dstI] = srcPixels[srcI]
+        dstPixels[dstI + 1] = srcPixels[srcI + 1]
+        dstPixels[dstI + 2] = srcPixels[srcI + 2]
+        dstPixels[dstI + 3] = srcPixels[srcI + 3]
+      }
+    }
+
+    // Update selection with rotated pixels and swapped dimensions
+    setSelection({
+      ...selection,
+      pixels: dstPixels,
+      originalWidth: dstW,
+      originalHeight: dstH,
+      // Also swap the display width/height proportionally
+      width: Math.round(selection.width * (dstW / srcW)),
+      height: Math.round(selection.height * (dstH / srcH)),
+    })
+  }, [selection])
+
+  // Handle keyboard events for rotation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!selection || !selection.pixels) return
+
+      if (e.key === "r" || e.key === "R") {
+        e.preventDefault()
+        rotateSelection(!e.shiftKey) // R = clockwise, Shift+R = counter-clockwise
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [selection, rotateSelection])
+
   // Check if point is inside selection
   const isInSelection = (x: number, y: number): boolean => {
     if (!selection) return false

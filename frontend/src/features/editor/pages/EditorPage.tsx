@@ -7,7 +7,7 @@ import { Header } from "@/components/layout"
 import { getPresignedUrl, uploadToPresignedUrl, registerAsset, getAssetFile, loadAssetImage } from "@/api/assets"
 import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
-import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, FilePlus, Pencil, Eraser, Square, Undo2, Redo2 } from "lucide-react"
+import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, FilePlus, Pencil, Eraser, Square, Undo2, Redo2, MoveLeft, MoveRight } from "lucide-react"
 import type { UserDTO, AssetDTO } from "@/api/types"
 
 // Character definition structure from JSON
@@ -364,6 +364,36 @@ export function EditorPage() {
 
   const handleNextFrame = () => {
     setCurrentFrameIndex((prev) => (prev < currentFrames.length - 1 ? prev + 1 : 0))
+  }
+
+  const handleMoveFrameLeft = () => {
+    if (currentFrameIndex <= 0) return
+    setAnimationData((prev) => {
+      const newData = { ...prev }
+      const newFrames = [...newData[currentState].frames]
+      // Swap current frame with the one to its left
+      const temp = newFrames[currentFrameIndex - 1]
+      newFrames[currentFrameIndex - 1] = newFrames[currentFrameIndex]
+      newFrames[currentFrameIndex] = temp
+      newData[currentState] = { frames: newFrames }
+      return newData
+    })
+    setCurrentFrameIndex(currentFrameIndex - 1)
+  }
+
+  const handleMoveFrameRight = () => {
+    if (currentFrameIndex >= currentFrames.length - 1) return
+    setAnimationData((prev) => {
+      const newData = { ...prev }
+      const newFrames = [...newData[currentState].frames]
+      // Swap current frame with the one to its right
+      const temp = newFrames[currentFrameIndex + 1]
+      newFrames[currentFrameIndex + 1] = newFrames[currentFrameIndex]
+      newFrames[currentFrameIndex] = temp
+      newData[currentState] = { frames: newFrames }
+      return newData
+    })
+    setCurrentFrameIndex(currentFrameIndex + 1)
   }
 
   const togglePlayback = () => {
@@ -823,6 +853,7 @@ export function EditorPage() {
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="bg-zinc-900 rounded-lg p-4 shadow-xl">
             <PixelCanvas
+              key={`${currentState}_${currentFrameIndex}`}
               width={CANVAS_SIZE}
               height={CANVAS_SIZE}
               pixels={currentFrame.pixels}
@@ -852,6 +883,13 @@ export function EditorPage() {
               </Button>
               <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleDeleteFrame} title="Delete Frame">
                 <Trash2 className="w-4 h-4" />
+              </Button>
+              <div className="w-px bg-zinc-600" />
+              <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600 disabled:opacity-40" onClick={handleMoveFrameLeft} disabled={currentFrameIndex <= 0} title="Move Frame Left">
+                <MoveLeft className="w-4 h-4" />
+              </Button>
+              <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600 disabled:opacity-40" onClick={handleMoveFrameRight} disabled={currentFrameIndex >= currentFrames.length - 1} title="Move Frame Right">
+                <MoveRight className="w-4 h-4" />
               </Button>
             </div>
           </div>
