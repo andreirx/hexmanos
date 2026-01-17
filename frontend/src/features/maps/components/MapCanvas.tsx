@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState } from "react"
 import { getAssetFileUrl, getAssetsByType, getAssetFile } from "@/api/assets"
-import type { MapData } from "../pages/MapEditorPage"
+import type { MapData, MapPath } from "../pages/MapEditorPage"
 import type { AssetDTO } from "@/api/types"
 
 interface TileProperties {
@@ -30,22 +30,20 @@ const imageCache = new Map<string, HTMLImageElement>()
 const assetCache = new Map<string, AssetDTO>()
 const propertiesCache = new Map<string, TileProperties>()
 
-// Seeded random number generator for consistent variation selection
+// Seeded random for consistent variation selection
 function seededRandom(seed: number): number {
   const x = Math.sin(seed * 9999) * 10000
   return x - Math.floor(x)
 }
 
-// Calculate variation from seed and number of variations
 function getVariationFromSeed(seed: number, variations: number): number {
   return Math.floor(seededRandom(seed) * variations)
 }
 
-// Direction names for transitions (8 directions)
+// Transition directions
 const TRANSITION_DIRECTIONS = ["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const
 type TransitionDirection = typeof TRANSITION_DIRECTIONS[number]
 
-// Direction offsets for checking neighbors
 const DIRECTION_OFFSETS: Record<TransitionDirection, { dx: number; dy: number }> = {
   n:  { dx: 0,  dy: -1 },
   ne: { dx: 1,  dy: -1 },
@@ -57,51 +55,18 @@ const DIRECTION_OFFSETS: Record<TransitionDirection, { dx: number; dy: number }>
   nw: { dx: -1, dy: -1 }
 }
 
-// Get opposite direction for transition overlay
-const OPPOSITE_DIRECTION: Record<TransitionDirection, TransitionDirection> = {
-  n: "s",
-  ne: "sw",
-  e: "w",
-  se: "nw",
-  s: "n",
-  sw: "ne",
-  w: "e",
-  nw: "se"
-}
-
-// Path variation calculation based on neighbors
-// Bits: Up=8, Down=4, Left=2, Right=1
-// Variations 0-14 map to different connection combinations
+// Path variation: Up=8, Down=4, Left=2, Right=1
 function calculatePathVariation(
-  paths: (import("../pages/MapEditorPage").MapPath | null)[][],
-  x: number,
-  y: number,
-  width: number,
-  height: number,
+  paths: (MapPath | null)[][],
+  x: number, y: number,
+  width: number, height: number,
   currentPathAssetId: string
 ): number {
   let bits = 0
-
-  // Check up (y - 1)
-  if (y > 0 && paths[y - 1]?.[x]?.pathAssetId === currentPathAssetId) {
-    bits |= 8
-  }
-  // Check down (y + 1)
-  if (y < height - 1 && paths[y + 1]?.[x]?.pathAssetId === currentPathAssetId) {
-    bits |= 4
-  }
-  // Check left (x - 1)
-  if (x > 0 && paths[y]?.[x - 1]?.pathAssetId === currentPathAssetId) {
-    bits |= 2
-  }
-  // Check right (x + 1)
-  if (x < width - 1 && paths[y]?.[x + 1]?.pathAssetId === currentPathAssetId) {
-    bits |= 1
-  }
-
-  // bits = 0 means isolated path, use variation 0
-  // bits = 1-15 map to variations 0-14
-  // We return max(0, bits - 1) to map 1-15 to 0-14, and 0 stays 0
+  if (y > 0 && paths[y - 1]?.[x]?.pathAssetId === currentPathAssetId) bits |= 8
+  if (y < height - 1 && paths[y + 1]?.[x]?.pathAssetId === currentPathAssetId) bits |= 4
+  if (x > 0 && paths[y]?.[x - 1]?.pathAssetId === currentPathAssetId) bits |= 2
+  if (x < width - 1 && paths[y]?.[x + 1]?.pathAssetId === currentPathAssetId) bits |= 1
   return bits === 0 ? 0 : bits - 1
 }
 
@@ -109,7 +74,6 @@ async function loadImage(url: string): Promise<HTMLImageElement> {
   if (imageCache.has(url)) {
     return imageCache.get(url)!
   }
-
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.crossOrigin = "anonymous"
@@ -136,15 +100,30 @@ export function MapCanvas({
   onCellClick
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [isDragging, setIsDragging] = useState(false)
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
-  const [tileAssets, setTileAssets] = useState<AssetDTO[]>([])
-  const [characterAssets, setCharacterAssets] = useState<AssetDTO[]>([])
-  const [tileProperties, setTileProperties] = useState<Map<string, TileProperties>>(new Map())
-  const [isDrawing, setIsDrawing] = useState(false)
+  const mainCanvasRef = useRef<HTMLCanvasElement>(null)
+  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
-  // Load all tile and character assets on mount
+  const [isDragging, setIsDragging] = useState(false)
+  const dragStartRef = useRef({ x: 0, y: 0 })
+  const panOffsetRef = useRef(panOffset)
+
+  const [isDrawing, setIsDrawing] = useState(false)
+  const lastCellRef = useRef<{ x: number; y: number } | null>(null)
+
+  const [tileProperties, setTileProperties] = useState<Map<string, TileProperties>>(new Map())
+  const [assetsLoaded, setAssetsLoaded] = useState(false)
+
+  // Keep panOffsetRef in sync
+  useEffect(() => {
+    panOffsetRef.current = panOffset
+  }, [panOffset])
+
+  // Initialize offscreen canvas
+  useEffect(() => {
+    offscreenCanvasRef.current = document.createElement("canvas")
+  }, [])
+
+  // Load assets once on mount
   useEffect(() => {
     async function loadAssets() {
       try {
@@ -152,14 +131,11 @@ export function MapCanvas({
           getAssetsByType("TILE"),
           getAssetsByType("CHARACTER")
         ])
-        setTileAssets(tiles)
-        setCharacterAssets(characters)
 
-        // Populate asset cache
         tiles.forEach(t => assetCache.set(t.id, t))
         characters.forEach(c => assetCache.set(c.id, c))
 
-        // Load properties for each tile asset to get variation counts
+        // Load properties for variation counts
         const propsPromises = tiles.map(async (asset) => {
           try {
             const props = await getAssetFile<TileProperties>(asset.storageKeyPrefix, "properties.json")
@@ -173,11 +149,10 @@ export function MapCanvas({
         const propsResults = await Promise.all(propsPromises)
         const propsMap = new Map<string, TileProperties>()
         propsResults.forEach(({ assetId, props }) => {
-          if (props) {
-            propsMap.set(assetId, props)
-          }
+          if (props) propsMap.set(assetId, props)
         })
         setTileProperties(propsMap)
+        setAssetsLoaded(true)
       } catch (err) {
         console.error("Failed to load assets:", err)
       }
@@ -185,48 +160,42 @@ export function MapCanvas({
     loadAssets()
   }, [])
 
-  // Calculate canvas size
-  const canvasWidth = mapData.width * mapData.tileSize * zoom
-  const canvasHeight = mapData.height * mapData.tileSize * zoom
-
-  // Render the map
-  const renderMap = useCallback(async () => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-
-    // Set canvas size
-    canvas.width = mapData.width * mapData.tileSize
-    canvas.height = mapData.height * mapData.tileSize
-
-    // Clear canvas
-    ctx.fillStyle = "#1a1a2e"
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-    // Disable image smoothing for pixel art
-    ctx.imageSmoothingEnabled = false
+  // Render to offscreen canvas, then blit to main canvas
+  const render = useCallback(async () => {
+    const mainCanvas = mainCanvasRef.current
+    const offscreen = offscreenCanvasRef.current
+    if (!mainCanvas || !offscreen || !assetsLoaded) return
 
     const tileSize = mapData.tileSize
+    const mapWidth = mapData.width
+    const mapHeight = mapData.height
 
-    // Draw terrain layer - using seed for random variation selection
-    for (let y = 0; y < mapData.height; y++) {
-      for (let x = 0; x < mapData.width; x++) {
+    // Set offscreen canvas to map size at 1x
+    offscreen.width = mapWidth * tileSize
+    offscreen.height = mapHeight * tileSize
+
+    const ctx = offscreen.getContext("2d")!
+    ctx.imageSmoothingEnabled = false
+
+    // Clear with background
+    ctx.fillStyle = "#1a1a2e"
+    ctx.fillRect(0, 0, offscreen.width, offscreen.height)
+
+    // Draw terrain layer
+    for (let y = 0; y < mapHeight; y++) {
+      for (let x = 0; x < mapWidth; x++) {
         const tile = mapData.layers.terrain[y]?.[x]
         if (tile) {
           const asset = assetCache.get(tile.tileAssetId)
           const props = tileProperties.get(tile.tileAssetId)
           if (asset) {
             try {
-              // Calculate variation from seed and available variations
               const variations = props?.variations ?? 1
               const variation = getVariationFromSeed(tile.seed, variations)
               const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${variation}.png`, true)
               const img = await loadImage(url)
               ctx.drawImage(img, x * tileSize, y * tileSize, tileSize, tileSize)
-            } catch (err) {
-              // Draw placeholder for failed tiles
+            } catch {
               ctx.fillStyle = "#ff00ff44"
               ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize)
             }
@@ -235,41 +204,38 @@ export function MapCanvas({
       }
     }
 
-    // Draw auto-transitions between different terrain types
+    // Draw transitions - when neighbor has DIFFERENT tile type, draw neighbor's transition
+    // The transition file named "transition_n" has solid at TOP, fades DOWN
+    // So if neighbor is at NORTH, draw neighbor's N transition on current cell
     if (showTransitions) {
-      for (let y = 0; y < mapData.height; y++) {
-        for (let x = 0; x < mapData.width; x++) {
+      for (let y = 0; y < mapHeight; y++) {
+        for (let x = 0; x < mapWidth; x++) {
           const tile = mapData.layers.terrain[y]?.[x]
           if (!tile) continue
 
-          // Check each of the 8 directions for neighbors with different tile types
-          for (const direction of TRANSITION_DIRECTIONS) {
-            const { dx, dy } = DIRECTION_OFFSETS[direction]
+          for (const dir of TRANSITION_DIRECTIONS) {
+            const { dx, dy } = DIRECTION_OFFSETS[dir]
             const nx = x + dx
             const ny = y + dy
 
-            // Skip if out of bounds
-            if (nx < 0 || nx >= mapData.width || ny < 0 || ny >= mapData.height) continue
+            if (nx < 0 || nx >= mapWidth || ny < 0 || ny >= mapHeight) continue
 
             const neighbor = mapData.layers.terrain[ny]?.[nx]
-
-            // If neighbor has a different tile type, draw the neighbor's transition into current cell
             if (neighbor && neighbor.tileAssetId !== tile.tileAssetId) {
               const neighborAsset = assetCache.get(neighbor.tileAssetId)
               if (neighborAsset) {
                 try {
-                  // Draw the neighbor's transition tile facing INTO this cell
-                  // e.g., if neighbor is to the North, we draw neighbor's south transition on current cell
-                  const oppositeDir = OPPOSITE_DIRECTION[direction]
+                  // Draw neighbor's transition for this direction
+                  // e.g., neighbor at N -> draw neighbor's N transition (solid at top of current cell)
                   const transitionUrl = getAssetFileUrl(
                     neighborAsset.storageKeyPrefix,
-                    `tile_0_transition_${oppositeDir}.png`,
+                    `tile_0_transition_${dir}.png`,
                     true
                   )
                   const transitionImg = await loadImage(transitionUrl)
                   ctx.drawImage(transitionImg, x * tileSize, y * tileSize, tileSize, tileSize)
                 } catch {
-                  // Transition image doesn't exist, skip silently
+                  // Transition doesn't exist, skip
                 }
               }
             }
@@ -278,27 +244,23 @@ export function MapCanvas({
       }
     }
 
-    // Draw paths layer (on top of terrain) - with auto-calculated variations
+    // Draw paths with auto-calculated variations
     if (showPaths) {
-      for (let y = 0; y < mapData.height; y++) {
-        for (let x = 0; x < mapData.width; x++) {
+      for (let y = 0; y < mapHeight; y++) {
+        for (let x = 0; x < mapWidth; x++) {
           const path = mapData.layers.paths[y]?.[x]
           if (path) {
             const asset = assetCache.get(path.pathAssetId)
             if (asset) {
               try {
-                // Calculate path variation based on adjacent paths
                 const variation = calculatePathVariation(
-                  mapData.layers.paths,
-                  x, y,
-                  mapData.width, mapData.height,
-                  path.pathAssetId
+                  mapData.layers.paths, x, y,
+                  mapWidth, mapHeight, path.pathAssetId
                 )
                 const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${variation}.png`, true)
                 const img = await loadImage(url)
                 ctx.drawImage(img, x * tileSize, y * tileSize, tileSize, tileSize)
-              } catch (err) {
-                // Draw placeholder for failed paths
+              } catch {
                 ctx.fillStyle = "#ffff0044"
                 ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize)
               }
@@ -308,18 +270,16 @@ export function MapCanvas({
       }
     }
 
-    // Draw characters layer
+    // Draw characters
     if (showCharacters) {
       for (const char of mapData.characters) {
         const asset = assetCache.get(char.characterAssetId)
         if (asset) {
           try {
-            // Load the idle_0.png as the default character sprite
             const url = getAssetFileUrl(asset.storageKeyPrefix, "idle_0.png", true)
             const img = await loadImage(url)
             ctx.drawImage(img, char.x * tileSize, char.y * tileSize, tileSize, tileSize)
-          } catch (err) {
-            // Draw placeholder for failed characters
+          } catch {
             ctx.fillStyle = "#00ffff44"
             ctx.fillRect(char.x * tileSize, char.y * tileSize, tileSize, tileSize)
             ctx.fillStyle = "#00ffff"
@@ -332,75 +292,97 @@ export function MapCanvas({
       }
     }
 
-    // Draw grid
+    // Draw grid on offscreen
     if (showGrid) {
       ctx.strokeStyle = "#ffffff22"
       ctx.lineWidth = 1
-
-      // Vertical lines
-      for (let x = 0; x <= mapData.width; x++) {
+      for (let gx = 0; gx <= mapWidth; gx++) {
         ctx.beginPath()
-        ctx.moveTo(x * tileSize, 0)
-        ctx.lineTo(x * tileSize, canvas.height)
+        ctx.moveTo(gx * tileSize, 0)
+        ctx.lineTo(gx * tileSize, offscreen.height)
         ctx.stroke()
       }
-
-      // Horizontal lines
-      for (let y = 0; y <= mapData.height; y++) {
+      for (let gy = 0; gy <= mapHeight; gy++) {
         ctx.beginPath()
-        ctx.moveTo(0, y * tileSize)
-        ctx.lineTo(canvas.width, y * tileSize)
+        ctx.moveTo(0, gy * tileSize)
+        ctx.lineTo(offscreen.width, gy * tileSize)
         ctx.stroke()
       }
     }
 
-    // Highlight active layer cells with subtle overlay
-    if (activeLayer === "terrain") {
-      // No additional overlay for terrain
-    } else if (activeLayer === "paths") {
+    // Layer overlay
+    if (activeLayer === "paths") {
       ctx.fillStyle = "#ffa50011"
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.fillRect(0, 0, offscreen.width, offscreen.height)
     } else if (activeLayer === "characters") {
       ctx.fillStyle = "#a855f711"
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.fillRect(0, 0, offscreen.width, offscreen.height)
     }
-  }, [mapData, showGrid, showPaths, showCharacters, showTransitions, activeLayer, tileAssets, characterAssets, tileProperties])
 
-  // Re-render when map data or visibility settings change
+    // Now blit to main canvas with zoom and pan
+    const container = containerRef.current
+    if (!container) return
+
+    mainCanvas.width = container.clientWidth
+    mainCanvas.height = container.clientHeight
+
+    const mainCtx = mainCanvas.getContext("2d")!
+    mainCtx.imageSmoothingEnabled = false
+
+    mainCtx.fillStyle = "#09090b"
+    mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height)
+
+    mainCtx.save()
+    mainCtx.translate(panOffsetRef.current.x, panOffsetRef.current.y)
+    mainCtx.scale(zoom, zoom)
+    mainCtx.drawImage(offscreen, 0, 0)
+    mainCtx.restore()
+  }, [mapData, zoom, showGrid, showPaths, showCharacters, showTransitions, activeLayer, assetsLoaded, tileProperties])
+
+  // Re-render when dependencies change
   useEffect(() => {
-    renderMap()
-  }, [renderMap])
+    render()
+  }, [render, panOffset])
 
-  // Get cell coordinates from mouse event
+  // Handle resize
+  useEffect(() => {
+    const handleResize = () => render()
+    window.addEventListener("resize", handleResize)
+    return () => window.removeEventListener("resize", handleResize)
+  }, [render])
+
+  // Get cell from mouse event
   const getCellFromEvent = useCallback((e: React.MouseEvent): { x: number; y: number } | null => {
-    const canvas = canvasRef.current
-    if (!canvas) return null
+    const mainCanvas = mainCanvasRef.current
+    if (!mainCanvas) return null
 
-    const rect = canvas.getBoundingClientRect()
-    const scaleX = canvas.width / rect.width
-    const scaleY = canvas.height / rect.height
+    const rect = mainCanvas.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left
+    const mouseY = e.clientY - rect.top
 
-    const canvasX = (e.clientX - rect.left) * scaleX
-    const canvasY = (e.clientY - rect.top) * scaleY
+    // Account for pan and zoom
+    const worldX = (mouseX - panOffsetRef.current.x) / zoom
+    const worldY = (mouseY - panOffsetRef.current.y) / zoom
 
-    const cellX = Math.floor(canvasX / mapData.tileSize)
-    const cellY = Math.floor(canvasY / mapData.tileSize)
+    const cellX = Math.floor(worldX / mapData.tileSize)
+    const cellY = Math.floor(worldY / mapData.tileSize)
 
     if (cellX >= 0 && cellX < mapData.width && cellY >= 0 && cellY < mapData.height) {
       return { x: cellX, y: cellY }
     }
     return null
-  }, [mapData.width, mapData.height, mapData.tileSize])
+  }, [zoom, mapData.width, mapData.height, mapData.tileSize])
 
-  // Handle mouse down
+  // Mouse down - start drag or drawing
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (currentTool === "pan") {
       setIsDragging(true)
-      setDragStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y })
+      dragStartRef.current = { x: e.clientX - panOffsetRef.current.x, y: e.clientY - panOffsetRef.current.y }
     } else if (currentTool === "paint" || currentTool === "erase") {
       setIsDrawing(true)
       const cell = getCellFromEvent(e)
       if (cell) {
+        lastCellRef.current = cell
         onCellClick(cell.x, cell.y)
       }
     } else if (currentTool === "select") {
@@ -409,75 +391,60 @@ export function MapCanvas({
         onCellClick(cell.x, cell.y)
       }
     }
-  }, [currentTool, panOffset, getCellFromEvent, onCellClick])
+  }, [currentTool, getCellFromEvent, onCellClick])
 
-  // Handle mouse move
+  // Mouse move - pan or draw
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (isDragging && currentTool === "pan") {
-      onPanChange({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y
-      })
+      const newPan = {
+        x: e.clientX - dragStartRef.current.x,
+        y: e.clientY - dragStartRef.current.y
+      }
+      panOffsetRef.current = newPan
+      onPanChange(newPan)
+      // Request animation frame for smooth panning
+      requestAnimationFrame(() => render())
     } else if (isDrawing && (currentTool === "paint" || currentTool === "erase")) {
       const cell = getCellFromEvent(e)
-      if (cell) {
+      if (cell && (lastCellRef.current?.x !== cell.x || lastCellRef.current?.y !== cell.y)) {
+        lastCellRef.current = cell
         onCellClick(cell.x, cell.y)
       }
     }
-  }, [isDragging, isDrawing, currentTool, dragStart, getCellFromEvent, onCellClick, onPanChange])
+  }, [isDragging, isDrawing, currentTool, getCellFromEvent, onCellClick, onPanChange, render])
 
-  // Handle mouse up
+  // Mouse up - stop drag or drawing
   const handleMouseUp = useCallback(() => {
     setIsDragging(false)
     setIsDrawing(false)
+    lastCellRef.current = null
   }, [])
 
-  // Handle wheel for zoom
-  const handleWheel = useCallback((_e: React.WheelEvent) => {
-    // Could implement zoom on scroll here if desired
-  }, [])
-
-  // Get cursor style based on tool
+  // Cursor style
   const getCursor = () => {
     switch (currentTool) {
-      case "pan":
-        return isDragging ? "grabbing" : "grab"
-      case "paint":
-        return "crosshair"
-      case "erase":
-        return "crosshair"
-      case "select":
-        return "pointer"
-      default:
-        return "default"
+      case "pan": return isDragging ? "grabbing" : "grab"
+      case "paint": return "crosshair"
+      case "erase": return "crosshair"
+      case "select": return "pointer"
+      default: return "default"
     }
   }
 
   return (
     <div
       ref={containerRef}
-      className="flex-1 overflow-auto bg-zinc-950 flex items-center justify-center"
+      className="flex-1 overflow-hidden bg-zinc-950"
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
     >
-      <div
-        style={{
-          transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
-          cursor: getCursor()
-        }}
-      >
-        <canvas
-          ref={canvasRef}
-          style={{
-            width: canvasWidth,
-            height: canvasHeight,
-            imageRendering: "pixelated"
-          }}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onWheel={handleWheel}
-        />
-      </div>
+      <canvas
+        ref={mainCanvasRef}
+        className="w-full h-full"
+        style={{ cursor: getCursor() }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+      />
     </div>
   )
 }
