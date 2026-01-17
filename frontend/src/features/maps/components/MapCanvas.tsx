@@ -11,6 +11,18 @@ interface TileProperties {
   tileType?: "TILE" | "PATH"
 }
 
+interface CharacterDefinition {
+  name: string
+  spriteSize: number
+  states: Record<string, { frames: number; loop: boolean }>
+}
+
+// Character definition cache
+const characterDefCache = new Map<string, CharacterDefinition>()
+
+// Animation timing (ms per frame)
+const ANIMATION_FRAME_MS = 200
+
 interface MapCanvasProps {
   mapData: MapData
   zoom: number
@@ -145,6 +157,10 @@ export function MapCanvas({
   // Asset loading state
   const [assetsLoaded, setAssetsLoaded] = useState(false)
   const [tileProperties, setTileProperties] = useState<Map<string, TileProperties>>(new Map())
+  const [characterDefs, setCharacterDefs] = useState<Map<string, CharacterDefinition>>(new Map())
+
+  // Animation state
+  const [animationFrame, setAnimationFrame] = useState(0)
 
   // Keep refs in sync
   useEffect(() => {
@@ -165,10 +181,10 @@ export function MapCanvas({
     terrainCanvasRef.current = document.createElement("canvas")
   }, [])
 
-  // Mark terrain dirty when mapData changes
+  // Mark terrain dirty when mapData or visibility settings change
   useEffect(() => {
     setTerrainDirty(true)
-  }, [mapData, showTransitions])
+  }, [mapData, showTransitions, showPaths, showCharacters])
 
   // Load assets once
   useEffect(() => {
@@ -182,7 +198,7 @@ export function MapCanvas({
         tiles.forEach(t => assetCache.set(t.id, t))
         characters.forEach(c => assetCache.set(c.id, c))
 
-        // Load properties for variation counts
+        // Load tile properties for variation counts
         const propsPromises = tiles.map(async (asset) => {
           try {
             const props = await getAssetFile<TileProperties>(asset.storageKeyPrefix, "properties.json")
@@ -199,6 +215,25 @@ export function MapCanvas({
           if (props) propsMap.set(assetId, props)
         })
         setTileProperties(propsMap)
+
+        // Load character definitions for animation frame counts
+        const charDefPromises = characters.map(async (asset) => {
+          try {
+            const def = await getAssetFile<CharacterDefinition>(asset.storageKeyPrefix, "definition.json")
+            characterDefCache.set(asset.id, def)
+            return { assetId: asset.id, def }
+          } catch {
+            return { assetId: asset.id, def: null }
+          }
+        })
+
+        const charDefResults = await Promise.all(charDefPromises)
+        const charDefMap = new Map<string, CharacterDefinition>()
+        charDefResults.forEach(({ assetId, def }) => {
+          if (def) charDefMap.set(assetId, def)
+        })
+        setCharacterDefs(charDefMap)
+
         setAssetsLoaded(true)
       } catch (err) {
         console.error("Failed to load assets:", err)
@@ -206,6 +241,18 @@ export function MapCanvas({
     }
     loadAssets()
   }, [])
+
+  // Animation timer for characters
+  useEffect(() => {
+    if (!showCharacters || mapData.characters.length === 0) return
+
+    const timer = setInterval(() => {
+      setAnimationFrame(f => f + 1)
+      setTerrainDirty(true) // Force redraw to show new frame
+    }, ANIMATION_FRAME_MS)
+
+    return () => clearInterval(timer)
+  }, [showCharacters, mapData.characters.length])
 
   // ============================================================
   // SYNCHRONOUS TERRAIN RENDER (to offscreen canvas)
@@ -326,13 +373,20 @@ export function MapCanvas({
       }
     }
 
-    // PASS 4: Draw characters
+    // PASS 4: Draw characters with animation
     if (showCharacters) {
       for (const char of mapData.characters) {
         const asset = assetCache.get(char.characterAssetId)
         if (!asset) continue
 
-        const url = getAssetFileUrl(asset.storageKeyPrefix, "idle_0.png")
+        // Get character definition for frame count
+        const charDef = characterDefs.get(char.characterAssetId)
+        const idleFrameCount = charDef?.states?.idle?.frames ?? 1
+
+        // Calculate current frame (loop through available frames)
+        const currentFrame = idleFrameCount > 1 ? animationFrame % idleFrameCount : 0
+
+        const url = getAssetFileUrl(asset.storageKeyPrefix, `idle_${currentFrame}.png`)
         const img = getImage(url)
 
         if (img) {
@@ -342,7 +396,7 @@ export function MapCanvas({
     }
 
     setTerrainDirty(false)
-  }, [mapData, showTransitions, showPaths, showCharacters, assetsLoaded, tileProperties])
+  }, [mapData, showTransitions, showPaths, showCharacters, assetsLoaded, tileProperties, characterDefs, animationFrame])
 
   // ============================================================
   // MAIN RENDER (blit terrain canvas + overlays)
