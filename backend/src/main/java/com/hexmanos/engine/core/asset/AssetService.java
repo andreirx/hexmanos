@@ -81,13 +81,19 @@ public class AssetService {
             );
         }
 
-        // Check if asset already exists (prevent duplicates)
-        if (assetRepository.findById(assetId).isPresent()) {
-            log.error("Asset registration failed - asset already exists: {}", assetId);
-            throw new AssetRegistrationException("Asset already exists with ID: " + assetId, assetId, List.of());
+        // Check if asset already exists - if so, update it (upsert pattern)
+        Optional<Asset> existingAsset = assetRepository.findById(assetId);
+
+        if (existingAsset.isPresent()) {
+            // Update existing asset
+            Asset asset = existingAsset.get();
+            asset.setName(name);
+            // Note: we don't change type, authorId, or storageKeyPrefix on update
+            log.info("Updating existing asset {} with {} validated files", name, files.size());
+            return assetRepository.save(asset);
         }
 
-        // Create the asset record
+        // Create new asset record
         Asset asset = new Asset();
         asset.setId(assetId);
         asset.setType(type);
@@ -97,7 +103,7 @@ public class AssetService {
         asset.setStorageKeyPrefix(storageKeyPrefix);
         asset.setCreatedAt(LocalDateTime.now());
 
-        log.info("Registering asset {} with {} validated files at {}", name, files.size(), storageKeyPrefix);
+        log.info("Registering new asset {} with {} validated files at {}", name, files.size(), storageKeyPrefix);
         return assetRepository.save(asset);
     }
 

@@ -540,7 +540,7 @@ export function TileEditorPage() {
         )}
 
         {/* Left Sidebar - Tools */}
-        <div className="w-64 border-r border-zinc-700 p-4 flex flex-col gap-4 overflow-y-auto">
+        <div className="w-80 border-r border-zinc-700 p-4 flex flex-col gap-4 overflow-y-auto">
           {/* File Operations */}
           <Card className="bg-zinc-800 border-zinc-700">
             <CardHeader className="pb-2">
@@ -683,13 +683,19 @@ export function TileEditorPage() {
                   {/* Color 1 */}
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-zinc-500 w-3">1:</span>
-                    <input
-                      type="color"
-                      value={fillColor1}
-                      onChange={(e) => setFillColor1(e.target.value)}
-                      className="w-8 h-8 rounded cursor-pointer border-2 border-zinc-600 bg-transparent p-0"
-                      style={{ appearance: "none", WebkitAppearance: "none" }}
-                    />
+                    <div
+                      className="w-8 h-8 rounded border-2 border-zinc-600 cursor-pointer overflow-hidden flex-shrink-0"
+                      style={{ backgroundColor: fillColor1 }}
+                      onClick={() => document.getElementById("fillColor1Input")?.click()}
+                    >
+                      <input
+                        id="fillColor1Input"
+                        type="color"
+                        value={fillColor1}
+                        onChange={(e) => setFillColor1(e.target.value)}
+                        className="opacity-0 w-full h-full cursor-pointer"
+                      />
+                    </div>
                     <input
                       type="text"
                       value={fillColor1}
@@ -700,20 +706,26 @@ export function TileEditorPage() {
                       onBlur={(e) => {
                         if (!/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) setFillColor1("#228b22")
                       }}
-                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono"
+                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono min-w-0"
                       placeholder="#228b22"
                     />
                   </div>
                   {/* Color 2 */}
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-zinc-500 w-3">2:</span>
-                    <input
-                      type="color"
-                      value={fillColor2}
-                      onChange={(e) => setFillColor2(e.target.value)}
-                      className="w-8 h-8 rounded cursor-pointer border-2 border-zinc-600 bg-transparent p-0"
-                      style={{ appearance: "none", WebkitAppearance: "none" }}
-                    />
+                    <div
+                      className="w-8 h-8 rounded border-2 border-zinc-600 cursor-pointer overflow-hidden flex-shrink-0"
+                      style={{ backgroundColor: fillColor2 }}
+                      onClick={() => document.getElementById("fillColor2Input")?.click()}
+                    >
+                      <input
+                        id="fillColor2Input"
+                        type="color"
+                        value={fillColor2}
+                        onChange={(e) => setFillColor2(e.target.value)}
+                        className="opacity-0 w-full h-full cursor-pointer"
+                      />
+                    </div>
                     <input
                       type="text"
                       value={fillColor2}
@@ -724,20 +736,26 @@ export function TileEditorPage() {
                       onBlur={(e) => {
                         if (!/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) setFillColor2("#2e8b57")
                       }}
-                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono"
+                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono min-w-0"
                       placeholder="#2e8b57"
                     />
                   </div>
                   {/* Color 3 */}
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-zinc-500 w-3">3:</span>
-                    <input
-                      type="color"
-                      value={fillColor3}
-                      onChange={(e) => setFillColor3(e.target.value)}
-                      className="w-8 h-8 rounded cursor-pointer border-2 border-zinc-600 bg-transparent p-0"
-                      style={{ appearance: "none", WebkitAppearance: "none" }}
-                    />
+                    <div
+                      className="w-8 h-8 rounded border-2 border-zinc-600 cursor-pointer overflow-hidden flex-shrink-0"
+                      style={{ backgroundColor: fillColor3 }}
+                      onClick={() => document.getElementById("fillColor3Input")?.click()}
+                    >
+                      <input
+                        id="fillColor3Input"
+                        type="color"
+                        value={fillColor3}
+                        onChange={(e) => setFillColor3(e.target.value)}
+                        className="opacity-0 w-full h-full cursor-pointer"
+                      />
+                    </div>
                     <input
                       type="text"
                       value={fillColor3}
@@ -748,7 +766,7 @@ export function TileEditorPage() {
                       onBlur={(e) => {
                         if (!/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) setFillColor3("#32cd32")
                       }}
-                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono"
+                      className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 font-mono min-w-0"
                       placeholder="#32cd32"
                     />
                   </div>
