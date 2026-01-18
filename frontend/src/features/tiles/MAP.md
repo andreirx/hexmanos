@@ -1,6 +1,6 @@
 # Tiles Feature Map
 
-Tile editor for creating terrain and path tiles.
+Tile editor for creating terrain and path tiles with land/water terrain types.
 
 ## Directory Structure
 
@@ -21,19 +21,23 @@ Tile editor for creating terrain and path tiles.
 Tile creation and editing interface.
 
 **Layout:**
-- Left sidebar: Tools, colors, brush sizes
+- Left sidebar: Tools, colors, brush sizes, fill options, path drawing
 - Center: Pixel canvas for tile editing
-- Right sidebar: Tile gallery, properties
+- Right sidebar: Tile gallery, properties (name, type, terrain, passable)
 
 **State Management:**
 - `variations`: Array of tile variation data
 - `currentVariation`: Active variation index
-- `properties`: Tile metadata (name, passable, type)
+- `tileType`: TILE or PATH
+- `terrainType`: LAND or WATER
+- `passable`: Whether entities can walk through
 
 **Features:**
 - Create terrain (TILE) or path (PATH) tiles
+- Set terrain type (LAND or WATER)
 - Multiple variations per tile type
-- Passability toggle for game logic
+- Passability toggle for game logic (auto-set for paths)
+- Bulk operations for PATH tiles (fill all backgrounds, generate all paths)
 - Save with presigned URL upload
 
 ## components/
@@ -47,7 +51,7 @@ Tile creation and editing interface.
 Asset browser for loading tiles.
 
 **Features:**
-- Lists all TILE type assets
+- Lists all TILE type assets (APPROVED only)
 - Filters by tileType property (TILE/PATH)
 - Shows first variation as thumbnail
 - Click to load into editor
@@ -58,12 +62,35 @@ Asset browser for loading tiles.
 - Basic terrain tiles (grass, water, stone)
 - Used on Terrain layer in map editor
 - Auto-transitions generated between adjacent types
+- Passability is user-configurable
 
 ### PATH
-- Walkable path overlays
+- Overlay paths for walkways and rivers
 - 15 directional variations for connectivity
 - Used on Paths layer in map editor
-- Directional naming: `N`, `S`, `E`, `W`, `NE`, etc.
+- Passability depends on terrain type:
+  - **LAND paths**: Always passable (walkways, roads)
+  - **WATER paths**: Never passable (rivers, streams)
+
+## Terrain Types
+
+### LAND
+- Ground-based terrain (grass, dirt, stone)
+- LAND paths are walkable (roads, bridges)
+
+### WATER
+- Water-based terrain (ocean, lake, pond)
+- WATER paths are rivers (not walkable)
+- Shown with cyan indicator in palettes
+
+## Rendering Order
+
+In the map editor, paths render in this order:
+1. **Terrain layer** (base tiles)
+2. **Water paths** (rivers) - drawn first
+3. **Land paths** (walkways) - drawn on top
+
+This allows land paths (bridges) to render over water paths (rivers).
 
 ## Data Format
 
@@ -74,7 +101,20 @@ Asset browser for loading tiles.
   "tileSize": 128,
   "passable": true,
   "variations": 4,
-  "tileType": "TILE"
+  "tileType": "TILE",
+  "terrainType": "LAND"
+}
+```
+
+**properties.json (River path):**
+```json
+{
+  "name": "River",
+  "tileSize": 128,
+  "passable": false,
+  "variations": 15,
+  "tileType": "PATH",
+  "terrainType": "WATER"
 }
 ```
 
@@ -109,4 +149,4 @@ For PATH type tiles, 15 variations for connectivity:
 | 12 | NSW | North + South + West |
 | 13 | NEW | North + East + West |
 | 14 | SEW | South + East + West |
-| 15 | NSEW | All four |
+| 15 | NSEW | All four (crossroads) |

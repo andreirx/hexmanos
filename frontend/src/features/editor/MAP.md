@@ -1,6 +1,6 @@
 # Editor Feature Map
 
-Character sprite editor with animation state support.
+Character and Object sprite editor with visual states and animation support.
 
 ## Directory Structure
 
@@ -14,25 +14,39 @@ Character sprite editor with animation state support.
 
 | File | Route | Purpose |
 |------|-------|---------|
-| `EditorPage.tsx` | `/editor/character` | Main character editor |
+| `EditorPage.tsx` | `/editor/character` | Main character/object editor |
 
 ### EditorPage.tsx
 
-Full-featured character sprite editor.
+Full-featured sprite editor for characters and objects.
+
+**Entity Types:**
+- **CHARACTER**: Animated entities with 7 animation states (idle, walk, action)
+- **OBJECT**: Static/simple entities with only idle animation
+
+**Visual States:**
+- Characters: `full`, `hurt_1`, `hurt_2`, `critical` (HP-based)
+- Objects: `new`, `worn`, `damaged`, `broken` (degradation)
+- Each visual state has its own complete sprite set
 
 **Layout:**
 - Left sidebar: Tools, colors, brush sizes
 - Center: 128x128 pixel canvas
-- Right sidebar: Character gallery, animation states, frame timeline
+- Right sidebar: Entity gallery, visual states, animation states, frame timeline
 
 **State Management:**
-- `frames`: All animation frames per state
-- `currentState`: Active animation state
+- `entityType`: CHARACTER or OBJECT
+- `currentVisualState`: Active visual state (e.g., "full", "new")
+- `frames`: All animation frames per visual state per animation state
+- `currentAnimState`: Active animation state
 - `currentFrame`: Active frame index
 - `undoStack`/`redoStack`: Per-frame history
 
 **Features:**
-- Create new characters or load existing
+- Create new characters/objects or load existing
+- Visual state tabs for switching between health/degradation states
+- Copy from another visual state when switching to empty state
+- Convert Character ↔ Object (with frame preservation warnings)
 - Save to backend with presigned URL upload
 - Animation preview with play/pause
 - Undo/redo (10 levels per frame)
@@ -70,18 +84,19 @@ Full-featured character sprite editor.
 
 ### CharacterGallery.tsx
 
-Asset browser for loading characters.
+Asset browser for loading characters and objects.
 
 **Features:**
-- Lists all CHARACTER type assets
-- Shows thumbnail (idle_0.png)
+- Lists both CHARACTER and OBJECT type assets
+- Filter tabs: All / Characters / Objects
+- Shows thumbnail from first visual state (e.g., `full_idle_0.png`)
 - Click to load into editor
-- Search/filter (future)
+- Distinguishes between own assets (edit) and others (copy)
 
 ## Animation States
 
-7 predefined states:
-1. `idle` - Standing still
+### Character States (7)
+1. `idle` - Standing still (required)
 2. `walk_down` - Walking downward
 3. `walk_up` - Walking upward
 4. `walk_left` - Walking left
@@ -89,23 +104,60 @@ Asset browser for loading characters.
 6. `action_build` - Building action
 7. `action_attack` - Attack action
 
+### Object States (1)
+1. `idle` - Static appearance (required)
+
 Each state supports 1-8 frames.
 
 ## Data Format
 
-**definition.json:**
+**definition.json (Character with visual states):**
 ```json
 {
-  "name": "Hero",
-  "frameSize": 128,
+  "name": "Knight",
+  "spriteSize": 128,
+  "entityType": "CHARACTER",
+  "visualStates": ["full", "hurt_1", "hurt_2", "critical"],
   "states": {
     "idle": { "frames": 4, "loop": true },
-    "walk_down": { "frames": 4, "loop": true }
+    "walk_down": { "frames": 6, "loop": true }
   }
 }
 ```
 
-**File Structure:**
+**definition.json (Object with visual states):**
+```json
+{
+  "name": "Barrel",
+  "spriteSize": 128,
+  "entityType": "OBJECT",
+  "visualStates": ["new", "worn", "damaged", "broken"],
+  "states": {
+    "idle": { "frames": 1, "loop": true }
+  }
+}
+```
+
+**File Structure (new format with visual states):**
+```
+characters/{assetId}/
+├── definition.json
+├── full_idle_0.png
+├── full_idle_1.png
+├── full_walk_down_0.png
+├── hurt_1_idle_0.png
+├── critical_idle_0.png
+└── ...
+
+objects/{assetId}/
+├── definition.json
+├── new_idle_0.png
+├── worn_idle_0.png
+├── damaged_idle_0.png
+└── broken_idle_0.png
+```
+
+**Legacy format (without visual states):**
 ```
 characters/{assetId}/
 ├── definition.json
@@ -114,3 +166,9 @@ characters/{assetId}/
 ├── walk_down_0.png
 └── ...
 ```
+
+## Backward Compatibility
+
+- Assets without `visualStates` field are treated as having `["default"]`
+- Legacy files (`idle_0.png`) work alongside new format (`full_idle_0.png`)
+- When loading legacy assets, editor auto-detects format
