@@ -346,6 +346,7 @@ function MapDetail({ asset }: { asset: AssetDTO }) {
       }
 
       // Load tile images
+      // Note: tileAssetId is the asset UUID, but the URL needs storageKeyPrefix (tiles/{assetId})
       const images = new Map<string, HTMLImageElement>()
       await Promise.all(
         Array.from(tileAssetIds).map(async (assetId) => {
@@ -355,8 +356,9 @@ function MapDetail({ asset }: { asset: AssetDTO }) {
             await new Promise<void>((resolve, reject) => {
               img.onload = () => resolve()
               img.onerror = reject
-              // Load tile_0.png for preview
-              img.src = `http://localhost:8080/api/assets/files/${assetId}/tile_0.png?t=${Date.now()}`
+              // Construct the storageKeyPrefix from the asset ID
+              const storageKeyPrefix = `tiles/${assetId}`
+              img.src = `http://localhost:8080/api/assets/files/${storageKeyPrefix}/tile_0.png?t=${Date.now()}`
             })
             images.set(assetId, img)
           } catch {

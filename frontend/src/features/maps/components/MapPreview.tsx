@@ -67,6 +67,8 @@ export function MapPreview({ storageKeyPrefix, className = "" }: MapPreviewProps
       }
 
       // Load tile images
+      // Note: tileAssetId is the asset UUID, but getAssetFileUrl expects storageKeyPrefix
+      // The storageKeyPrefix for tiles is always "tiles/{assetId}"
       const tileImages = new Map<string, HTMLImageElement>()
       await Promise.all(
         Array.from(tileAssetIds).map(async (assetId) => {
@@ -76,8 +78,9 @@ export function MapPreview({ storageKeyPrefix, className = "" }: MapPreviewProps
             await new Promise<void>((resolve, reject) => {
               img.onload = () => resolve()
               img.onerror = reject
-              // Load tile_0.png for preview
-              img.src = getAssetFileUrl(assetId, "tile_0.png", true)
+              // Construct the storageKeyPrefix from the asset ID
+              const storageKeyPrefix = `tiles/${assetId}`
+              img.src = getAssetFileUrl(storageKeyPrefix, "tile_0.png", true)
             })
             tileImages.set(assetId, img)
           } catch {
