@@ -10,6 +10,7 @@ interface TileProperties {
   passable: boolean
   variations: number
   tileType?: "TILE" | "PATH"
+  terrainType?: "LAND" | "WATER"
 }
 
 interface TilePaletteProps {
@@ -96,18 +97,26 @@ export function TilePalette({ selectedAssetId, onSelectAsset, tileType }: TilePa
               const props = tileProperties.get(tile.id)
               const isSelected = selectedAssetId === tile.id
               const thumbnailUrl = getAssetFileUrl(tile.storageKeyPrefix, "tile_0.png", true)
+              const isWater = props?.terrainType === "WATER"
 
               return (
                 <button
                   key={tile.id}
                   onClick={() => onSelectAsset(isSelected ? null : tile.id)}
-                  className={`flex flex-col items-center p-2 rounded border-2 transition-all ${
+                  className={`relative flex flex-col items-center p-2 rounded border-2 transition-all ${
                     isSelected
-                      ? "border-blue-500 bg-blue-500/10"
+                      ? isWater
+                        ? "border-cyan-500 bg-cyan-500/10"
+                        : "border-blue-500 bg-blue-500/10"
                       : "border-zinc-700 hover:border-zinc-500 bg-zinc-900"
                   }`}
-                  title={`${tile.name}${props ? ` (${props.variations} variations)` : ""}`}
+                  title={`${tile.name}${props ? ` (${props.variations} variations)` : ""}${isWater ? " [WATER]" : ""}`}
                 >
+                  {/* Water indicator */}
+                  {isWater && (
+                    <div className="absolute top-1 right-1 w-3 h-3 rounded-full bg-cyan-500 border border-cyan-400" title="Water terrain" />
+                  )}
+
                   {/* Thumbnail */}
                   <div className="w-16 h-16 flex items-center justify-center overflow-hidden rounded">
                     <img

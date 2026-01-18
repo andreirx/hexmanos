@@ -21,6 +21,7 @@ interface TileProperties {
   passable: boolean
   variations: number
   tileType?: "TILE" | "PATH"  // PATH tiles have exactly 15 variations
+  terrainType?: "LAND" | "WATER"  // WATER paths are rivers (not passable)
 }
 
 const TILE_SIZE = 128
@@ -91,6 +92,7 @@ export function TileEditorPage() {
   const [tileName, setTileName] = useState("")
   const [passable, setPassable] = useState(true)
   const [tileType, setTileType] = useState<"TILE" | "PATH">("TILE")
+  const [terrainType, setTerrainType] = useState<"LAND" | "WATER">("LAND")
   const [isSaving, setIsSaving] = useState(false)
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [backendUser, setBackendUser] = useState<UserDTO | null>(null)
@@ -164,6 +166,7 @@ export function TileEditorPage() {
       setCurrentVariationIndex(0)
       setPassable(properties.passable)
       setTileType(properties.tileType || "TILE")
+      setTerrainType(properties.terrainType || "LAND")
       clearAllHistory()
 
       if (mode === "edit") {
@@ -192,6 +195,7 @@ export function TileEditorPage() {
     setTileName("")
     setPassable(true)
     setTileType("TILE")
+    setTerrainType("LAND")
     setLoadedAsset(null)
     setIsReadOnly(false)
     setStatusMessage(null)
@@ -528,7 +532,8 @@ export function TileEditorPage() {
       const newVariations: VariationFrame[] = PATH_COMBINATIONS.map(() => createEmptyFrame())
       setVariations(newVariations)
       setCurrentVariationIndex(0)
-      setPassable(true) // PATH tiles are always passable
+      // PATH passability depends on terrain type: LAND=passable, WATER=not passable (rivers)
+      setPassable(terrainType === "LAND")
       clearAllHistory()
     } else {
       // Switch back to regular TILE with single variation
@@ -537,6 +542,17 @@ export function TileEditorPage() {
       clearAllHistory()
     }
     setTileType(newType)
+  }
+
+  // Switch terrain type
+  const handleSwitchTerrainType = (newTerrainType: "LAND" | "WATER") => {
+    if (newTerrainType === terrainType) return
+    setTerrainType(newTerrainType)
+
+    // For PATH tiles, update passability based on terrain type
+    if (tileType === "PATH") {
+      setPassable(newTerrainType === "LAND") // LAND paths passable, WATER paths (rivers) not passable
+    }
   }
 
   // Fill all PATH variations with background colors
@@ -743,12 +759,18 @@ export function TileEditorPage() {
       // Use existing asset ID when editing, or create new one
       const assetId = loadedAsset?.id || crypto.randomUUID()
 
+      // PATH passability depends on terrain type: LAND=passable, WATER=not passable
+      const effectivePassable = tileType === "PATH"
+        ? terrainType === "LAND"  // LAND paths passable, WATER paths (rivers) not
+        : passable
+
       const properties: TileProperties = {
         name: tileName,
         tileSize: TILE_SIZE,
-        passable: tileType === "PATH" ? true : passable, // PATH tiles always passable
+        passable: effectivePassable,
         variations: variations.length,
         tileType: tileType,
+        terrainType: terrainType,
       }
 
       const fileNames: string[] = ["properties.json"]
@@ -1473,6 +1495,41 @@ export function TileEditorPage() {
               </div>
 
               <div>
+                <label className="text-xs text-zinc-400 block mb-2">Terrain Type</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleSwitchTerrainType("LAND")}
+                    className={`flex-1 py-2 px-3 rounded text-sm transition-colors ${
+                      terrainType === "LAND"
+                        ? "bg-green-600 text-white"
+                        : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
+                    }`}
+                  >
+                    LAND
+                  </button>
+                  <button
+                    onClick={() => handleSwitchTerrainType("WATER")}
+                    className={`flex-1 py-2 px-3 rounded text-sm transition-colors ${
+                      terrainType === "WATER"
+                        ? "bg-blue-500 text-white"
+                        : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
+                    }`}
+                  >
+                    WATER
+                  </button>
+                </div>
+                <p className="text-xs text-zinc-500 mt-2">
+                  {tileType === "PATH"
+                    ? terrainType === "LAND"
+                      ? "Land paths are passable (walkways)"
+                      : "Water paths are rivers (not passable)"
+                    : terrainType === "LAND"
+                      ? "Land terrain (grass, dirt, etc.)"
+                      : "Water terrain (ocean, lake, etc.)"}
+                </p>
+              </div>
+
+              <div>
                 <label className="text-xs text-zinc-400 block mb-2">Passable</label>
                 <div className="flex gap-2">
                   <button
@@ -1501,7 +1558,13 @@ export function TileEditorPage() {
                   </button>
                 </div>
                 <p className="text-xs text-zinc-500 mt-2">
-                  {tileType === "PATH" ? "PATH tiles are always passable" : (passable ? "Players can walk through" : "Blocks player movement")}
+                  {tileType === "PATH"
+                    ? terrainType === "LAND"
+                      ? "Land paths are always passable"
+                      : "Water paths (rivers) are never passable"
+                    : passable
+                      ? "Players can walk through"
+                      : "Blocks player movement"}
                 </p>
               </div>
 

@@ -9,6 +9,7 @@ interface TileProperties {
   passable: boolean
   variations: number
   tileType?: "TILE" | "PATH"
+  terrainType?: "LAND" | "WATER"
 }
 
 interface CharacterDefinition {
@@ -429,27 +430,45 @@ export function MapCanvas({
     }
 
     // PASS 3: Draw paths (on top of terrain + transitions)
+    // Water paths (rivers) are drawn FIRST, then land paths on top (allowing bridges over rivers)
     if (showPaths) {
-      for (let y = 0; y < mapHeight; y++) {
-        for (let x = 0; x < mapWidth; x++) {
-          const path = mapData.layers.paths[y]?.[x]
-          if (!path) continue
+      // Helper function to draw paths of a specific terrain type
+      const drawPathsOfTerrainType = (targetTerrainType: "LAND" | "WATER" | undefined) => {
+        for (let y = 0; y < mapHeight; y++) {
+          for (let x = 0; x < mapWidth; x++) {
+            const path = mapData.layers.paths[y]?.[x]
+            if (!path) continue
 
-          const asset = assetCache.get(path.pathAssetId)
-          if (!asset) continue
+            const asset = assetCache.get(path.pathAssetId)
+            if (!asset) continue
 
-          const variation = calculatePathVariation(
-            mapData.layers.paths, x, y,
-            mapWidth, mapHeight, path.pathAssetId
-          )
-          const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${variation}.png`)
-          const img = getImage(url)
+            // Check terrain type - default to LAND if not specified
+            const pathProps = tileProperties.get(path.pathAssetId)
+            const pathTerrainType = pathProps?.terrainType || "LAND"
 
-          if (img) {
-            ctx.drawImage(img, x * tileSize, y * tileSize, tileSize, tileSize)
+            // Skip if not the terrain type we're drawing this pass
+            if (targetTerrainType === "WATER" && pathTerrainType !== "WATER") continue
+            if (targetTerrainType === "LAND" && pathTerrainType === "WATER") continue
+
+            const variation = calculatePathVariation(
+              mapData.layers.paths, x, y,
+              mapWidth, mapHeight, path.pathAssetId
+            )
+            const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${variation}.png`)
+            const img = getImage(url)
+
+            if (img) {
+              ctx.drawImage(img, x * tileSize, y * tileSize, tileSize, tileSize)
+            }
           }
         }
       }
+
+      // First pass: Draw WATER paths (rivers) - underneath
+      drawPathsOfTerrainType("WATER")
+
+      // Second pass: Draw LAND paths - on top (bridges over rivers)
+      drawPathsOfTerrainType("LAND")
     }
 
     // PASS 4: Draw characters and objects with animation
