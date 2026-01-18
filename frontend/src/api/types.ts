@@ -1,5 +1,5 @@
 export type AssetType = "CHARACTER" | "TILE" | "MAP"
-export type AssetStatus = "PENDING" | "APPROVED" | "ARCHIVED"
+export type AssetStatus = "PENDING" | "APPROVED" | "REJECTED" | "ARCHIVED"
 
 export interface AssetDTO {
   id: string

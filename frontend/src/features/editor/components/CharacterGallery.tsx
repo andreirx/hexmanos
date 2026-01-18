@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { X, User, Copy, Edit2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { StatusBadge } from "@/components/ui/status-badge"
 import { getAssetsByType, getAssetFileUrl } from "@/api/assets"
 import type { AssetDTO } from "@/api/types"
 
@@ -76,15 +77,20 @@ export function CharacterGallery({ isOpen, onClose, onSelect, currentUserId }: C
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
               {characters.map((character) => {
                 const isOwner = currentUserId && character.authorId === currentUserId
+                const isArchived = character.status === "ARCHIVED"
                 const thumbnailUrl = getAssetFileUrl(character.storageKeyPrefix, "idle_0.png", true)
 
                 return (
                   <div
                     key={character.id}
-                    className="bg-zinc-900 rounded-lg border border-zinc-700 overflow-hidden group hover:border-zinc-500 transition-colors"
+                    className={`bg-zinc-900 rounded-lg border border-zinc-700 overflow-hidden transition-colors ${
+                      isArchived
+                        ? "opacity-50 grayscale cursor-not-allowed"
+                        : "group hover:border-zinc-500"
+                    }`}
                   >
                     {/* Thumbnail */}
-                    <div className="aspect-square bg-zinc-950 flex items-center justify-center p-2">
+                    <div className="aspect-square bg-zinc-950 flex items-center justify-center p-2 relative">
                       <img
                         src={thumbnailUrl}
                         alt={character.name}
@@ -97,6 +103,10 @@ export function CharacterGallery({ isOpen, onClose, onSelect, currentUserId }: C
                           target.parentElement!.innerHTML = '<div class="text-zinc-600 text-4xl">?</div>'
                         }}
                       />
+                      {/* Status badge */}
+                      <div className="absolute top-1 right-1">
+                        <StatusBadge status={character.status} />
+                      </div>
                     </div>
 
                     {/* Info */}
@@ -110,7 +120,11 @@ export function CharacterGallery({ isOpen, onClose, onSelect, currentUserId }: C
 
                       {/* Actions */}
                       <div className="flex gap-2 mt-3">
-                        {isOwner ? (
+                        {isArchived ? (
+                          <div className="flex-1 text-center text-xs text-zinc-500 py-2">
+                            Archived
+                          </div>
+                        ) : isOwner ? (
                           <Button
                             size="sm"
                             className="flex-1 bg-blue-600 hover:bg-blue-700"

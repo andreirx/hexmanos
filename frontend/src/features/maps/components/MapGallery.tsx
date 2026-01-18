@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { X, Map as MapIcon, Copy, Edit2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { StatusBadge } from "@/components/ui/status-badge"
 import { getAssetsByType, getAssetFile } from "@/api/assets"
 import type { AssetDTO } from "@/api/types"
 
@@ -103,15 +104,20 @@ export function MapGallery({ isOpen, onClose, onSelect, currentUserId }: MapGall
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {maps.map((map) => {
                 const isOwner = currentUserId && map.authorId === currentUserId
+                const isArchived = map.status === "ARCHIVED"
                 const info = mapInfo.get(map.id)
 
                 return (
                   <div
                     key={map.id}
-                    className="bg-zinc-900 rounded-lg border border-zinc-700 overflow-hidden group hover:border-zinc-500 transition-colors"
+                    className={`bg-zinc-900 rounded-lg border border-zinc-700 overflow-hidden transition-colors ${
+                      isArchived
+                        ? "opacity-50 grayscale cursor-not-allowed"
+                        : "group hover:border-zinc-500"
+                    }`}
                   >
                     {/* Map preview placeholder */}
-                    <div className="aspect-video bg-zinc-950 flex items-center justify-center">
+                    <div className="aspect-video bg-zinc-950 flex items-center justify-center relative">
                       <div className="text-center">
                         <MapIcon className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
                         {info && (
@@ -119,6 +125,10 @@ export function MapGallery({ isOpen, onClose, onSelect, currentUserId }: MapGall
                             {info.width} x {info.height}
                           </div>
                         )}
+                      </div>
+                      {/* Status badge */}
+                      <div className="absolute top-1 right-1">
+                        <StatusBadge status={map.status} />
                       </div>
                     </div>
 
@@ -133,30 +143,38 @@ export function MapGallery({ isOpen, onClose, onSelect, currentUserId }: MapGall
 
                       {/* Actions */}
                       <div className="flex gap-1 mt-2">
-                        <Button
-                          size="sm"
-                          className={`flex-1 h-7 text-xs ${
-                            isOwner
-                              ? "bg-blue-600 hover:bg-blue-700 text-white"
-                              : "bg-zinc-700 text-zinc-500 cursor-not-allowed"
-                          }`}
-                          onClick={() => isOwner && onSelect(map, "edit")}
-                          disabled={!isOwner}
-                          title={isOwner ? "Edit this map" : "You can only edit your own maps"}
-                        >
-                          <Edit2 className="w-3 h-3 mr-1" />
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="flex-1 h-7 text-xs border-zinc-600 text-zinc-200 hover:bg-zinc-700"
-                          onClick={() => onSelect(map, "copy")}
-                          title="Copy this map to edit as your own"
-                        >
-                          <Copy className="w-3 h-3 mr-1" />
-                          Copy
-                        </Button>
+                        {isArchived ? (
+                          <div className="flex-1 text-center text-xs text-zinc-500 py-1.5">
+                            Archived
+                          </div>
+                        ) : (
+                          <>
+                            <Button
+                              size="sm"
+                              className={`flex-1 h-7 text-xs ${
+                                isOwner
+                                  ? "bg-blue-600 hover:bg-blue-700 text-white"
+                                  : "bg-zinc-700 text-zinc-500 cursor-not-allowed"
+                              }`}
+                              onClick={() => isOwner && onSelect(map, "edit")}
+                              disabled={!isOwner}
+                              title={isOwner ? "Edit this map" : "You can only edit your own maps"}
+                            >
+                              <Edit2 className="w-3 h-3 mr-1" />
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="flex-1 h-7 text-xs border-zinc-600 text-zinc-200 hover:bg-zinc-700"
+                              onClick={() => onSelect(map, "copy")}
+                              title="Copy this map to edit as your own"
+                            >
+                              <Copy className="w-3 h-3 mr-1" />
+                              Copy
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
