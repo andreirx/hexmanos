@@ -45,19 +45,20 @@ Framework-specific code with Spring annotations.
 #### controllers/
 | File | Purpose |
 |------|---------|
-| `AssetController.java` | `/api/assets/*` endpoints for asset management |
+| `AssetController.java` | `/api/assets/*` endpoints for asset management and moderation |
 | `UserController.java` | `/api/users/*` endpoints for user sync |
 
 #### dtos/
 | File | Purpose |
 |------|---------|
-| `AssetDTO.java` | Asset data for API responses |
+| `AssetDTO.java` | Asset data for API responses (includes moderationNotes) |
 | `UserDTO.java` | User data for API responses |
 | `RegisterAssetRequest.java` | Request body for asset registration |
 | `RegisterAssetResponse.java` | Response for asset registration |
 | `PresignedUrlRequest.java` | Request for presigned upload URLs |
 | `PresignedUrlResponse.java` | Response with presigned URLs |
 | `UploadResponse.java` | Response for direct file upload |
+| `ModerationRequest.java` | Request body for moderation actions (notes field) |
 
 #### schedulers/
 | File | Purpose |
@@ -80,8 +81,22 @@ Pure Java business logic. No Spring annotations.
 | File | Purpose |
 |------|---------|
 | `Asset.java` | Domain POJO with `AssetType` and `AssetStatus` enums |
-| `AssetService.java` | Business logic: create, register, validate, approve |
+| `AssetService.java` | Business logic: create, register, approve, reject, archive |
 | `AssetRepository.java` | Port interface for persistence |
+
+**Asset.AssetType enum**: `CHARACTER`, `TILE`, `MAP`
+
+**Asset.AssetStatus enum**: `PENDING`, `APPROVED`, `REJECTED`, `ARCHIVED`
+
+**Asset fields**:
+- `id` (UUID)
+- `type` (AssetType)
+- `name` (String)
+- `authorId` (String)
+- `status` (AssetStatus)
+- `storageKeyPrefix` (String)
+- `createdAt` (LocalDateTime)
+- `moderationNotes` (String) - Admin comments on approval/rejection
 
 #### files/
 | File | Purpose |
@@ -145,6 +160,7 @@ Infrastructure implementations.
 | `V1__init_schema.sql` | Initial database schema |
 | `V20260116113411__seed_sample_assets.sql` | Sample asset data |
 | `V20260116160205__create_users_table.sql` | User table creation |
+| `V20260118070552__add_moderation_notes_to_assets.sql` | Add moderation_notes column |
 
 ## Architecture Rules
 

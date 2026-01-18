@@ -79,11 +79,11 @@ Infrastructure implementations.
 - `HexmanosEngineApplication.java` - `@SpringBootApplication` with `@EnableScheduling`
 
 ### Controllers
-- `AssetController.java` - Asset CRUD, presigned URLs, file serving
+- `AssetController.java` - Asset CRUD, moderation, presigned URLs, file serving
 - `UserController.java` - User sync from Cognito
 
 ### Services
-- `AssetService.java` - Asset registration, validation, approval
+- `AssetService.java` - Asset registration, validation, approval, rejection, archival
 - `UserService.java` - User management
 - `TransitionGeneratorService.java` - Auto-generate tile transitions
 
@@ -103,7 +103,8 @@ src/main/resources/
 └── db/migration/                    # Flyway SQL migrations
     ├── V1__init_schema.sql
     ├── V20260116113411__seed_sample_assets.sql
-    └── V20260116160205__create_users_table.sql
+    ├── V20260116160205__create_users_table.sql
+    └── V20260118070552__add_moderation_notes_to_assets.sql
 ```
 
 ## Profiles
@@ -116,24 +117,38 @@ src/main/resources/
 ## API Endpoints
 
 ### Assets
-| Method | Path | Handler |
-|--------|------|---------|
-| GET | `/api/assets` | `getAllAssets()` |
-| GET | `/api/assets/{id}` | `getAssetById()` |
-| GET | `/api/assets/type/{type}` | `getAssetsByType()` |
-| GET | `/api/assets/status/{status}` | `getAssetsByStatus()` |
-| POST | `/api/assets` | `createAsset()` |
-| POST | `/api/assets/register` | `registerAsset()` |
-| POST | `/api/assets/presigned-url` | `getPresignedUrls()` |
-| POST | `/api/assets/{id}/approve` | `approveAsset()` |
-| GET | `/api/assets/files/**` | `serveAssetFile()` |
-| POST | `/api/assets/upload` | `uploadFile()` |
-| GET | `/api/assets/verify/**` | `verifyFileExists()` |
+| Method | Path | Handler | Description |
+|--------|------|---------|-------------|
+| GET | `/api/assets` | `getAllAssets()` | List all assets |
+| GET | `/api/assets/{id}` | `getAssetById()` | Get single asset |
+| GET | `/api/assets/type/{type}` | `getAssetsByType()` | Filter by type |
+| GET | `/api/assets/status/{status}` | `getAssetsByStatus()` | Filter by status |
+| POST | `/api/assets` | `createAsset()` | Create asset |
+| POST | `/api/assets/register` | `registerAsset()` | Register with file validation |
+| POST | `/api/assets/presigned-url` | `getPresignedUrls()` | Get upload URL |
+| GET | `/api/assets/files/**` | `serveAssetFile()` | Serve asset files |
+| POST | `/api/assets/upload` | `uploadFile()` | Direct upload |
+| GET | `/api/assets/verify/**` | `verifyFileExists()` | Check file exists |
+
+### Asset Moderation (Admin)
+| Method | Path | Handler | Description |
+|--------|------|---------|-------------|
+| POST | `/api/assets/{id}/approve` | `approveAsset()` | Approve asset (with optional notes) |
+| POST | `/api/assets/{id}/reject` | `rejectAsset()` | Reject asset (with notes) |
+| POST | `/api/assets/{id}/archive` | `archiveAsset()` | Archive asset (with optional notes) |
 
 ### Users
 | Method | Path | Handler |
 |--------|------|---------|
 | POST | `/api/users/sync` | `syncUser()` |
+
+## Asset Status Workflow
+
+```
+PENDING ──approve──> APPROVED ──archive──> ARCHIVED
+    │
+    └──reject───> REJECTED
+```
 
 ## Running
 

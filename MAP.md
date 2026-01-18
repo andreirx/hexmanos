@@ -8,6 +8,7 @@ Hexmanos is a pixel art game asset workshop enabling creation of characters, til
 |------|------|---------|
 | `backend/` | Directory | Spring Boot REST API with Clean Architecture |
 | `frontend/` | Directory | React 19 SPA for asset editors |
+| `admin/` | Directory | React 19 SPA for asset moderation (admin interface) |
 | `infra/` | Directory | AWS CDK infrastructure as code |
 | `READONLY/` | Directory | Reference documents and master plans |
 | `.beads/` | Directory | Issue tracking database (beads workflow) |
@@ -30,6 +31,14 @@ Hexmanos is a pixel art game asset workshop enabling creation of characters, til
 │   Character Editor │ Tile Editor │ Map Editor │ Galleries    │
 └─────────────────────────────────────────────────────────────┘
                               │
+                              ├─────────────────────────────────┐
+                              │                                 │
+┌─────────────────────────────────────────────────────────────┐│
+│                         ADMIN                                ││
+│              React 19 + TypeScript + Tailwind 4              ││
+│        Asset Moderation │ Pending Queue │ Library View       ││
+└─────────────────────────────────────────────────────────────┘│
+                              │                                 │
                               ▼ HTTP/REST + JWT
 ┌─────────────────────────────────────────────────────────────┐
 │                         BACKEND                              │
@@ -82,6 +91,15 @@ Feature-based organization:
 - **lib/**: Utilities and configuration
 
 See [frontend/MAP.md](frontend/MAP.md)
+
+### `admin/` - Admin Interface
+Separate React SPA for platform moderation:
+- **api/**: Asset API with moderation endpoints
+- **components/**: Admin UI components
+- **context/**: Admin AuthContext (separate Cognito pool)
+- **features/**: Asset moderation queue and library
+
+See [admin/MAP.md](admin/MAP.md)
 
 ### `infra/` - AWS CDK
 Infrastructure as code:
