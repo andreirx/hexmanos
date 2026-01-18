@@ -108,7 +108,7 @@ export async function registerAsset(request: RegisterAssetRequest): Promise<Regi
 /**
  * Get assets filtered by type.
  */
-export async function getAssetsByType(type: "CHARACTER" | "TILE" | "MAP"): Promise<AssetDTO[]> {
+export async function getAssetsByType(type: "CHARACTER" | "TILE" | "MAP" | "OBJECT"): Promise<AssetDTO[]> {
   const response = await api.get<AssetDTO[]>(`/assets/type/${type}`)
   return response.data
 }

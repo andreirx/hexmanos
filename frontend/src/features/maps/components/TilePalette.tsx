@@ -49,8 +49,9 @@ export function TilePalette({ selectedAssetId, onSelectAsset, tileType }: TilePa
         })
         setTileProperties(propsMap)
 
-        // Filter tiles by type
+        // Filter tiles by APPROVED status and tile type
         const filteredTiles = assets.filter(asset => {
+          if (asset.status !== "APPROVED") return false
           const props = propsMap.get(asset.id)
           if (!props) return false
           const propType = props.tileType || "TILE"
