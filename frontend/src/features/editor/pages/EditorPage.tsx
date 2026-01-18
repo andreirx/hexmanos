@@ -540,7 +540,9 @@ export function EditorPage() {
     setStatusMessage(null)
 
     try {
-      const assetId = crypto.randomUUID()
+      // Use existing asset ID when editing, or generate new one for new characters
+      const assetId = loadedAsset?.id ?? crypto.randomUUID()
+      const isUpdate = loadedAsset !== null
 
       // Generate definition JSON
       const definition = generateDefinitionJson()
@@ -611,7 +613,12 @@ export function EditorPage() {
       })
 
       if (result.success) {
-        setStatusMessage({ type: "success", text: `Character "${characterName}" saved successfully!` })
+        // Update loadedAsset with the new/updated asset so subsequent saves work correctly
+        if (result.asset) {
+          setLoadedAsset(result.asset)
+        }
+        const action = isUpdate ? "updated" : "saved"
+        setStatusMessage({ type: "success", text: `Character "${characterName}" ${action} successfully!` })
       } else {
         const missingInfo = result.missingFiles?.length
           ? ` Missing files: ${result.missingFiles.join(", ")}`

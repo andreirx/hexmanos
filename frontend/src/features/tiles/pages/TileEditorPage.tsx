@@ -792,9 +792,9 @@ export function TileEditorPage() {
       if (result.success) {
         const action = loadedAsset ? "updated" : "saved"
         setStatusMessage({ type: "success", text: `Tile "${tileName}" ${action} with ${variations.length} variation(s)!` })
-        // Update loadedAsset to reflect we're now editing this asset
-        if (!loadedAsset) {
-          setLoadedAsset({ id: assetId, name: tileName, type: "TILE", authorId, storageKeyPrefix: `tiles/${assetId}` } as AssetDTO)
+        // Update loadedAsset with server response so subsequent saves work correctly
+        if (result.asset) {
+          setLoadedAsset(result.asset)
         }
       } else {
         const missingInfo = result.missingFiles?.length

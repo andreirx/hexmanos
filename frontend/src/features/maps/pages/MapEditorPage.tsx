@@ -362,16 +362,9 @@ export function MapEditorPage() {
       if (result.success) {
         const action = loadedAsset ? "updated" : "saved"
         setStatusMessage({ type: "success", text: `Map "${mapName}" ${action}!` })
-        if (!loadedAsset) {
-          setLoadedAsset({
-            id: assetId,
-            name: mapName,
-            type: "MAP",
-            authorId,
-            storageKeyPrefix: `maps/${assetId}`,
-            status: "PENDING",
-            createdAt: new Date().toISOString()
-          })
+        // Update loadedAsset with server response so subsequent saves work correctly
+        if (result.asset) {
+          setLoadedAsset(result.asset)
         }
       } else {
         setStatusMessage({ type: "error", text: `Save failed: ${result.message}` })
