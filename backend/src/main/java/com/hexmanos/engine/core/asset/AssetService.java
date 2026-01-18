@@ -140,11 +140,34 @@ public class AssetService {
         };
     }
 
-    public Asset approve(UUID id) {
+    public Asset approve(UUID id, String moderationNotes) {
         return assetRepository.findById(id)
                 .map(asset -> {
                     asset.setStatus(Asset.AssetStatus.APPROVED);
+                    asset.setModerationNotes(moderationNotes);
                     log.info("Asset approved: {}", id);
+                    return assetRepository.save(asset);
+                })
+                .orElseThrow(() -> new IllegalArgumentException("Asset not found: " + id));
+    }
+
+    public Asset reject(UUID id, String moderationNotes) {
+        return assetRepository.findById(id)
+                .map(asset -> {
+                    asset.setStatus(Asset.AssetStatus.REJECTED);
+                    asset.setModerationNotes(moderationNotes);
+                    log.info("Asset rejected: {} - {}", id, moderationNotes);
+                    return assetRepository.save(asset);
+                })
+                .orElseThrow(() -> new IllegalArgumentException("Asset not found: " + id));
+    }
+
+    public Asset archive(UUID id, String moderationNotes) {
+        return assetRepository.findById(id)
+                .map(asset -> {
+                    asset.setStatus(Asset.AssetStatus.ARCHIVED);
+                    asset.setModerationNotes(moderationNotes);
+                    log.info("Asset archived: {}", id);
                     return assetRepository.save(asset);
                 })
                 .orElseThrow(() -> new IllegalArgumentException("Asset not found: " + id));

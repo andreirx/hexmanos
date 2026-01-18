@@ -1,6 +1,7 @@
 package com.hexmanos.engine.app.controllers;
 
 import com.hexmanos.engine.app.dtos.AssetDTO;
+import com.hexmanos.engine.app.dtos.ModerationRequest;
 import com.hexmanos.engine.app.dtos.PresignedUrlRequest;
 import com.hexmanos.engine.app.dtos.PresignedUrlResponse;
 import com.hexmanos.engine.app.dtos.RegisterAssetRequest;
@@ -67,10 +68,39 @@ public class AssetController {
     }
 
     @PostMapping("/{id}/approve")
-    public ResponseEntity<AssetDTO> approveAsset(@PathVariable UUID id) {
+    public ResponseEntity<AssetDTO> approveAsset(
+            @PathVariable UUID id,
+            @RequestBody(required = false) ModerationRequest request) {
         try {
-            Asset approved = assetService.approve(id);
+            String notes = request != null ? request.getNotes() : null;
+            Asset approved = assetService.approve(id, notes);
             return ResponseEntity.ok(AssetDTO.DTOMapper.toDTO(approved));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping("/{id}/reject")
+    public ResponseEntity<AssetDTO> rejectAsset(
+            @PathVariable UUID id,
+            @RequestBody(required = false) ModerationRequest request) {
+        try {
+            String notes = request != null ? request.getNotes() : null;
+            Asset rejected = assetService.reject(id, notes);
+            return ResponseEntity.ok(AssetDTO.DTOMapper.toDTO(rejected));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping("/{id}/archive")
+    public ResponseEntity<AssetDTO> archiveAsset(
+            @PathVariable UUID id,
+            @RequestBody(required = false) ModerationRequest request) {
+        try {
+            String notes = request != null ? request.getNotes() : null;
+            Asset archived = assetService.archive(id, notes);
+            return ResponseEntity.ok(AssetDTO.DTOMapper.toDTO(archived));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
         }

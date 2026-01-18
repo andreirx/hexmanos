@@ -12,7 +12,7 @@ import java.util.UUID;
 @NoArgsConstructor
 public class Asset {
     public enum AssetType { CHARACTER, TILE, MAP }
-    public enum AssetStatus { PENDING, APPROVED, ARCHIVED }
+    public enum AssetStatus { PENDING, APPROVED, REJECTED, ARCHIVED }
 
     private UUID id;
     private AssetType type;
@@ -21,4 +21,5 @@ public class Asset {
     private AssetStatus status;
     private String storageKeyPrefix;
     private LocalDateTime createdAt;
+    private String moderationNotes;
 }

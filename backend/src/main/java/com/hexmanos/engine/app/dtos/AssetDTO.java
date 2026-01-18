@@ -21,6 +21,7 @@ public class AssetDTO {
     private String status;
     private String storageKeyPrefix;
     private LocalDateTime createdAt;
+    private String moderationNotes;
 
     @Data
     @Builder
@@ -45,6 +46,7 @@ public class AssetDTO {
                     .status(asset.getStatus() != null ? asset.getStatus().name() : null)
                     .storageKeyPrefix(asset.getStorageKeyPrefix())
                     .createdAt(asset.getCreatedAt())
+                    .moderationNotes(asset.getModerationNotes())
                     .build();
         }
 

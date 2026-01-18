@@ -44,6 +44,9 @@ public class AssetEntity implements Persistable<UUID> {
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
+    @Column
+    private String moderationNotes;
+
     @PrePersist
     public void prePersist() {
         this.createdAt = LocalDateTime.now();
@@ -62,15 +65,16 @@ public class AssetEntity implements Persistable<UUID> {
 
     public interface EntityMapper {
         static Asset fromEntity(AssetEntity entity) {
-            return new Asset(
-                    entity.getId(),
-                    entity.getType(),
-                    entity.getName(),
-                    entity.getAuthorId(),
-                    entity.getStatus(),
-                    entity.getStorageKeyPrefix(),
-                    entity.getCreatedAt()
-            );
+            Asset asset = new Asset();
+            asset.setId(entity.getId());
+            asset.setType(entity.getType());
+            asset.setName(entity.getName());
+            asset.setAuthorId(entity.getAuthorId());
+            asset.setStatus(entity.getStatus());
+            asset.setStorageKeyPrefix(entity.getStorageKeyPrefix());
+            asset.setCreatedAt(entity.getCreatedAt());
+            asset.setModerationNotes(entity.getModerationNotes());
+            return asset;
         }
 
         static AssetEntity toEntity(Asset asset) {
@@ -82,6 +86,7 @@ public class AssetEntity implements Persistable<UUID> {
             entity.setStatus(asset.getStatus());
             entity.setStorageKeyPrefix(asset.getStorageKeyPrefix());
             entity.setCreatedAt(asset.getCreatedAt());
+            entity.setModerationNotes(asset.getModerationNotes());
             // Note: isNew is set by repository based on existence check
             return entity;
         }
