@@ -53,6 +53,7 @@ Full-featured map editor.
 |------|---------|
 | `MapCanvas.tsx` | Main map rendering canvas |
 | `MapGallery.tsx` | Map browser and loader |
+| `MapPreview.tsx` | Thumbnail preview of map for galleries |
 | `TilePalette.tsx` | Tile selection palette |
 | `CharacterPalette.tsx` | Character selection palette |
 
@@ -82,9 +83,21 @@ Asset browser for loading maps.
 
 **Features:**
 - Lists all MAP type assets
-- Shows map name and size
-- Click to load into editor
-- Delete maps (with confirmation)
+- Shows map preview thumbnail via MapPreview
+- Shows map name and size overlay
+- Edit own maps, copy others
+- Status badge display
+
+### MapPreview.tsx
+
+Canvas-based thumbnail preview of a map.
+
+**Features:**
+- Loads map.json from storage
+- Fetches tile images for terrain/paths
+- Renders at 8px per tile for compact display
+- Shows loading state while fetching
+- Falls back to icon on error
 
 ### TilePalette.tsx
 

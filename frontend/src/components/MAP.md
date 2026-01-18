@@ -32,6 +32,7 @@ Low-level UI primitives built on Radix UI.
 |------|---------|
 | `button.tsx` | Button component with variants |
 | `card.tsx` | Card container with header/content slots |
+| `status-badge.tsx` | Asset status indicator badge |
 
 ### button.tsx
 Button with variants:
@@ -51,6 +52,18 @@ Card components:
 - `CardDescription` - Subheading text
 - `CardContent` - Main content area
 - `CardFooter` - Bottom section
+
+### status-badge.tsx
+Asset status indicator with color coding.
+
+| Status | Color |
+|--------|-------|
+| PENDING | Amber |
+| APPROVED | Green |
+| REJECTED | Red |
+| ARCHIVED | Gray |
+
+Sizes: `sm` (default), `md`
 
 ## Styling
 

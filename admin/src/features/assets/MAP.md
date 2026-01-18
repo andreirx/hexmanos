@@ -15,6 +15,8 @@ Asset moderation and library management.
 |------|---------|
 | `AssetCard.tsx` | Display asset with moderation actions |
 | `AssetFilters.tsx` | Status and type filter controls |
+| `AssetDetailModal.tsx` | Full-screen modal showing all frames/variations |
+| `MapThumbnail.tsx` | Canvas-based map preview for asset cards |
 
 ## Page Details
 
@@ -67,6 +69,27 @@ Filter controls for AssetListPage.
 |--------|---------|
 | Status | All, PENDING, APPROVED, REJECTED, ARCHIVED |
 | Type | All, CHARACTER, TILE, MAP |
+
+### AssetDetailModal
+
+Full-screen modal for inspecting all asset content.
+
+| Asset Type | Display |
+|------------|---------|
+| CHARACTER | All animation states with frames, playback controls |
+| TILE | All variations with path direction labels |
+| MAP | Full map preview rendered on canvas |
+
+Opens when clicking asset thumbnail in card.
+
+### MapThumbnail
+
+Canvas-based map preview for AssetCard.
+
+- Loads map.json and tile images
+- Renders terrain and path layers
+- Uses 8px tiles for small preview
+- Shows loading state with pulsing icon
 
 ## Moderation Workflow
 
