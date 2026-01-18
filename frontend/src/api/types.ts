@@ -110,3 +110,52 @@ export interface MapValidationResponse {
     emptyCellCount: number
   }
 }
+
+// Game types
+export type GameStatus = "WAITING" | "RUNNING" | "PAUSED" | "FINISHED"
+export type PlayerRole = "HOST" | "PLAYER" | "OBSERVER"
+
+export interface GameDTO {
+  id: string
+  name: string
+  mapAssetId: string
+  status: GameStatus
+  joinCode: string
+  createdAt: string
+  lastActivityAt: string
+  players: GamePlayerDTO[]
+  characters: GameCharacterDTO[]
+}
+
+export interface GamePlayerDTO {
+  id: string
+  playerId: string
+  role: PlayerRole
+  controlledCharacterId?: string
+  joinedAt: string
+  lastSeenAt: string
+}
+
+export interface GameCharacterDTO {
+  id: string
+  assetId: string
+  name: string
+  x: number
+  y: number
+  currentState: string
+  visualState: string
+  health: number
+  maxHealth: number
+  controlled: boolean
+}
+
+export interface CreateGameRequest {
+  mapAssetId: string
+  name: string
+  password?: string
+}
+
+export interface JoinGameRequest {
+  code: string
+  password?: string
+}

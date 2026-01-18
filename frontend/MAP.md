@@ -34,6 +34,7 @@ src/
 ├── features/              # Feature modules
 │   ├── auth/             # Authentication pages
 │   ├── editor/           # Character editor
+│   ├── game/             # Game lobby and Phaser client
 │   ├── tiles/            # Tile editor
 │   └── maps/             # Map editor
 ├── lib/                   # Utilities and configuration
@@ -74,6 +75,12 @@ See [src/MAP.md](src/MAP.md) for detailed source documentation.
 - Tools: Paint, Erase, Rectangle, Disc, Pan
 - Zoom/pan with mouse wheel
 
+### Game (`features/game/`)
+- Lobby for creating and joining games
+- Phaser 3 game client for active games
+- Character control (take over/relinquish)
+- Real-time game state display
+
 ### Authentication (`features/auth/`)
 - AWS Cognito integration via Amplify
 - Login, Register, Email confirmation
@@ -111,6 +118,9 @@ npm test             # Run Playwright tests
 - `axios` 1.13 - HTTP client
 - `aws-amplify` 6 - AWS SDK
 - `@aws-amplify/auth` 6 - Cognito auth
+
+### Game Engine
+- `phaser` 3 - 2D game framework
 
 ### Build Tools
 - `vite` 7 - Build tool
