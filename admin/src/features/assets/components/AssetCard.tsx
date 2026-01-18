@@ -1,10 +1,14 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Check, X, Archive, User, Mail, Calendar } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { MapThumbnail } from "./MapThumbnail"
-import { approveAsset, rejectAsset, archiveAsset, getAssetFileUrl } from "@/api/assets"
+import { approveAsset, rejectAsset, archiveAsset, getAssetFileUrl, getAssetFile } from "@/api/assets"
 import type { AssetDTO } from "@/api/types"
+
+interface EntityDefinition {
+  visualStates?: string[]
+}
 
 interface AssetCardProps {
   asset: AssetDTO
@@ -17,10 +21,37 @@ export function AssetCard({ asset, onUpdated, onRemoved, onViewDetails }: AssetC
   const [isLoading, setIsLoading] = useState(false)
   const [showNotes, setShowNotes] = useState(false)
   const [notes, setNotes] = useState("")
+  const [thumbnailUrl, setThumbnailUrl] = useState<string>("")
 
-  // Get thumbnail based on asset type
-  const thumbnailFile = asset.type === "CHARACTER" ? "idle_0.png" : "tile_0.png"
-  const thumbnailUrl = getAssetFileUrl(asset.storageKeyPrefix, thumbnailFile, true)
+  // Load thumbnail URL based on asset type and visual states
+  useEffect(() => {
+    async function loadThumbnail() {
+      if (asset.type === "CHARACTER" || asset.type === "OBJECT") {
+        try {
+          // Try to load definition to get visual states
+          const definition = await getAssetFile<EntityDefinition>(
+            asset.storageKeyPrefix,
+            "definition.json"
+          )
+          if (definition.visualStates && definition.visualStates.length > 0) {
+            // New format with visual states
+            const firstVs = definition.visualStates[0]
+            setThumbnailUrl(getAssetFileUrl(asset.storageKeyPrefix, `${firstVs}_idle_0.png`, true))
+          } else {
+            // Legacy format
+            setThumbnailUrl(getAssetFileUrl(asset.storageKeyPrefix, "idle_0.png", true))
+          }
+        } catch {
+          // Fallback to legacy format
+          setThumbnailUrl(getAssetFileUrl(asset.storageKeyPrefix, "idle_0.png", true))
+        }
+      } else if (asset.type === "TILE") {
+        setThumbnailUrl(getAssetFileUrl(asset.storageKeyPrefix, "tile_0.png", true))
+      }
+      // MAP type uses MapThumbnail component, no URL needed
+    }
+    loadThumbnail()
+  }, [asset.storageKeyPrefix, asset.type])
 
   async function handleApprove() {
     setIsLoading(true)
@@ -75,10 +106,11 @@ export function AssetCard({ asset, onUpdated, onRemoved, onViewDetails }: AssetC
     ARCHIVED: "bg-zinc-500/20 text-zinc-400 border-zinc-500/50",
   }
 
-  const typeColors = {
+  const typeColors: Record<string, string> = {
     CHARACTER: "bg-purple-500/20 text-purple-400",
     TILE: "bg-blue-500/20 text-blue-400",
     MAP: "bg-emerald-500/20 text-emerald-400",
+    OBJECT: "bg-orange-500/20 text-orange-400",
   }
 
   return (
@@ -94,7 +126,7 @@ export function AssetCard({ asset, onUpdated, onRemoved, onViewDetails }: AssetC
             storageKeyPrefix={asset.storageKeyPrefix}
             className="w-full h-full group-hover:scale-105 transition-transform"
           />
-        ) : (
+        ) : thumbnailUrl ? (
           <img
             src={thumbnailUrl}
             alt={asset.name}
@@ -105,6 +137,8 @@ export function AssetCard({ asset, onUpdated, onRemoved, onViewDetails }: AssetC
               target.parentElement!.innerHTML = '<span class="text-4xl text-zinc-600">?</span>'
             }}
           />
+        ) : (
+          <span className="text-4xl text-zinc-600 animate-pulse">...</span>
         )}
       </div>
 

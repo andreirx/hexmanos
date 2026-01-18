@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import type { AssetStatus, AssetType } from "@/api/types"
 
 const statuses: (AssetStatus | "ALL")[] = ["ALL", "PENDING", "APPROVED", "ARCHIVED"]
-const types: (AssetType | "ALL")[] = ["ALL", "CHARACTER", "TILE", "MAP"]
+const types: (AssetType | "ALL")[] = ["ALL", "CHARACTER", "OBJECT", "TILE", "MAP"]
 
 export function AssetFilters() {
   const [searchParams, setSearchParams] = useSearchParams()

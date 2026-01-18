@@ -1,4 +1,4 @@
-export type AssetType = "CHARACTER" | "TILE" | "MAP"
+export type AssetType = "CHARACTER" | "TILE" | "MAP" | "OBJECT"
 export type AssetStatus = "PENDING" | "APPROVED" | "REJECTED" | "ARCHIVED"
 
 export interface AssetDTO {
@@ -24,7 +24,7 @@ export interface UploadResponse {
 }
 
 export interface PresignedUrlRequest {
-  assetType: "characters" | "tiles" | "maps"
+  assetType: "characters" | "tiles" | "maps" | "objects"
   assetId: string
   fileName: string
   contentType: string
@@ -69,4 +69,44 @@ export interface SyncUserRequest {
   pool: string
   displayName: string
   email?: string
+}
+
+// Map validation types
+export interface MapValidationRequest {
+  name: string
+  width: number
+  height: number
+  tileSize: number
+  layers: {
+    terrain: (MapValidationTile | null)[][]
+    paths: (MapValidationPath | null)[][]
+  }
+  characters: MapValidationCharacter[]
+}
+
+export interface MapValidationTile {
+  tileAssetId: string
+  seed: number
+}
+
+export interface MapValidationPath {
+  pathAssetId: string
+}
+
+export interface MapValidationCharacter {
+  characterAssetId: string
+  x: number
+  y: number
+}
+
+export interface MapValidationResponse {
+  valid: boolean
+  errors: string[]
+  warnings: string[]
+  stats: {
+    terrainTileCount: number
+    pathTileCount: number
+    characterCount: number
+    emptyCellCount: number
+  }
 }

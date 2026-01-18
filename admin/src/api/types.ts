@@ -1,4 +1,4 @@
-export type AssetType = "CHARACTER" | "TILE" | "MAP"
+export type AssetType = "CHARACTER" | "TILE" | "MAP" | "OBJECT"
 export type AssetStatus = "PENDING" | "APPROVED" | "ARCHIVED"
 
 export interface AssetDTO {

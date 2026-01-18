@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react"
-import { X, User, Grid3X3, Map as MapIcon, Play, Pause } from "lucide-react"
+import { X, User, Grid3X3, Map as MapIcon, Play, Pause, Package } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { getAssetFileUrl, getAssetFile } from "@/api/assets"
 import type { AssetDTO } from "@/api/types"
 
-// Character definition from the definition.json
-interface CharacterDefinition {
+// Character/Object definition from the definition.json
+interface EntityDefinition {
   name: string
   spriteSize: number
+  entityType?: "CHARACTER" | "OBJECT"
+  visualStates?: string[]
   states: Record<string, { frames: number; loop: boolean }>
 }
 
@@ -68,6 +70,7 @@ export function AssetDetailModal({ asset, isOpen, onClose }: AssetDetailModalPro
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-700">
           <div className="flex items-center gap-3">
             {asset.type === "CHARACTER" && <User className="w-5 h-5 text-purple-400" />}
+            {asset.type === "OBJECT" && <Package className="w-5 h-5 text-orange-400" />}
             {asset.type === "TILE" && <Grid3X3 className="w-5 h-5 text-blue-400" />}
             {asset.type === "MAP" && <MapIcon className="w-5 h-5 text-emerald-400" />}
             <h2 className="text-lg font-semibold text-zinc-100">{asset.name}</h2>
@@ -85,7 +88,8 @@ export function AssetDetailModal({ asset, isOpen, onClose }: AssetDetailModalPro
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
-          {asset.type === "CHARACTER" && <CharacterDetail asset={asset} />}
+          {asset.type === "CHARACTER" && <EntityDetail asset={asset} />}
+          {asset.type === "OBJECT" && <EntityDetail asset={asset} />}
           {asset.type === "TILE" && <TileDetail asset={asset} />}
           {asset.type === "MAP" && <MapDetail asset={asset} />}
         </div>
@@ -94,13 +98,14 @@ export function AssetDetailModal({ asset, isOpen, onClose }: AssetDetailModalPro
   )
 }
 
-// Character detail view - shows all animation states and frames
-function CharacterDetail({ asset }: { asset: AssetDTO }) {
-  const [definition, setDefinition] = useState<CharacterDefinition | null>(null)
+// Entity detail view (CHARACTER or OBJECT) - shows all visual states, animation states and frames
+function EntityDetail({ asset }: { asset: AssetDTO }) {
+  const [definition, setDefinition] = useState<EntityDefinition | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [playingState, setPlayingState] = useState<string | null>(null)
   const [frameIndices, setFrameIndices] = useState<Record<string, number>>({})
+  const [currentVisualState, setCurrentVisualState] = useState<string>("default")
   const intervalRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -114,7 +119,7 @@ function CharacterDetail({ asset }: { asset: AssetDTO }) {
     setIsLoading(true)
     setError(null)
     try {
-      const def = await getAssetFile<CharacterDefinition>(asset.storageKeyPrefix, "definition.json")
+      const def = await getAssetFile<EntityDefinition>(asset.storageKeyPrefix, "definition.json")
       setDefinition(def)
       // Initialize frame indices
       const indices: Record<string, number> = {}
@@ -122,9 +127,15 @@ function CharacterDetail({ asset }: { asset: AssetDTO }) {
         indices[stateId] = 0
       })
       setFrameIndices(indices)
+      // Set initial visual state
+      if (def.visualStates && def.visualStates.length > 0) {
+        setCurrentVisualState(def.visualStates[0])
+      } else {
+        setCurrentVisualState("default")
+      }
     } catch (err) {
-      console.error("Failed to load character definition:", err)
-      setError("Failed to load character data")
+      console.error("Failed to load entity definition:", err)
+      setError("Failed to load entity data")
     } finally {
       setIsLoading(false)
     }
@@ -148,8 +159,19 @@ function CharacterDetail({ asset }: { asset: AssetDTO }) {
     }
   }, [playingState])
 
+  // Get the file name for a frame, handling legacy vs new format
+  function getFrameFileName(visualState: string, stateId: string, frameIndex: number): string {
+    // Legacy format: no visualStates in definition, files are just `{stateId}_{frame}.png`
+    // New format: files are `{visualState}_{stateId}_{frame}.png`
+    const isLegacy = !definition?.visualStates || definition.visualStates.length === 0
+    if (isLegacy) {
+      return `${stateId}_${frameIndex}.png`
+    }
+    return `${visualState}_${stateId}_${frameIndex}.png`
+  }
+
   if (isLoading) {
-    return <div className="text-center py-8 text-zinc-400">Loading character data...</div>
+    return <div className="text-center py-8 text-zinc-400">Loading entity data...</div>
   }
 
   if (error) {
@@ -157,15 +179,43 @@ function CharacterDetail({ asset }: { asset: AssetDTO }) {
   }
 
   if (!definition) {
-    return <div className="text-center py-8 text-zinc-400">No character data found</div>
+    return <div className="text-center py-8 text-zinc-400">No entity data found</div>
   }
+
+  const visualStates = definition.visualStates && definition.visualStates.length > 0
+    ? definition.visualStates
+    : ["default"]
+  const entityType = definition.entityType || "CHARACTER"
 
   return (
     <div className="space-y-6">
       <div className="text-sm text-zinc-400">
-        Sprite Size: {definition.spriteSize}px • {Object.keys(definition.states).length} animation states
+        Sprite Size: {definition.spriteSize}px • {Object.keys(definition.states).length} animation state{Object.keys(definition.states).length !== 1 ? "s" : ""}
+        {visualStates.length > 1 && ` • ${visualStates.length} visual states`}
       </div>
 
+      {/* Visual State Tabs - only show if there are multiple visual states */}
+      {visualStates.length > 1 && (
+        <div className="flex gap-1 flex-wrap">
+          {visualStates.map(vs => (
+            <button
+              key={vs}
+              onClick={() => setCurrentVisualState(vs)}
+              className={`px-3 py-1 text-sm rounded transition-colors ${
+                currentVisualState === vs
+                  ? entityType === "OBJECT"
+                    ? "bg-orange-500/20 text-orange-300 border border-orange-500/50"
+                    : "bg-purple-500/20 text-purple-300 border border-purple-500/50"
+                  : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 border border-zinc-700"
+              }`}
+            >
+              {vs}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Animation States */}
       <div className="grid gap-6">
         {Object.entries(definition.states).map(([stateId, stateInfo]) => (
           <div key={stateId} className="bg-zinc-800/50 rounded-lg p-4">
@@ -195,6 +245,7 @@ function CharacterDetail({ asset }: { asset: AssetDTO }) {
             <div className="flex gap-2 flex-wrap">
               {Array.from({ length: stateInfo.frames }).map((_, i) => {
                 const isActive = playingState === stateId && frameIndices[stateId] === i
+                const fileName = getFrameFileName(currentVisualState, stateId, i)
                 return (
                   <div
                     key={i}
@@ -203,7 +254,7 @@ function CharacterDetail({ asset }: { asset: AssetDTO }) {
                     }`}
                   >
                     <img
-                      src={getAssetFileUrl(asset.storageKeyPrefix, `${stateId}_${i}.png`, true)}
+                      src={getAssetFileUrl(asset.storageKeyPrefix, fileName, true)}
                       alt={`${stateId} frame ${i}`}
                       className="w-16 h-16 object-contain rendering-pixelated"
                       onError={(e) => {

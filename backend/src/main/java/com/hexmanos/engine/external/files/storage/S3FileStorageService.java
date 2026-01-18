@@ -197,4 +197,35 @@ public class S3FileStorageService implements FileStorageService {
             log.error("Failed to delete files with prefix {} in S3: {}", s3Prefix, e.getMessage());
         }
     }
+
+    @Override
+    public void copyFile(String sourceKey, String destKey) {
+        try {
+            CopyObjectRequest copyRequest = CopyObjectRequest.builder()
+                    .sourceBucket(bucketName)
+                    .sourceKey(sourceKey)
+                    .destinationBucket(bucketName)
+                    .destinationKey(destKey)
+                    .build();
+            s3Client.copyObject(copyRequest);
+            log.info("Copied S3 object from {} to {}", sourceKey, destKey);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to copy S3 object from " + sourceKey + " to " + destKey, e);
+        }
+    }
+
+    @Override
+    public byte[] readBytes(String storageKey) {
+        try {
+            GetObjectRequest getRequest = GetObjectRequest.builder()
+                    .bucket(bucketName)
+                    .key(storageKey)
+                    .build();
+            return s3Client.getObjectAsBytes(getRequest).asByteArray();
+        } catch (NoSuchKeyException e) {
+            return null;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to read bytes from S3: " + storageKey, e);
+        }
+    }
 }

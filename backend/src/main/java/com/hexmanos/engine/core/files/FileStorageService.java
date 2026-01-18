@@ -64,4 +64,20 @@ public interface FileStorageService {
      * @param fileNamePrefix The prefix of files to delete (e.g., "tile_0_transition_")
      */
     void deleteFilesWithPrefix(String directoryKey, String fileNamePrefix);
+
+    /**
+     * Copy a file from one storage key to another.
+     *
+     * @param sourceKey The source storage key
+     * @param destKey The destination storage key
+     */
+    void copyFile(String sourceKey, String destKey);
+
+    /**
+     * Read file content as bytes.
+     *
+     * @param storageKey The storage key
+     * @return The file content as bytes, or null if file doesn't exist
+     */
+    byte[] readBytes(String storageKey);
 }

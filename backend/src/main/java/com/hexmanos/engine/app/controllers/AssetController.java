@@ -142,7 +142,7 @@ public class AssetController {
             return ResponseEntity.badRequest().body(
                 RegisterAssetResponse.builder()
                     .success(false)
-                    .message("Invalid asset type: " + request.getType() + ". Must be CHARACTER, TILE, or MAP")
+                    .message("Invalid asset type: " + request.getType() + ". Must be CHARACTER, TILE, MAP, or OBJECT")
                     .build()
             );
         }
@@ -337,7 +337,8 @@ public class AssetController {
     private boolean isValidAssetType(String assetType) {
         return "characters".equals(assetType) ||
                "tiles".equals(assetType) ||
-               "maps".equals(assetType);
+               "maps".equals(assetType) ||
+               "objects".equals(assetType);
     }
 
     private String determineContentType(String storageKey) {
@@ -351,6 +352,34 @@ public class AssetController {
             return "image/gif";
         }
         return "application/octet-stream";
+    }
+
+    /**
+     * Migrate legacy CHARACTER assets to the new visual states schema.
+     * This endpoint should be called once to migrate existing characters.
+     * It will:
+     * 1. Add entityType and visualStates to definition.json
+     * 2. Rename frame files from {state}_{frame}.png to full_{state}_{frame}.png
+     *
+     * @return Migration result with counts and any errors
+     */
+    @PostMapping("/migrate-visual-states")
+    public ResponseEntity<Map<String, Object>> migrateToVisualStates() {
+        log.info("Starting migration of characters to visual states schema");
+
+        AssetService.MigrationResult result = assetService.migrateCharactersToVisualStates();
+
+        Map<String, Object> response = Map.of(
+            "migrated", result.getMigrated(),
+            "skipped", result.getSkipped(),
+            "failed", result.getFailed(),
+            "errors", result.getErrors()
+        );
+
+        log.info("Migration complete: {} migrated, {} skipped, {} failed",
+            result.getMigrated(), result.getSkipped(), result.getFailed());
+
+        return ResponseEntity.ok(response);
     }
 
     /**

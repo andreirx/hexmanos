@@ -14,6 +14,8 @@ interface TileProperties {
 interface CharacterDefinition {
   name: string
   spriteSize: number
+  entityType?: "CHARACTER" | "OBJECT"
+  visualStates?: string[]
   states: Record<string, { frames: number; loop: boolean }>
 }
 
@@ -40,6 +42,10 @@ interface MapCanvasProps {
   onCellClick: (x: number, y: number) => void
   onShapeStart?: (x: number, y: number) => void
   onShapeEnd?: (x: number, y: number) => void
+  // For shape preview
+  shapeStart?: { x: number; y: number } | null
+  selectedTileAsset?: string | null
+  selectedPathAsset?: string | null
 }
 
 // ============================================================
@@ -143,7 +149,10 @@ export function MapCanvas({
   currentTool,
   onCellClick,
   onShapeStart,
-  onShapeEnd
+  onShapeEnd,
+  shapeStart,
+  selectedTileAsset,
+  selectedPathAsset
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mainCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -165,6 +174,9 @@ export function MapCanvas({
 
   // Track if terrain needs redraw
   const [terrainDirty, setTerrainDirty] = useState(true)
+
+  // Hover position for shape preview
+  const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null)
 
   // Asset loading state
   const [assetsLoaded, setAssetsLoaded] = useState(false)
@@ -206,13 +218,15 @@ export function MapCanvas({
   useEffect(() => {
     async function loadAssets() {
       try {
-        const [tiles, characters] = await Promise.all([
+        const [tiles, characters, objects] = await Promise.all([
           getAssetsByType("TILE"),
-          getAssetsByType("CHARACTER")
+          getAssetsByType("CHARACTER"),
+          getAssetsByType("OBJECT")
         ])
 
         tiles.forEach(t => assetCache.set(t.id, t))
         characters.forEach(c => assetCache.set(c.id, c))
+        objects.forEach(o => assetCache.set(o.id, o))
 
         // Load tile properties for variation counts
         const propsPromises = tiles.map(async (asset) => {
@@ -232,8 +246,9 @@ export function MapCanvas({
         })
         setTileProperties(propsMap)
 
-        // Load character definitions for animation frame counts
-        const charDefPromises = characters.map(async (asset) => {
+        // Load character and object definitions for animation frame counts
+        const allEntities = [...characters, ...objects]
+        const charDefPromises = allEntities.map(async (asset) => {
           try {
             const def = await getAssetFile<CharacterDefinition>(asset.storageKeyPrefix, "definition.json")
             characterDefCache.set(asset.id, def)
@@ -437,20 +452,31 @@ export function MapCanvas({
       }
     }
 
-    // PASS 4: Draw characters with animation
+    // PASS 4: Draw characters and objects with animation
     if (showCharacters) {
       for (const char of mapData.characters) {
         const asset = assetCache.get(char.characterAssetId)
         if (!asset) continue
 
-        // Get character definition for frame count
+        // Get character/object definition for frame count and visual states
         const charDef = characterDefs.get(char.characterAssetId)
         const idleFrameCount = charDef?.states?.idle?.frames ?? 1
 
         // Calculate current frame (loop through available frames)
         const currentFrame = idleFrameCount > 1 ? animationFrame % idleFrameCount : 0
 
-        const url = getAssetFileUrl(asset.storageKeyPrefix, `idle_${currentFrame}.png`)
+        // Determine file name based on visual states
+        let fileName: string
+        if (charDef?.visualStates && charDef.visualStates.length > 0) {
+          // New format: use first visual state (e.g., "full" for characters, "new" for objects)
+          const firstVs = charDef.visualStates[0]
+          fileName = `${firstVs}_idle_${currentFrame}.png`
+        } else {
+          // Legacy format
+          fileName = `idle_${currentFrame}.png`
+        }
+
+        const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
         const img = getImage(url)
 
         if (img) {
@@ -522,13 +548,89 @@ export function MapCanvas({
       ctx.fillRect(0, 0, mapData.width * mapData.tileSize, mapData.height * mapData.tileSize)
     }
 
+    // Shape preview for rect/disc tools
+    if ((currentTool === "rect" || currentTool === "disc") && shapeStart && hoverCell) {
+      const tileSize = mapData.tileSize
+      const x0 = Math.min(shapeStart.x, hoverCell.x)
+      const y0 = Math.min(shapeStart.y, hoverCell.y)
+      const x1 = Math.max(shapeStart.x, hoverCell.x)
+      const y1 = Math.max(shapeStart.y, hoverCell.y)
+
+      // Determine preview color based on layer
+      const previewColor = activeLayer === "paths" ? "rgba(255, 165, 0, 0.3)" : "rgba(59, 130, 246, 0.3)"
+      const borderColor = activeLayer === "paths" ? "rgba(255, 165, 0, 0.8)" : "rgba(59, 130, 246, 0.8)"
+
+      ctx.fillStyle = previewColor
+      ctx.strokeStyle = borderColor
+      ctx.lineWidth = 2 / zoom
+
+      if (currentTool === "rect") {
+        // Draw rectangle preview
+        for (let cy = y0; cy <= y1; cy++) {
+          for (let cx = x0; cx <= x1; cx++) {
+            if (cx >= 0 && cx < mapData.width && cy >= 0 && cy < mapData.height) {
+              ctx.fillRect(cx * tileSize, cy * tileSize, tileSize, tileSize)
+            }
+          }
+        }
+        // Draw border
+        ctx.strokeRect(
+          x0 * tileSize,
+          y0 * tileSize,
+          (x1 - x0 + 1) * tileSize,
+          (y1 - y0 + 1) * tileSize
+        )
+      } else if (currentTool === "disc") {
+        // Draw disc/ellipse preview
+        const centerX = (x0 + x1 + 1) / 2
+        const centerY = (y0 + y1 + 1) / 2
+        const radiusX = (x1 - x0 + 1) / 2
+        const radiusY = (y1 - y0 + 1) / 2
+
+        // Fill cells inside ellipse
+        for (let cy = y0; cy <= y1; cy++) {
+          for (let cx = x0; cx <= x1; cx++) {
+            if (cx >= 0 && cx < mapData.width && cy >= 0 && cy < mapData.height) {
+              // Check if cell center is inside ellipse
+              const dx = ((cx + 0.5) - centerX) / (radiusX || 0.5)
+              const dy = ((cy + 0.5) - centerY) / (radiusY || 0.5)
+              if (dx * dx + dy * dy <= 1) {
+                ctx.fillRect(cx * tileSize, cy * tileSize, tileSize, tileSize)
+              }
+            }
+          }
+        }
+        // Draw ellipse border
+        ctx.beginPath()
+        ctx.ellipse(
+          centerX * tileSize,
+          centerY * tileSize,
+          radiusX * tileSize,
+          radiusY * tileSize,
+          0, 0, Math.PI * 2
+        )
+        ctx.stroke()
+      }
+    }
+
+    // Single-cell hover preview for paint tool
+    if (currentTool === "paint" && hoverCell && !shapeStart) {
+      const tileSize = mapData.tileSize
+      const { x, y } = hoverCell
+      if (x >= 0 && x < mapData.width && y >= 0 && y < mapData.height) {
+        const previewColor = activeLayer === "paths" ? "rgba(255, 165, 0, 0.3)" : "rgba(59, 130, 246, 0.3)"
+        ctx.fillStyle = previewColor
+        ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize)
+      }
+    }
+
     ctx.restore()
-  }, [zoom, showGrid, activeLayer, mapData, terrainDirty, renderTerrain])
+  }, [zoom, showGrid, activeLayer, mapData, terrainDirty, renderTerrain, currentTool, shapeStart, hoverCell])
 
   // Re-render when needed
   useEffect(() => {
     render()
-  }, [render, panOffset, renderTrigger])
+  }, [render, panOffset, renderTrigger, hoverCell])
 
   // Handle resize
   useEffect(() => {
@@ -625,6 +727,10 @@ export function MapCanvas({
   }, [currentTool, getCellFromEvent, onCellClick, onShapeStart])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    // Always track hover position for previews
+    const cell = getCellFromEvent(e)
+    setHoverCell(cell)
+
     // Handle middle mouse / Alt+click panning
     if (isPanningRef.current) {
       const dx = e.clientX - lastPanPointRef.current.x
@@ -649,7 +755,6 @@ export function MapCanvas({
       onPanChange(newPan)
       requestAnimationFrame(render)
     } else if (isDrawingRef.current && (currentTool === "paint" || currentTool === "erase")) {
-      const cell = getCellFromEvent(e)
       if (cell && (lastCellRef.current?.x !== cell.x || lastCellRef.current?.y !== cell.y)) {
         // Use Bresenham line to fill in gaps when dragging fast
         if (lastCellRef.current) {
@@ -702,6 +807,7 @@ export function MapCanvas({
     isDrawingRef.current = false
     isPanningRef.current = false
     lastCellRef.current = null
+    setHoverCell(null)
   }, [])
 
   return (

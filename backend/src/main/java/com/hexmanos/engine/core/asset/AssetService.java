@@ -1,13 +1,21 @@
 package com.hexmanos.engine.core.asset;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hexmanos.engine.core.files.FileStorageService;
 import lombok.extern.slf4j.Slf4j;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 public class AssetService {
@@ -137,6 +145,7 @@ public class AssetService {
             case CHARACTER -> "characters";
             case TILE -> "tiles";
             case MAP -> "maps";
+            case OBJECT -> "objects";
         };
     }
 
@@ -171,6 +180,126 @@ public class AssetService {
                     return assetRepository.save(asset);
                 })
                 .orElseThrow(() -> new IllegalArgumentException("Asset not found: " + id));
+    }
+
+    /**
+     * Migrate legacy CHARACTER assets to the new visual states schema.
+     * This will:
+     * 1. Read each CHARACTER's definition.json
+     * 2. If it doesn't have visualStates, add entityType and visualStates
+     * 3. Rename all animation frame files from {state}_{frame}.png to full_{state}_{frame}.png
+     *
+     * @return MigrationResult with counts of migrated and skipped assets
+     */
+    public MigrationResult migrateCharactersToVisualStates() {
+        List<Asset> characters = assetRepository.findByType(Asset.AssetType.CHARACTER);
+        int migrated = 0;
+        int skipped = 0;
+        int failed = 0;
+        List<String> errors = new ArrayList<>();
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        List<String> visualStates = Arrays.asList("full", "hurt_1", "hurt_2", "critical");
+
+        // Pattern to match legacy frame files: {animState}_{frameIndex}.png
+        // e.g., idle_0.png, walk_down_1.png
+        Pattern legacyPattern = Pattern.compile("^([a-z_]+)_(\\d+)\\.png$");
+
+        for (Asset asset : characters) {
+            try {
+                String definitionKey = asset.getStorageKeyPrefix() + "/definition.json";
+
+                // Read the definition.json
+                byte[] definitionBytes = fileStorageService.readBytes(definitionKey);
+                if (definitionBytes == null) {
+                    log.warn("Skipping {} - no definition.json found", asset.getId());
+                    skipped++;
+                    continue;
+                }
+
+                JsonNode definition = objectMapper.readTree(definitionBytes);
+
+                // Check if already migrated
+                if (definition.has("visualStates")) {
+                    log.info("Skipping {} - already has visualStates", asset.getId());
+                    skipped++;
+                    continue;
+                }
+
+                log.info("Migrating character: {} ({})", asset.getName(), asset.getId());
+
+                // Update the definition.json
+                ObjectNode updatedDefinition = (ObjectNode) definition;
+                updatedDefinition.put("entityType", "CHARACTER");
+                ArrayNode visualStatesArray = updatedDefinition.putArray("visualStates");
+                for (String vs : visualStates) {
+                    visualStatesArray.add(vs);
+                }
+
+                // Write updated definition.json
+                String updatedJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(updatedDefinition);
+                fileStorageService.uploadBytes(
+                    updatedJson.getBytes(StandardCharsets.UTF_8),
+                    definitionKey,
+                    "application/json"
+                );
+
+                // List all files and rename frame files
+                List<String> files = fileStorageService.listFiles(asset.getStorageKeyPrefix());
+                for (String fileName : files) {
+                    if (fileName.equals("definition.json")) continue;
+
+                    Matcher matcher = legacyPattern.matcher(fileName);
+                    if (matcher.matches()) {
+                        String animState = matcher.group(1);
+                        String frameIndex = matcher.group(2);
+
+                        // Rename to new format: full_{animState}_{frameIndex}.png
+                        String newFileName = "full_" + animState + "_" + frameIndex + ".png";
+                        String sourceKey = asset.getStorageKeyPrefix() + "/" + fileName;
+                        String destKey = asset.getStorageKeyPrefix() + "/" + newFileName;
+
+                        fileStorageService.copyFile(sourceKey, destKey);
+                        fileStorageService.deleteFile(sourceKey);
+                        log.info("Renamed {} to {}", fileName, newFileName);
+                    }
+                }
+
+                migrated++;
+                log.info("Successfully migrated character: {}", asset.getName());
+
+            } catch (Exception e) {
+                failed++;
+                String errorMsg = String.format("Failed to migrate %s (%s): %s",
+                    asset.getName(), asset.getId(), e.getMessage());
+                log.error(errorMsg, e);
+                errors.add(errorMsg);
+            }
+        }
+
+        return new MigrationResult(migrated, skipped, failed, errors);
+    }
+
+    /**
+     * Result of the migration operation.
+     */
+    public static class MigrationResult {
+        private final int migrated;
+        private final int skipped;
+        private final int failed;
+        private final List<String> errors;
+
+        public MigrationResult(int migrated, int skipped, int failed, List<String> errors) {
+            this.migrated = migrated;
+            this.skipped = skipped;
+            this.failed = failed;
+            this.errors = errors;
+        }
+
+        public int getMigrated() { return migrated; }
+        public int getSkipped() { return skipped; }
+        public int getFailed() { return failed; }
+        public List<String> getErrors() { return errors; }
     }
 
     /**

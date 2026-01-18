@@ -179,4 +179,30 @@ public class LocalFileStorageService implements FileStorageService {
             log.error("Failed to list files for deletion in {}: {}", directoryKey, e.getMessage());
         }
     }
+
+    @Override
+    public void copyFile(String sourceKey, String destKey) {
+        try {
+            Path sourcePath = fileStorageLocation.resolve(sourceKey).normalize();
+            Path destPath = fileStorageLocation.resolve(destKey).normalize();
+            Files.createDirectories(destPath.getParent());
+            Files.copy(sourcePath, destPath, StandardCopyOption.REPLACE_EXISTING);
+            log.info("Copied file from {} to {}", sourcePath, destPath);
+        } catch (IOException ex) {
+            throw new RuntimeException("Failed to copy file from " + sourceKey + " to " + destKey, ex);
+        }
+    }
+
+    @Override
+    public byte[] readBytes(String storageKey) {
+        try {
+            Path filePath = fileStorageLocation.resolve(storageKey).normalize();
+            if (!Files.exists(filePath)) {
+                return null;
+            }
+            return Files.readAllBytes(filePath);
+        } catch (IOException ex) {
+            throw new RuntimeException("Failed to read bytes from " + storageKey, ex);
+        }
+    }
 }

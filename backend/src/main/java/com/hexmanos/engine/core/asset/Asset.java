@@ -11,7 +11,7 @@ import java.util.UUID;
 @AllArgsConstructor
 @NoArgsConstructor
 public class Asset {
-    public enum AssetType { CHARACTER, TILE, MAP }
+    public enum AssetType { CHARACTER, TILE, MAP, OBJECT }
     public enum AssetStatus { PENDING, APPROVED, REJECTED, ARCHIVED }
 
     private UUID id;
