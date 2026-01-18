@@ -30,12 +30,14 @@ src/main/java/com/hexmanos/engine/
 ├── core/                             # Domain Layer (Pure Java)
 │   ├── asset/                        # Asset domain
 │   ├── files/                        # File storage port
+│   ├── game/                         # Game engine domain
 │   ├── transition/                   # Tile transition logic
 │   └── user/                         # User domain
 └── external/                         # Adapter Layer
     ├── files/storage/                # S3 and local file adapters
     └── postgres/                     # Database adapters
         ├── asset/                    # Asset entity + repository
+        ├── game/                     # Game entity + repository
         └── user/                     # User entity + repository
 ```
 
@@ -61,6 +63,7 @@ Pure Java business logic. No Spring dependencies.
 |---------|----------|
 | `asset` | Asset POJO, AssetService, AssetRepository interface |
 | `files` | FileStorageService interface, PresignedUploadUrl |
+| `game` | Game, GamePlayer, GameCharacter, GameState POJOs, GameService, GameRoomManager, SnapshotService |
 | `transition` | TransitionGeneratorService for tile blending |
 | `user` | User POJO, UserService, UserRepository interface |
 
@@ -71,6 +74,7 @@ Infrastructure implementations.
 |---------|----------|
 | `files.storage` | LocalFileStorageService, S3FileStorageService |
 | `postgres.asset` | AssetEntity, AssetDB, PostgresAssetRepository |
+| `postgres.game` | GameEntity, GamePlayerEntity, GameDB, GamePlayerDB, Postgres adapters |
 | `postgres.user` | UserEntity, UserDB, PostgresUserRepository |
 
 ## Key Files
@@ -80,12 +84,16 @@ Infrastructure implementations.
 
 ### Controllers
 - `AssetController.java` - Asset CRUD, moderation, presigned URLs, file serving
+- `GameController.java` - Game lifecycle, player management, character control
 - `UserController.java` - User sync from Cognito
 
 ### Services
 - `AssetService.java` - Asset registration, validation, approval, rejection, archival
-- `UserService.java` - User management
+- `GameService.java` - Game lifecycle orchestration
+- `GameRoomManager.java` - In-memory game state management
+- `SnapshotService.java` - Game state persistence
 - `TransitionGeneratorService.java` - Auto-generate tile transitions
+- `UserService.java` - User management
 
 ### Repository Pattern
 Each domain has:
@@ -104,7 +112,8 @@ src/main/resources/
     ├── V1__init_schema.sql
     ├── V20260116113411__seed_sample_assets.sql
     ├── V20260116160205__create_users_table.sql
-    └── V20260118070552__add_moderation_notes_to_assets.sql
+    ├── V20260118070552__add_moderation_notes_to_assets.sql
+    └── V20260118120000__create_game_tables.sql
 ```
 
 ## Profiles
@@ -142,6 +151,20 @@ src/main/resources/
 |--------|------|---------|
 | POST | `/api/users/sync` | `syncUser()` |
 
+### Games
+| Method | Path | Handler | Description |
+|--------|------|---------|-------------|
+| POST | `/api/games` | `createGame()` | Create new game |
+| GET | `/api/games` | `getMyGames()` | List my games |
+| GET | `/api/games/{id}` | `getGame()` | Get game details |
+| POST | `/api/games/{id}/start` | `startGame()` | Start game |
+| POST | `/api/games/{id}/pause` | `pauseGame()` | Pause game |
+| POST | `/api/games/{id}/stop` | `stopGame()` | Stop game |
+| POST | `/api/games/{id}/join` | `joinGame()` | Join game with code |
+| POST | `/api/games/{id}/leave` | `leaveGame()` | Leave game |
+| POST | `/api/games/{id}/characters/{charId}/take-over` | `takeOverCharacter()` | Control character |
+| POST | `/api/games/{id}/characters/relinquish` | `relinquishCharacter()` | Release character |
+
 ## Asset Status Workflow
 
 ```
@@ -149,6 +172,24 @@ PENDING ──approve──> APPROVED ──archive──> ARCHIVED
     │
     └──reject───> REJECTED
 ```
+
+## Game Status Workflow
+
+```
+WAITING ──start──> RUNNING ──pause──> PAUSED
+    │                  │                 │
+    │                  │                 └──start──> RUNNING
+    │                  │
+    └─────────────> FINISHED <──stop────┘
+```
+
+Game features:
+- **Single map per game** with characters from map placements
+- **Invite-only access** with join code and optional password
+- **Player-character disconnection** - take over/relinquish control
+- **Autonomous execution** - game runs even without players
+- **2-day inactivity timeout** - games auto-cleanup
+- **Periodic snapshots** - game state persisted for crash recovery
 
 ## Running
 
