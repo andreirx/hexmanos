@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Check, X, Archive, User, Calendar } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { MapThumbnail } from "./MapThumbnail"
 import { approveAsset, rejectAsset, archiveAsset, getAssetFileUrl } from "@/api/assets"
 import type { AssetDTO } from "@/api/types"
 
@@ -88,16 +89,23 @@ export function AssetCard({ asset, onUpdated, onRemoved, onViewDetails }: AssetC
         onClick={onViewDetails}
         title="Click to view all frames/variations"
       >
-        <img
-          src={thumbnailUrl}
-          alt={asset.name}
-          className="w-full h-full object-contain rendering-pixelated group-hover:scale-105 transition-transform"
-          onError={(e) => {
-            const target = e.target as HTMLImageElement
-            target.style.display = "none"
-            target.parentElement!.innerHTML = '<span class="text-4xl text-zinc-600">?</span>'
-          }}
-        />
+        {asset.type === "MAP" ? (
+          <MapThumbnail
+            storageKeyPrefix={asset.storageKeyPrefix}
+            className="w-full h-full group-hover:scale-105 transition-transform"
+          />
+        ) : (
+          <img
+            src={thumbnailUrl}
+            alt={asset.name}
+            className="w-full h-full object-contain rendering-pixelated group-hover:scale-105 transition-transform"
+            onError={(e) => {
+              const target = e.target as HTMLImageElement
+              target.style.display = "none"
+              target.parentElement!.innerHTML = '<span class="text-4xl text-zinc-600">?</span>'
+            }}
+          />
+        )}
       </div>
 
       <CardContent className="p-4 space-y-3">
