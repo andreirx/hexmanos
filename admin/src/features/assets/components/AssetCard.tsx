@@ -66,9 +66,10 @@ export function AssetCard({ asset, onUpdated, onRemoved }: AssetCardProps) {
     }
   }
 
-  const statusColors = {
+  const statusColors: Record<string, string> = {
     PENDING: "bg-yellow-500/20 text-yellow-400 border-yellow-500/50",
     APPROVED: "bg-green-500/20 text-green-400 border-green-500/50",
+    REJECTED: "bg-red-500/20 text-red-400 border-red-500/50",
     ARCHIVED: "bg-zinc-500/20 text-zinc-400 border-zinc-500/50",
   }
 
@@ -79,7 +80,7 @@ export function AssetCard({ asset, onUpdated, onRemoved }: AssetCardProps) {
   }
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden" data-testid="asset-card">
       {/* Thumbnail */}
       <div className="aspect-square bg-zinc-800 flex items-center justify-center overflow-hidden">
         <img
