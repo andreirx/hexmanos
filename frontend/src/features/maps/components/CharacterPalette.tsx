@@ -20,6 +20,11 @@ export function CharacterPalette({ selectedCharacter, onSelectCharacter }: Chara
       try {
         const assets = await getAssetsByType("CHARACTER")
         setCharacters(assets)
+
+        // Auto-select the first character if none is selected
+        if (!selectedCharacter && assets.length > 0) {
+          onSelectCharacter(assets[0].id)
+        }
       } catch (err) {
         console.error("Failed to load characters:", err)
       } finally {

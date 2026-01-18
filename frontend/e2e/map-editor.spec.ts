@@ -19,12 +19,12 @@ test.describe("Map Editor Page", () => {
 
   test("should display tools card", async ({ page }) => {
     await expect(page.getByText("Tools")).toBeVisible()
-    await expect(page.getByRole("button", { name: "Select" })).toBeVisible()
-    await expect(page.getByRole("button", { name: "Paint" })).toBeVisible()
-    await expect(page.getByRole("button", { name: "Erase" })).toBeVisible()
-    await expect(page.getByRole("button", { name: "Rect" })).toBeVisible()
-    await expect(page.getByRole("button", { name: "Disc" })).toBeVisible()
-    await expect(page.getByRole("button", { name: "Pan" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Select", exact: true })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Paint", exact: true })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Erase", exact: true })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Rect", exact: true })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Disc", exact: true })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Pan", exact: true })).toBeVisible()
   })
 
   test("should display layers card", async ({ page }) => {
@@ -67,22 +67,22 @@ test.describe("Map Editor Page", () => {
 
   test("should switch tools when clicking", async ({ page }) => {
     // Default is Paint
-    await expect(page.getByRole("button", { name: "Paint" })).toHaveClass(/bg-blue-600/)
+    await expect(page.getByRole("button", { name: "Paint", exact: true })).toHaveClass(/bg-blue-600/)
 
     // Click Select
-    await page.getByRole("button", { name: "Select" }).click()
-    await expect(page.getByRole("button", { name: "Select" })).toHaveClass(/bg-blue-600/)
-    await expect(page.getByRole("button", { name: "Paint" })).not.toHaveClass(/bg-blue-600/)
+    await page.getByRole("button", { name: "Select", exact: true }).click()
+    await expect(page.getByRole("button", { name: "Select", exact: true })).toHaveClass(/bg-blue-600/)
+    await expect(page.getByRole("button", { name: "Paint", exact: true })).not.toHaveClass(/bg-blue-600/)
 
     // Click Erase
-    await page.getByRole("button", { name: "Erase" }).click()
-    await expect(page.getByRole("button", { name: "Erase" })).toHaveClass(/bg-blue-600/)
-    await expect(page.getByRole("button", { name: "Select" })).not.toHaveClass(/bg-blue-600/)
+    await page.getByRole("button", { name: "Erase", exact: true }).click()
+    await expect(page.getByRole("button", { name: "Erase", exact: true })).toHaveClass(/bg-blue-600/)
+    await expect(page.getByRole("button", { name: "Select", exact: true })).not.toHaveClass(/bg-blue-600/)
 
     // Click Pan
-    await page.getByRole("button", { name: "Pan" }).click()
-    await expect(page.getByRole("button", { name: "Pan" })).toHaveClass(/bg-blue-600/)
-    await expect(page.getByRole("button", { name: "Erase" })).not.toHaveClass(/bg-blue-600/)
+    await page.getByRole("button", { name: "Pan", exact: true }).click()
+    await expect(page.getByRole("button", { name: "Pan", exact: true })).toHaveClass(/bg-blue-600/)
+    await expect(page.getByRole("button", { name: "Erase", exact: true })).not.toHaveClass(/bg-blue-600/)
   })
 
   test("should switch layers when clicking", async ({ page }) => {

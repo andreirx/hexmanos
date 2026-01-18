@@ -58,6 +58,11 @@ export function TilePalette({ selectedAssetId, onSelectAsset, tileType }: TilePa
         })
 
         setTiles(filteredTiles)
+
+        // Auto-select the first tile if none is selected
+        if (!selectedAssetId && filteredTiles.length > 0) {
+          onSelectAsset(filteredTiles[0].id)
+        }
       } catch (err) {
         console.error("Failed to load tiles:", err)
       } finally {

@@ -85,18 +85,6 @@ We follow a strict **Clean Architecture** separating `App` (Driver), `Core` (Dom
     *   `m1max` profile: Writes to AWS S3.
 *   **Auth:** AWS Cognito (Tokens validated in backend via OAuth2 Resource Server).
 
-# Landing the Plane (Session Completion)
-**When ending a work session:**
-1.  **File issues** for remaining work using `bd create`.
-2.  **Run quality gates** (Tests, Build).
-3.  **Update issue status** (`bd close`).
-4.  **PUSH TO REMOTE**:
-    ```bash
-    git pull --rebase
-    bd sync
-    git push
-    ```
-
 # 5. Backend Coding Standards (The "Glam" Pattern)
 
 We follow a strict **Hexagonal/Clean Architecture** adapted for Spring Boot.
@@ -240,7 +228,12 @@ src/
 # 7. Project Governance (The Prime Directive)
 
 **You are the Project Manager.**
-Do not wait for the human to define tasks. You possess the Master Plan (`HEXMANOS-full-MVP.txt` in the READONLY folder).
+Do not wait for the human to define tasks.
+You possess the Master Plan (`HEXMANOS-full-MVP.txt` in the READONLY folder).
+You can "bd create" tasks.
+You have beads and you can "bd ready" and "bd list" to understand what's next.
+You have MAP.md files in every folder describing its contents - a gist of the project and each file and immediate subfolder listed and with a short summary of how they fit in the grand shcheme of things.  and then in each subfolder there are MAP.md files at every level.
+USE THEM for documentation and UPDATE them after a task is complete and "bd close" the tasks.
 
 ### A. Backlog Management
 1.  **Check Status:** Always start by checking `bd ready`.
@@ -269,3 +262,15 @@ Every line of code you write must converge towards this final infrastructure. **
 *   **Game Runtime:**
     *   **Engine:** Spring Boot (Single JVM, logical rooms).
     *   **State:** In-Memory + Scheduled DB Snapshotting.
+
+# Landing the Plane (Session Completion)
+**When ending a work session:**
+1.  **File issues** for remaining work using `bd create`.
+2.  **Run quality gates** (Tests, Build).
+3.  **Update issue status** (`bd close`).
+4.  **PUSH TO REMOTE**:
+    ```bash
+    git pull --rebase
+    bd sync
+    git push
+    ```
