@@ -11,6 +11,7 @@ import java.util.UUID;
 public interface UserRepository {
     List<User> findAll();
     Optional<User> findById(UUID id);
+    List<User> findByIds(List<UUID> ids);
     Optional<User> findByCognitoSub(String cognitoSub);
     User save(User user);
 }

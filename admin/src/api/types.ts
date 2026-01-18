@@ -6,6 +6,8 @@ export interface AssetDTO {
   type: AssetType
   name: string
   authorId: string
+  authorName?: string
+  authorEmail?: string
   status: AssetStatus
   storageKeyPrefix: string
   createdAt: string

@@ -25,6 +25,13 @@ public class UserService {
         return userRepository.findById(id);
     }
 
+    public List<User> getByIds(List<UUID> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return userRepository.findByIds(ids);
+    }
+
     public Optional<User> getByCognitoSub(String cognitoSub) {
         return userRepository.findByCognitoSub(cognitoSub);
     }

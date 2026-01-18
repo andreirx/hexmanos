@@ -30,6 +30,11 @@ public class PostgresUserRepository implements UserRepository {
     }
 
     @Override
+    public List<User> findByIds(List<UUID> ids) {
+        return db.findAllById(ids).stream().map(EntityMapper::fromEntity).toList();
+    }
+
+    @Override
     public Optional<User> findByCognitoSub(String cognitoSub) {
         return db.findByCognitoSub(cognitoSub).map(EntityMapper::fromEntity);
     }

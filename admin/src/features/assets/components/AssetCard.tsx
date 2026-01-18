@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Check, X, Archive, User, Calendar } from "lucide-react"
+import { Check, X, Archive, User, Mail, Calendar } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { MapThumbnail } from "./MapThumbnail"
@@ -128,8 +128,16 @@ export function AssetCard({ asset, onUpdated, onRemoved, onViewDetails }: AssetC
           </div>
           <div className="flex items-center gap-1">
             <User className="w-3 h-3" />
-            <span className="truncate" title={asset.authorId}>{asset.authorId.slice(0, 8)}...</span>
+            <span className="truncate" title={asset.authorName || asset.authorId}>
+              {asset.authorName || asset.authorId.slice(0, 8) + "..."}
+            </span>
           </div>
+          {asset.authorEmail && (
+            <div className="flex items-center gap-1">
+              <Mail className="w-3 h-3" />
+              <span className="truncate" title={asset.authorEmail}>{asset.authorEmail}</span>
+            </div>
+          )}
           <div className="flex items-center gap-1">
             <Calendar className="w-3 h-3" />
             <span>{new Date(asset.createdAt).toLocaleDateString()}</span>

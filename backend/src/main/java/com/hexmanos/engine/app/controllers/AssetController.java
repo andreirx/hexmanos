@@ -11,6 +11,8 @@ import com.hexmanos.engine.core.asset.Asset;
 import com.hexmanos.engine.core.asset.AssetService;
 import com.hexmanos.engine.core.files.FileStorageService;
 import com.hexmanos.engine.core.files.PresignedUploadUrl;
+import com.hexmanos.engine.core.user.User;
+import com.hexmanos.engine.core.user.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -20,7 +22,9 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @RestController
@@ -30,13 +34,12 @@ public class AssetController {
 
     private final AssetService assetService;
     private final FileStorageService fileStorageService;
+    private final UserService userService;
 
     @GetMapping
     public ResponseEntity<List<AssetDTO>> getAllAssets() {
-        List<AssetDTO> assets = assetService.getAll().stream()
-                .map(AssetDTO.DTOMapper::toDTO)
-                .toList();
-        return ResponseEntity.ok(assets);
+        List<Asset> assets = assetService.getAll();
+        return ResponseEntity.ok(enrichWithAuthorInfo(assets));
     }
 
     @GetMapping("/{id}")
@@ -51,10 +54,8 @@ public class AssetController {
     public ResponseEntity<List<AssetDTO>> getAssetsByStatus(@PathVariable String status) {
         try {
             Asset.AssetStatus assetStatus = Asset.AssetStatus.valueOf(status.toUpperCase());
-            List<AssetDTO> assets = assetService.getByStatus(assetStatus).stream()
-                    .map(AssetDTO.DTOMapper::toDTO)
-                    .toList();
-            return ResponseEntity.ok(assets);
+            List<Asset> assets = assetService.getByStatus(assetStatus);
+            return ResponseEntity.ok(enrichWithAuthorInfo(assets));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();
         }
@@ -326,10 +327,8 @@ public class AssetController {
     public ResponseEntity<List<AssetDTO>> getAssetsByType(@PathVariable String type) {
         try {
             Asset.AssetType assetType = Asset.AssetType.valueOf(type.toUpperCase());
-            List<AssetDTO> assets = assetService.getByType(assetType).stream()
-                    .map(AssetDTO.DTOMapper::toDTO)
-                    .toList();
-            return ResponseEntity.ok(assets);
+            List<Asset> assets = assetService.getByType(assetType);
+            return ResponseEntity.ok(enrichWithAuthorInfo(assets));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();
         }
@@ -352,5 +351,47 @@ public class AssetController {
             return "image/gif";
         }
         return "application/octet-stream";
+    }
+
+    /**
+     * Enrich asset DTOs with author name and email.
+     * Performs a batch lookup of users to avoid N+1 queries.
+     */
+    private List<AssetDTO> enrichWithAuthorInfo(List<Asset> assets) {
+        if (assets.isEmpty()) {
+            return List.of();
+        }
+
+        // Collect unique author IDs and convert to UUIDs
+        List<UUID> authorIds = assets.stream()
+                .map(Asset::getAuthorId)
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .map(id -> {
+                    try {
+                        return UUID.fromString(id);
+                    } catch (IllegalArgumentException e) {
+                        return null;
+                    }
+                })
+                .filter(id -> id != null)
+                .toList();
+
+        // Batch fetch users
+        Map<String, User> userMap = userService.getByIds(authorIds).stream()
+                .collect(Collectors.toMap(u -> u.getId().toString(), u -> u));
+
+        // Map assets to DTOs with author info
+        return assets.stream()
+                .map(asset -> {
+                    AssetDTO dto = AssetDTO.DTOMapper.toDTO(asset);
+                    User author = userMap.get(asset.getAuthorId());
+                    if (author != null) {
+                        dto.setAuthorName(author.getDisplayName());
+                        dto.setAuthorEmail(author.getEmail());
+                    }
+                    return dto;
+                })
+                .toList();
     }
 }

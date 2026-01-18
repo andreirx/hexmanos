@@ -18,6 +18,8 @@ public class AssetDTO {
     private String type;
     private String name;
     private String authorId;
+    private String authorName;
+    private String authorEmail;
     private String status;
     private String storageKeyPrefix;
     private LocalDateTime createdAt;
