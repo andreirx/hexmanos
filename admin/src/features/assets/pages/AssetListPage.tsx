@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { AssetCard } from "../components/AssetCard"
 import { AssetFilters } from "../components/AssetFilters"
+import { AssetDetailModal } from "../components/AssetDetailModal"
 import { getAssets, getAssetsByStatus } from "@/api/assets"
 import type { AssetDTO, AssetStatus, AssetType } from "@/api/types"
 
@@ -13,6 +14,7 @@ export function AssetListPage() {
   const [assets, setAssets] = useState<AssetDTO[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [selectedAsset, setSelectedAsset] = useState<AssetDTO | null>(null)
 
   const statusFilter = (searchParams.get("status") as AssetStatus) || null
   const typeFilter = (searchParams.get("type") as AssetType) || null
@@ -101,6 +103,7 @@ export function AssetListPage() {
               asset={asset}
               onUpdated={handleAssetUpdated}
               onRemoved={() => handleAssetRemoved(asset.id)}
+              onViewDetails={() => setSelectedAsset(asset)}
             />
           ))}
         </div>
@@ -112,6 +115,12 @@ export function AssetListPage() {
           Showing {assets.length} asset{assets.length !== 1 ? "s" : ""}
         </div>
       )}
+
+      <AssetDetailModal
+        asset={selectedAsset}
+        isOpen={selectedAsset !== null}
+        onClose={() => setSelectedAsset(null)}
+      />
     </div>
   )
 }

@@ -9,9 +9,10 @@ interface AssetCardProps {
   asset: AssetDTO
   onUpdated: (asset: AssetDTO) => void
   onRemoved: () => void
+  onViewDetails?: () => void
 }
 
-export function AssetCard({ asset, onUpdated, onRemoved }: AssetCardProps) {
+export function AssetCard({ asset, onUpdated, onRemoved, onViewDetails }: AssetCardProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [showNotes, setShowNotes] = useState(false)
   const [notes, setNotes] = useState("")
@@ -81,12 +82,16 @@ export function AssetCard({ asset, onUpdated, onRemoved }: AssetCardProps) {
 
   return (
     <Card className="overflow-hidden" data-testid="asset-card">
-      {/* Thumbnail */}
-      <div className="aspect-square bg-zinc-800 flex items-center justify-center overflow-hidden">
+      {/* Thumbnail - clickable to view details */}
+      <div
+        className="aspect-square bg-zinc-800 flex items-center justify-center overflow-hidden cursor-pointer hover:bg-zinc-700 transition-colors group"
+        onClick={onViewDetails}
+        title="Click to view all frames/variations"
+      >
         <img
           src={thumbnailUrl}
           alt={asset.name}
-          className="w-full h-full object-contain rendering-pixelated"
+          className="w-full h-full object-contain rendering-pixelated group-hover:scale-105 transition-transform"
           onError={(e) => {
             const target = e.target as HTMLImageElement
             target.style.display = "none"

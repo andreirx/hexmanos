@@ -3,6 +3,7 @@ import { RefreshCw, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { AssetCard } from "../components/AssetCard"
+import { AssetDetailModal } from "../components/AssetDetailModal"
 import { getAssetsByStatus } from "@/api/assets"
 import type { AssetDTO } from "@/api/types"
 
@@ -10,6 +11,7 @@ export function PendingAssetsPage() {
   const [assets, setAssets] = useState<AssetDTO[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [selectedAsset, setSelectedAsset] = useState<AssetDTO | null>(null)
 
   async function loadAssets() {
     setIsLoading(true)
@@ -90,10 +92,17 @@ export function PendingAssetsPage() {
               asset={asset}
               onUpdated={handleAssetUpdated}
               onRemoved={() => handleAssetRemoved(asset.id)}
+              onViewDetails={() => setSelectedAsset(asset)}
             />
           ))}
         </div>
       )}
+
+      <AssetDetailModal
+        asset={selectedAsset}
+        isOpen={selectedAsset !== null}
+        onClose={() => setSelectedAsset(null)}
+      />
     </div>
   )
 }

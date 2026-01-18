@@ -2,6 +2,7 @@ import { useState, useEffect } from "react"
 import { X, Map as MapIcon, Copy, Edit2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/ui/status-badge"
+import { MapPreview } from "./MapPreview"
 import { getAssetsByType, getAssetFile } from "@/api/assets"
 import type { AssetDTO } from "@/api/types"
 
@@ -116,20 +117,22 @@ export function MapGallery({ isOpen, onClose, onSelect, currentUserId }: MapGall
                         : "group hover:border-zinc-500"
                     }`}
                   >
-                    {/* Map preview placeholder */}
-                    <div className="aspect-video bg-zinc-950 flex items-center justify-center relative">
-                      <div className="text-center">
-                        <MapIcon className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
-                        {info && (
-                          <div className="text-xs text-zinc-500">
-                            {info.width} x {info.height}
-                          </div>
-                        )}
-                      </div>
+                    {/* Map preview */}
+                    <div className="aspect-video relative">
+                      <MapPreview
+                        storageKeyPrefix={map.storageKeyPrefix}
+                        className="w-full h-full"
+                      />
                       {/* Status badge */}
                       <div className="absolute top-1 right-1">
                         <StatusBadge status={map.status} />
                       </div>
+                      {/* Dimensions overlay */}
+                      {info && (
+                        <div className="absolute bottom-1 left-1 px-1 py-0.5 bg-black/60 rounded text-[10px] text-zinc-400">
+                          {info.width} x {info.height}
+                        </div>
+                      )}
                     </div>
 
                     {/* Info */}
