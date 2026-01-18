@@ -5,7 +5,7 @@ CREATE TABLE games (
     id UUID PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     host_player_id UUID NOT NULL,
-    map_asset_id UUID NOT NULL REFERENCES assets(id),
+    map_asset_id UUID NOT NULL REFERENCES asset_index(id),
     status VARCHAR(50) NOT NULL DEFAULT 'WAITING',
     join_code VARCHAR(10) NOT NULL UNIQUE,
     password_hash VARCHAR(255),
