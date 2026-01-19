@@ -55,9 +55,14 @@ public class UserService {
             User user = existingUser.get();
             user.setLastLoginAt(LocalDateTime.now());
             // Update email/displayName in case they changed in Cognito
-            user.setEmail(email);
-            user.setDisplayName(displayName);
-            log.info("User synced (existing): {} - {}", displayName, cognitoSub);
+            // Only update if new values are not null (preserve existing values)
+            if (email != null && !email.isBlank()) {
+                user.setEmail(email);
+            }
+            if (displayName != null && !displayName.isBlank()) {
+                user.setDisplayName(displayName);
+            }
+            log.info("User synced (existing): {} - {}", user.getDisplayName(), cognitoSub);
             return userRepository.save(user);
         } else {
             // Create new user
@@ -65,11 +70,12 @@ public class UserService {
             newUser.setId(UUID.randomUUID());
             newUser.setCognitoSub(cognitoSub);
             newUser.setPool(pool);
-            newUser.setDisplayName(displayName);
-            newUser.setEmail(email);
+            newUser.setDisplayName(displayName != null && !displayName.isBlank() ? displayName : "user");
+            // Use email if provided, otherwise generate a placeholder
+            newUser.setEmail(email != null && !email.isBlank() ? email : cognitoSub + "@placeholder.local");
             newUser.setCreatedAt(LocalDateTime.now());
             newUser.setLastLoginAt(LocalDateTime.now());
-            log.info("User synced (new): {} - {}", displayName, cognitoSub);
+            log.info("User synced (new): {} - {}", newUser.getDisplayName(), cognitoSub);
             return userRepository.save(newUser);
         }
     }
