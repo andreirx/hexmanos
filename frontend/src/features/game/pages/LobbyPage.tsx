@@ -5,9 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Header } from "@/components/layout"
 import { useAuth } from "@/context/AuthContext"
 import { syncUser } from "@/api/users"
-import { getMyGames, createGame, joinGame, startGame, stopGame } from "@/api/games"
+import { getMyGames, createGame, startGame, stopGame } from "@/api/games"
 import { getAssetsByType } from "@/api/assets"
-import { Plus, Play, Square, Users, Clock, Key, LogIn } from "lucide-react"
+import { Plus, Play, Square, Clock } from "lucide-react"
 import type { UserDTO, GameDTO, AssetDTO } from "@/api/types"
 
 export function LobbyPage() {
@@ -25,11 +25,6 @@ export function LobbyPage() {
   const [newGameMapId, setNewGameMapId] = useState("")
   const [newGamePassword, setNewGamePassword] = useState("")
 
-  // Join game dialog state
-  const [showJoinDialog, setShowJoinDialog] = useState(false)
-  const [joinGameId, setJoinGameId] = useState("")
-  const [joinCode, setJoinCode] = useState("")
-  const [joinPassword, setJoinPassword] = useState("")
 
   // Sync user on auth
   useEffect(() => {
@@ -69,9 +64,8 @@ export function LobbyPage() {
   async function loadMaps() {
     try {
       const allMaps = await getAssetsByType("MAP")
-      // Filter to only approved maps
-      const approvedMaps = allMaps.filter(m => m.status === "APPROVED")
-      setMaps(approvedMaps)
+      // Show all maps for now (dev mode - later filter to APPROVED only)
+      setMaps(allMaps)
     } catch (err) {
       console.error("Failed to load maps:", err)
     }
@@ -98,29 +92,6 @@ export function LobbyPage() {
     } catch (err) {
       console.error("Failed to create game:", err)
       setStatusMessage({ type: "error", text: "Failed to create game" })
-    }
-  }
-
-  async function handleJoinGame() {
-    if (!joinGameId || !joinCode.trim()) {
-      setStatusMessage({ type: "error", text: "Please enter a game ID and join code" })
-      return
-    }
-
-    try {
-      await joinGame(joinGameId, {
-        code: joinCode.trim(),
-        password: joinPassword || undefined
-      })
-      setShowJoinDialog(false)
-      setJoinGameId("")
-      setJoinCode("")
-      setJoinPassword("")
-      loadGames()
-      setStatusMessage({ type: "success", text: "Joined game successfully!" })
-    } catch (err) {
-      console.error("Failed to join game:", err)
-      setStatusMessage({ type: "error", text: "Failed to join game. Check your code and password." })
     }
   }
 
@@ -199,10 +170,7 @@ export function LobbyPage() {
               <Plus className="w-4 h-4 mr-2" />
               Create Game
             </Button>
-            <Button variant="outline" onClick={() => setShowJoinDialog(true)}>
-              <LogIn className="w-4 h-4 mr-2" />
-              Join Game
-            </Button>
+            {/* Join Game - hidden for now, single player only */}
           </div>
 
           {/* My Games */}
@@ -229,15 +197,7 @@ export function LobbyPage() {
                             {game.status}
                           </span>
                         </div>
-                        <div className="flex items-center gap-4 mt-1 text-xs text-zinc-500">
-                          <span className="flex items-center gap-1">
-                            <Key className="w-3 h-3" />
-                            {game.joinCode}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Users className="w-3 h-3" />
-                            {game.players.length} players
-                          </span>
+                        <div className="flex items-center gap-4 mt-1 text-xs text-zinc-400">
                           <span className="flex items-center gap-1">
                             <Clock className="w-3 h-3" />
                             {new Date(game.createdAt).toLocaleDateString()}
@@ -324,57 +284,7 @@ export function LobbyPage() {
         </div>
       )}
 
-      {/* Join Game Dialog */}
-      {showJoinDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-md">
-            <CardHeader>
-              <CardTitle className="text-zinc-100">Join Game</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">Game ID</label>
-                <input
-                  type="text"
-                  value={joinGameId}
-                  onChange={e => setJoinGameId(e.target.value)}
-                  placeholder="Enter game ID (UUID)"
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">Join Code</label>
-                <input
-                  type="text"
-                  value={joinCode}
-                  onChange={e => setJoinCode(e.target.value.toUpperCase())}
-                  placeholder="6-character code (e.g., ABC123)"
-                  maxLength={6}
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500 uppercase"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">Password (if required)</label>
-                <input
-                  type="password"
-                  value={joinPassword}
-                  onChange={e => setJoinPassword(e.target.value)}
-                  placeholder="Leave empty if no password"
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-              <div className="flex gap-2 pt-2">
-                <Button onClick={handleJoinGame} className="flex-1">
-                  Join Game
-                </Button>
-                <Button variant="outline" onClick={() => setShowJoinDialog(false)}>
-                  Cancel
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      {/* Join Game Dialog - hidden for now, single player only */}
     </div>
   )
 }
