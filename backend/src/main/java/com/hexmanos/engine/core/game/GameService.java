@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hexmanos.engine.core.asset.Asset;
 import com.hexmanos.engine.core.asset.AssetRepository;
 import com.hexmanos.engine.core.files.FileStorageService;
+import com.hexmanos.engine.core.map.MapMigrationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
 
@@ -26,6 +28,7 @@ public class GameService {
     private final SnapshotService snapshotService;
     private final ObjectMapper objectMapper;
     private final BCryptPasswordEncoder passwordEncoder;
+    private final MapMigrationService mapMigrationService;
 
     private static final int JOIN_CODE_LENGTH = 6;
 
@@ -408,7 +411,8 @@ public class GameService {
     }
 
     /**
-     * Load map data from storage.
+     * Load map data from storage, migrating to new format if needed.
+     * If migration occurs, the updated map.json is saved back to storage.
      */
     private String loadMapData(String storageKeyPrefix) {
         String mapDataKey = storageKeyPrefix + "/map.json";
@@ -416,7 +420,28 @@ public class GameService {
         if (data == null) {
             throw new IllegalStateException("Map data not found: " + mapDataKey);
         }
-        return new String(data);
+
+        String mapJson = new String(data, StandardCharsets.UTF_8);
+
+        // Check if migration is needed (old format with single "paths" layer)
+        if (mapMigrationService.needsMigration(mapJson)) {
+            log.info("Migrating map {} to new waterPaths/groundPaths format", storageKeyPrefix);
+            mapJson = mapMigrationService.migrate(mapJson);
+
+            // Persist the migrated map back to storage
+            try {
+                storageService.uploadBytes(
+                    mapJson.getBytes(StandardCharsets.UTF_8),
+                    mapDataKey,
+                    "application/json"
+                );
+                log.info("Saved migrated map to {}", mapDataKey);
+            } catch (Exception e) {
+                log.error("Failed to save migrated map to storage, continuing with in-memory migration", e);
+            }
+        }
+
+        return mapJson;
     }
 
     /**

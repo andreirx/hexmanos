@@ -65,11 +65,42 @@ interface MapData {
   tileSize: number
   layers: {
     terrain: (MapTile | null)[][]
-    waterPaths: (MapPath | null)[][]  // Rivers, moats, lava - renders above terrain
-    groundPaths: (MapPath | null)[][] // Roads, bridges - renders above water paths
-    paths?: (MapPath | null)[][]      // Legacy field for backwards compatibility
+    waterPaths?: (MapPath | null)[][]  // Rivers, moats, lava - renders above terrain
+    groundPaths?: (MapPath | null)[][] // Roads, bridges - renders above water paths
+    paths?: (MapPath | null)[][]       // Legacy field for backwards compatibility
   }
   characters: MapCharacter[]
+}
+
+/**
+ * Normalize map data to ensure both waterPaths and groundPaths exist.
+ * Handles legacy maps that only have the single "paths" field.
+ */
+function normalizeMapData(data: MapData): MapData {
+  const { width, height, layers } = data
+
+  // If already has new format, return as-is
+  if (layers.waterPaths && layers.groundPaths) {
+    return data
+  }
+
+  // Create empty layers if missing
+  const createEmptyLayer = () =>
+    Array.from({ length: height }, () =>
+      Array.from({ length: width }, () => null)
+    )
+
+  const waterPaths = layers.waterPaths ?? createEmptyLayer()
+  const groundPaths = layers.groundPaths ?? (layers.paths ? [...layers.paths.map(row => [...row])] : createEmptyLayer())
+
+  return {
+    ...data,
+    layers: {
+      terrain: layers.terrain,
+      waterPaths,
+      groundPaths
+    }
+  }
 }
 
 
@@ -622,10 +653,10 @@ export function GamePage() {
           setControlledCharacterId(currentPlayer.controlledCharacterId)
         }
 
-        // Load map data
+        // Load map data (normalize handles legacy format with single "paths" layer)
         const mapAsset = await getAssetById(gameData.mapAssetId)
         const mapJson = await getAssetFile<MapData>(mapAsset.storageKeyPrefix, "map.json")
-        setMapData(mapJson)
+        setMapData(normalizeMapData(mapJson))
       } catch (err) {
         console.error("Failed to load game:", err)
         setError("Failed to load game")

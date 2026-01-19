@@ -1,5 +1,7 @@
 package com.hexmanos.engine.app.config.core;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hexmanos.engine.core.map.MapMigrationService;
 import com.hexmanos.engine.core.map.MapValidationService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,5 +12,10 @@ public class MapConfig {
     @Bean
     public MapValidationService mapValidationService() {
         return new MapValidationService();
+    }
+
+    @Bean
+    public MapMigrationService mapMigrationService(ObjectMapper objectMapper) {
+        return new MapMigrationService(objectMapper);
     }
 }

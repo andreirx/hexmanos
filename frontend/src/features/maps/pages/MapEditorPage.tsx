@@ -88,6 +88,38 @@ function generateSeed(): number {
   return Math.floor(Math.random() * 1000000)
 }
 
+/**
+ * Normalize map data to ensure both waterPaths and groundPaths exist.
+ * Backend handles migration and persistence; this is defensive for display.
+ */
+function normalizeMapData(data: MapData): MapData {
+  const { width, height, layers } = data
+
+  // If already has new format, return as-is
+  if (layers.waterPaths && layers.groundPaths) {
+    return data
+  }
+
+  // Create empty layer helper
+  const createEmptyLayer = () =>
+    Array.from({ length: height }, () =>
+      Array.from({ length: width }, () => null)
+    )
+
+  // Legacy maps: paths becomes groundPaths, waterPaths is empty
+  const waterPaths = layers.waterPaths ?? createEmptyLayer()
+  const groundPaths = layers.groundPaths ?? (layers.paths ? layers.paths.map(row => [...row]) : createEmptyLayer())
+
+  return {
+    ...data,
+    layers: {
+      terrain: layers.terrain,
+      waterPaths,
+      groundPaths
+    }
+  }
+}
+
 export function MapEditorPage() {
   const { isAuthenticated, user: authUser } = useAuth()
 
@@ -146,50 +178,19 @@ export function MapEditorPage() {
     try {
       const data = await getAssetFile<MapData>(asset.storageKeyPrefix, "map.json")
 
-      // Migrate old maps that have `paths` but no `waterPaths`/`groundPaths`
-      if (data.layers.paths && !data.layers.waterPaths) {
-        console.log("Migrating legacy map format: splitting paths into waterPaths and groundPaths")
-        const waterPaths: (MapPath | null)[][] = []
-        const groundPaths: (MapPath | null)[][] = []
-
-        for (let y = 0; y < data.height; y++) {
-          waterPaths[y] = []
-          groundPaths[y] = []
-          for (let x = 0; x < data.width; x++) {
-            // For legacy maps, put all paths into groundPaths
-            // (we can't know which were water without asset metadata)
-            waterPaths[y][x] = null
-            groundPaths[y][x] = data.layers.paths[y]?.[x] || null
-          }
-        }
-
-        data.layers.waterPaths = waterPaths
-        data.layers.groundPaths = groundPaths
-        delete data.layers.paths
-      }
-
-      // Ensure new maps have both path layers initialized
-      if (!data.layers.waterPaths) {
-        data.layers.waterPaths = Array.from({ length: data.height }, () =>
-          Array.from({ length: data.width }, () => null)
-        )
-      }
-      if (!data.layers.groundPaths) {
-        data.layers.groundPaths = Array.from({ length: data.height }, () =>
-          Array.from({ length: data.width }, () => null)
-        )
-      }
-
-      setMapData(data)
+      // Normalize map data to ensure both path layers exist
+      // Backend handles migration and persistence; this is defensive for display
+      const normalizedData = normalizeMapData(data)
+      setMapData(normalizedData)
 
       if (mode === "edit") {
         setLoadedAsset(asset)
-        setMapName(data.name)
-        setStatusMessage({ type: "success", text: `Loaded "${data.name}" for editing` })
+        setMapName(normalizedData.name)
+        setStatusMessage({ type: "success", text: `Loaded "${normalizedData.name}" for editing` })
       } else {
         setLoadedAsset(null)
-        setMapName(`${data.name} (Copy)`)
-        setStatusMessage({ type: "success", text: `Copied "${data.name}" - save as your own!` })
+        setMapName(`${normalizedData.name} (Copy)`)
+        setStatusMessage({ type: "success", text: `Copied "${normalizedData.name}" - save as your own!` })
       }
     } catch (err) {
       console.error("Failed to load map:", err)
