@@ -118,9 +118,12 @@ export function MapCanvas({
   onShapeStart,
   onShapeEnd,
   shapeStart,
-  selectedTileAsset,
-  selectedPathAsset
+  selectedTileAsset: _selectedTileAsset,
+  selectedPathAsset: _selectedPathAsset
 }: MapCanvasProps) {
+  // Props reserved for future shape preview enhancements
+  void _selectedTileAsset
+  void _selectedPathAsset
   const containerRef = useRef<HTMLDivElement>(null)
   const mainCanvasRef = useRef<HTMLCanvasElement>(null)
 

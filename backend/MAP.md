@@ -52,7 +52,8 @@ Framework-specific code. Contains Spring annotations.
 |---------|----------|
 | `config.core` | `@Bean` definitions wiring Core services |
 | `config.security` | OAuth2 Resource Server, CORS, JWT validation |
-| `controllers` | `@RestController` REST endpoints |
+| `config.websocket` | STOMP/WebSocket configuration, JWT authentication |
+| `controllers` | `@RestController` REST endpoints, `@MessageMapping` WebSocket handlers |
 | `dtos` | Record classes for API request/response |
 | `schedulers` | `@Scheduled` background jobs |
 
@@ -207,6 +208,59 @@ Game features:
 ./gradlew test
 ```
 
+## WebSocket / Real-Time API
+
+STOMP over SockJS for real-time game state synchronization.
+
+### Endpoint
+
+| Path | Transport | Purpose |
+|------|-----------|---------|
+| `/ws/game` | SockJS (with WebSocket fallback) | Game real-time communication |
+
+### Authentication
+
+JWT token validated during STOMP CONNECT:
+1. Client includes `Authorization: Bearer <token>` header in CONNECT frame
+2. `JwtChannelInterceptor` extracts and validates token using Spring's `JwtDecoder`
+3. Creates `WebSocketPrincipal` with user's Cognito `sub` claim
+4. Invalid/missing token = connection rejected
+
+### Message Mappings (GameWebSocketController)
+
+| Destination | Payload | Response | Description |
+|-------------|---------|----------|-------------|
+| `/app/game/{gameId}/move` | `{ direction: "n"/"s"/"e"/"w" }` | Broadcast `CharacterMoveEvent` | Move controlled character |
+| `/app/game/{gameId}/idle` | `{}` | - | Mark character as idle |
+
+### Subscriptions
+
+| Topic | Content | Purpose |
+|-------|---------|---------|
+| `/topic/game/{gameId}` | `CharacterMoveEvent` | All game events broadcast to players |
+| `/user/queue/errors` | `{ message: string }` | User-specific error messages |
+
+### CharacterMoveEvent
+
+```json
+{
+  "characterId": "uuid",
+  "x": 5,
+  "y": 10,
+  "direction": "n"
+}
+```
+
+### Movement Flow
+
+1. Client sends move request to `/app/game/{gameId}/move`
+2. Controller extracts player ID from Principal
+3. `GameService.moveCharacter()` validates and executes move
+4. On success: broadcasts `CharacterMoveEvent` to `/topic/game/{gameId}`
+5. On failure: sends error to `/user/queue/errors`
+
+See [app/config/websocket/MAP.md](src/main/java/com/hexmanos/engine/app/config/websocket/MAP.md) for configuration details.
+
 ## Dependencies
 
 Key dependencies from `build.gradle`:
@@ -214,6 +268,7 @@ Key dependencies from `build.gradle`:
 - Spring Boot Starter Data JPA
 - Spring Boot Starter Security
 - Spring Boot Starter OAuth2 Resource Server
+- Spring Boot Starter WebSocket
 - PostgreSQL Driver
 - AWS SDK for S3
 - Flyway Migration

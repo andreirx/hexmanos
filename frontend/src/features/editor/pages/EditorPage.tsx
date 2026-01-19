@@ -7,8 +7,8 @@ import { Header } from "@/components/layout"
 import { getPresignedUrl, uploadToPresignedUrl, registerAsset, getAssetFile, loadAssetImage } from "@/api/assets"
 import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
-import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, FilePlus, Pencil, Eraser, Square, Undo2, Redo2, MoveLeft, MoveRight, Minus, User, Package, ArrowRightLeft, CopyPlus } from "lucide-react"
-import type { UserDTO, AssetDTO, AssetType } from "@/api/types"
+import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, Pencil, Eraser, Square, Undo2, Redo2, MoveLeft, MoveRight, Minus, User, Package, ArrowRightLeft, CopyPlus } from "lucide-react"
+import type { UserDTO, AssetDTO } from "@/api/types"
 
 // Entity type for the editor
 type EntityType = "CHARACTER" | "OBJECT"
@@ -45,10 +45,6 @@ const CHARACTER_ANIMATION_STATES = [
 const OBJECT_ANIMATION_STATES = [
   { id: "idle", label: "Idle", required: true, loop: true },
 ] as const
-
-type CharacterAnimationStateId = typeof CHARACTER_ANIMATION_STATES[number]["id"]
-type ObjectAnimationStateId = typeof OBJECT_ANIMATION_STATES[number]["id"]
-type AnimationStateId = CharacterAnimationStateId | ObjectAnimationStateId
 
 interface AnimationFrame {
   pixels: Uint8ClampedArray

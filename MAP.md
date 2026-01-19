@@ -29,6 +29,10 @@ Hexmanos is a pixel art game asset workshop enabling creation of characters, til
 │                        FRONTEND                              │
 │              React 19 + TypeScript + Tailwind 4              │
 │   Character Editor │ Tile Editor │ Map Editor │ Galleries    │
+│                          │                                   │
+│                    Game Client                               │
+│              (Phaser 3 + WebSocket/STOMP)                    │
+│         Lobby │ GamePage │ Real-time Movement                │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ├─────────────────────────────────┐
@@ -39,7 +43,7 @@ Hexmanos is a pixel art game asset workshop enabling creation of characters, til
 │        Asset Moderation │ Pending Queue │ Library View       ││
 └─────────────────────────────────────────────────────────────┘│
                               │                                 │
-                              ▼ HTTP/REST + JWT
+                              ▼ HTTP/REST + JWT + WebSocket/STOMP
 ┌─────────────────────────────────────────────────────────────┐
 │                         BACKEND                              │
 │                   Spring Boot 3.4.1 + Java 17                │
@@ -48,6 +52,8 @@ Hexmanos is a pixel art game asset workshop enabling creation of characters, til
 │  │ Driver  │─▶│   Domain    │◀─│       Adapters           │ │
 │  │ Layer   │  │   Logic     │  │  (Postgres, S3, Local)   │ │
 │  └─────────┘  └─────────────┘  └──────────────────────────┘ │
+│       │                                                      │
+│  WebSocket (STOMP over SockJS) - Real-time game state       │
 └─────────────────────────────────────────────────────────────┘
                               │
               ┌───────────────┼───────────────┐
@@ -130,7 +136,102 @@ Separate Cognito pools for players and admins:
 - Players can self-register, admins cannot
 
 ### Pixel Art Canvas
-Raw HTML5 Canvas API (not Phaser) for editors:
+Raw HTML5 Canvas API for editors:
 - Maximum control over 128x128 grid
 - `image-rendering: pixelated` everywhere
-- Phaser reserved for future play mode only
+- Phaser 3 used for game client (not editors)
+
+## Game Engine
+
+### Real-Time Architecture
+
+```
+Player A (Frontend)          Backend                    Player B (Frontend)
+      │                         │                              │
+      │  STOMP CONNECT          │                              │
+      │ (JWT in headers)        │                              │
+      │────────────────────────▶│                              │
+      │                         │◀─────────────────────────────│
+      │                         │  STOMP CONNECT               │
+      │                         │                              │
+      │  SUBSCRIBE              │                              │
+      │ /topic/game/{id}        │                              │
+      │────────────────────────▶│◀─────────────────────────────│
+      │                         │  SUBSCRIBE                   │
+      │                         │                              │
+      │  SEND /app/move         │                              │
+      │ { direction: "n" }      │                              │
+      │────────────────────────▶│                              │
+      │                         │  GameService.moveCharacter() │
+      │                         │  validates, updates state    │
+      │                         │                              │
+      │  CharacterMoveEvent     │  CharacterMoveEvent          │
+      │◀────────────────────────│─────────────────────────────▶│
+      │  Tween animation        │                   Tween animation
+```
+
+### WebSocket Stack
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| Transport | SockJS | WebSocket with fallback (long-polling) |
+| Protocol | STOMP | Simple text messaging protocol |
+| Auth | JWT | Token validated on CONNECT via JwtChannelInterceptor |
+| Broker | Spring SimpleBroker | In-memory message routing |
+
+### Game Client (Phaser 3)
+
+The GamePage uses Phaser 3 for rendering:
+
+**Rendering Pipeline:**
+1. Terrain tiles (with seed-based variation)
+2. Edge transitions (Stacking Algorithm)
+3. Path tiles (water first, then land for bridges)
+4. Characters/Objects (with idle animations)
+
+**Key Features:**
+- Smooth tween-based movement (150ms linear)
+- Animated zoom transitions (300ms cubic easeout)
+- Selection indicator (glowing disc, not color tint)
+- Camera follows controlled character
+- Keyboard: WASD/arrows for movement (controlled) or pan (uncontrolled)
+
+**React + Phaser Integration:**
+- Single Phaser instance (guarded by `hasEverInitializedRef`)
+- Scene methods update Phaser state without React re-renders
+- React state updates UI sidebars only
+- WebSocket events go directly to scene methods
+
+### Game Data Model
+
+```
+Game
+├── id, name, status (WAITING/RUNNING/PAUSED/FINISHED)
+├── mapAssetId (reference to Map asset)
+├── joinCode (6-char invite code)
+├── hostPlayerId
+│
+├── GamePlayer[]
+│   ├── playerId (Cognito user ID)
+│   ├── role (HOST/PLAYER/OBSERVER)
+│   └── controlledCharacterId (nullable)
+│
+└── GameCharacter[] (in-memory, loaded from map)
+    ├── id, name, assetId
+    ├── x, y (grid position)
+    ├── health, maxHealth
+    └── controlled (boolean)
+```
+
+### Movement Validation
+
+Server-side validation in GameService.moveCharacter():
+1. Verify player is in the game
+2. Verify player controls a character
+3. Check destination is within map bounds
+4. Check destination tile is passable
+5. Check no other character at destination
+6. Update character position
+7. Broadcast CharacterMoveEvent to all players
+
+See [frontend/src/features/game/MAP.md](frontend/src/features/game/MAP.md) for detailed client documentation.

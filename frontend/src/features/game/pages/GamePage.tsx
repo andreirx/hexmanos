@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import Phaser from "phaser"
 import { Button } from "@/components/ui/button"
@@ -7,16 +7,16 @@ import { Header } from "@/components/layout"
 import { useAuth } from "@/context/AuthContext"
 import { getGame, takeOverCharacter, relinquishCharacter, pauseGame, stopGame } from "@/api/games"
 import { getAssetFile, getAssetById, getAssetFileUrl } from "@/api/assets"
-import { ArrowLeft, Pause, Square, User, Heart } from "lucide-react"
+import { useGameWebSocket } from "@/hooks/useGameWebSocket"
+import type { CharacterMoveEvent } from "@/hooks/useGameWebSocket"
+import { ArrowLeft, Pause, Square, User, Heart, Wifi, WifiOff } from "lucide-react"
 import type { GameDTO, GameCharacterDTO } from "@/api/types"
 import {
   getVariationFromSeed,
   getTransitionDirections,
   getNeighborPosition,
   calculatePathVariation,
-  ALL_DIRECTIONS,
-  getMoveTarget,
-  isInBounds
+  ALL_DIRECTIONS
 } from "@/features/maps/lib/map-logic"
 
 // Match the editor's tile size (128px)
@@ -79,8 +79,9 @@ class GameScene extends Phaser.Scene {
   private mapData: MapData | null = null
   private characters: GameCharacterDTO[] = []
   private characterSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+  private movingCharacters: Set<string> = new Set() // Track characters currently animating
   private onCharacterClick: ((characterId: string) => void) | null = null
-  private onCharacterMove: ((characterId: string, x: number, y: number) => void) | null = null
+  private onMoveInput: ((direction: "n" | "s" | "e" | "w") => void) | null = null
 
   // Asset data
   private assetMap: Map<string, { storageKeyPrefix: string }> = new Map()
@@ -89,8 +90,15 @@ class GameScene extends Phaser.Scene {
 
   // Character control state
   private controlledCharacterId: string | null = null
-  private moveDebounceTime = 150 // ms between moves
+  private selectionIndicator: Phaser.GameObjects.Graphics | null = null
+  private moveDebounceTime = 200 // ms between move inputs
   private lastMoveTime = 0
+  private moveDuration = 150 // ms for movement animation
+  private zoomDuration = 300 // ms for zoom transitions
+
+  // Keyboard controls (initialized in create())
+  private cursors: Phaser.Types.Input.Keyboard.CursorKeys | null = null
+  private wasd: { W: Phaser.Input.Keyboard.Key | null; A: Phaser.Input.Keyboard.Key | null; S: Phaser.Input.Keyboard.Key | null; D: Phaser.Input.Keyboard.Key | null } = { W: null, A: null, S: null, D: null }
 
   constructor() {
     super({ key: "GameScene" })
@@ -103,7 +111,7 @@ class GameScene extends Phaser.Scene {
     tileProperties: Map<string, TileProperties>
     entityDefinitions: Map<string, EntityDefinition>
     onCharacterClick: (characterId: string) => void
-    onCharacterMove: (characterId: string, x: number, y: number) => void
+    onMoveInput: (direction: "n" | "s" | "e" | "w") => void
   }) {
     this.mapData = data.mapData
     this.characters = data.characters
@@ -111,7 +119,7 @@ class GameScene extends Phaser.Scene {
     this.tileProperties = data.tileProperties
     this.entityDefinitions = data.entityDefinitions
     this.onCharacterClick = data.onCharacterClick
-    this.onCharacterMove = data.onCharacterMove
+    this.onMoveInput = data.onMoveInput
   }
 
   preload() {
@@ -176,23 +184,22 @@ class GameScene extends Phaser.Scene {
       }
     })
 
-    // Load character/object sprites
+    // Load character/object sprites - ALL idle frames for animation
     characterAssetIds.forEach(assetId => {
       const asset = this.assetMap.get(assetId)
       if (!asset) return
 
       const def = this.entityDefinitions.get(assetId)
-      let fileName: string
-      if (def?.visualStates && def.visualStates.length > 0) {
-        const firstVs = def.visualStates[0]
-        fileName = `${firstVs}_idle_0.png`
-      } else {
-        fileName = "idle_0.png"
-      }
+      const idleFrameCount = def?.states?.idle?.frames ?? 1
+      const visualStatePrefix = def?.visualStates?.[0] ? `${def.visualStates[0]}_` : ""
 
-      const key = `char_${assetId}`
-      const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
-      this.load.image(key, url)
+      // Load all idle frames
+      for (let i = 0; i < idleFrameCount; i++) {
+        const key = `char_${assetId}_idle_${i}`
+        const fileName = `${visualStatePrefix}idle_${i}.png`
+        const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
+        this.load.image(key, url)
+      }
     })
   }
 
@@ -281,29 +288,60 @@ class GameScene extends Phaser.Scene {
     drawPathsOfTerrainType("WATER")
     drawPathsOfTerrainType("LAND")
 
-    // PASS 4: Draw characters
-    this.characters.forEach(char => {
-      const key = `char_${char.assetId}`
-      if (this.textures.exists(key)) {
-        const sprite = this.add.sprite(
-          char.x * TILE_SIZE + TILE_SIZE / 2,
-          char.y * TILE_SIZE + TILE_SIZE / 2,
-          key
-        )
-        sprite.setInteractive({ useHandCursor: true })
-        sprite.on("pointerdown", () => {
-          if (this.onCharacterClick) {
-            this.onCharacterClick(char.id)
-          }
-        })
+    // Create selection indicator (glowing disc under controlled character)
+    this.selectionIndicator = this.add.graphics()
+    this.selectionIndicator.setVisible(false)
+    this.drawSelectionIndicator()
 
-        // Highlight controlled characters
-        if (char.controlled) {
-          sprite.setTint(0x00ff00)
+    // PASS 4: Draw characters with animations
+    this.characters.forEach(char => {
+      const def = this.entityDefinitions.get(char.assetId)
+      const idleFrameCount = def?.states?.idle?.frames ?? 1
+      const firstFrameKey = `char_${char.assetId}_idle_0`
+
+      if (!this.textures.exists(firstFrameKey)) return
+
+      // Create animation if it doesn't exist and has multiple frames
+      const animKey = `anim_${char.assetId}_idle`
+      if (idleFrameCount > 1 && !this.anims.exists(animKey)) {
+        const frames: Phaser.Types.Animations.AnimationFrame[] = []
+        for (let i = 0; i < idleFrameCount; i++) {
+          const frameKey = `char_${char.assetId}_idle_${i}`
+          if (this.textures.exists(frameKey)) {
+            frames.push({ key: frameKey })
+          }
         }
 
-        this.characterSprites.set(char.id, sprite)
+        if (frames.length > 0) {
+          this.anims.create({
+            key: animKey,
+            frames: frames,
+            frameRate: 4, // 4 FPS for idle animation
+            repeat: -1 // Loop forever
+          })
+        }
       }
+
+      // Create sprite with first frame
+      const sprite = this.add.sprite(
+        char.x * TILE_SIZE + TILE_SIZE / 2,
+        char.y * TILE_SIZE + TILE_SIZE / 2,
+        firstFrameKey
+      )
+
+      sprite.setInteractive({ useHandCursor: true })
+      sprite.on("pointerdown", () => {
+        if (this.onCharacterClick) {
+          this.onCharacterClick(char.id)
+        }
+      })
+
+      // Play idle animation if it exists
+      if (this.anims.exists(animKey)) {
+        sprite.play(animKey)
+      }
+
+      this.characterSprites.set(char.id, sprite)
     })
 
     // Set up camera
@@ -315,64 +353,14 @@ class GameScene extends Phaser.Scene {
     this.cameras.main.setZoom(0.25)
     this.cameras.main.centerOn(mapWidth / 2, mapHeight / 2)
 
-    // Add keyboard controls
-    const cursors = this.input.keyboard?.createCursorKeys()
-    const wasd = {
-      W: this.input.keyboard?.addKey("W"),
-      A: this.input.keyboard?.addKey("A"),
-      S: this.input.keyboard?.addKey("S"),
-      D: this.input.keyboard?.addKey("D"),
+    // Initialize keyboard controls as class properties
+    this.cursors = this.input.keyboard?.createCursorKeys() ?? null
+    this.wasd = {
+      W: this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.W) ?? null,
+      A: this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.A) ?? null,
+      S: this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null,
+      D: this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.D) ?? null,
     }
-
-    // Movement/camera control in update loop
-    this.events.on("update", () => {
-      const cam = this.cameras.main
-      const now = Date.now()
-
-      // When controlling a character: move character with WASD/arrows
-      if (this.controlledCharacterId && this.mapData) {
-        const char = this.characters.find(c => c.id === this.controlledCharacterId)
-        if (char && now - this.lastMoveTime > this.moveDebounceTime) {
-          let direction: "n" | "s" | "e" | "w" | null = null
-
-          if (cursors?.up?.isDown || wasd.W?.isDown) direction = "n"
-          else if (cursors?.down?.isDown || wasd.S?.isDown) direction = "s"
-          else if (cursors?.left?.isDown || wasd.A?.isDown) direction = "w"
-          else if (cursors?.right?.isDown || wasd.D?.isDown) direction = "e"
-
-          if (direction) {
-            const target = getMoveTarget(char.x, char.y, direction)
-            if (isInBounds(target.x, target.y, this.mapData.width, this.mapData.height)) {
-              // Update local position
-              char.x = target.x
-              char.y = target.y
-              this.lastMoveTime = now
-
-              // Update sprite position
-              const sprite = this.characterSprites.get(char.id)
-              if (sprite) {
-                sprite.setPosition(
-                  target.x * TILE_SIZE + TILE_SIZE / 2,
-                  target.y * TILE_SIZE + TILE_SIZE / 2
-                )
-              }
-
-              // Notify parent component
-              if (this.onCharacterMove) {
-                this.onCharacterMove(char.id, target.x, target.y)
-              }
-            }
-          }
-        }
-      } else {
-        // No character controlled: pan camera with WASD/arrows
-        const speed = 16
-        if (cursors?.left?.isDown || wasd.A?.isDown) cam.scrollX -= speed
-        if (cursors?.right?.isDown || wasd.D?.isDown) cam.scrollX += speed
-        if (cursors?.up?.isDown || wasd.W?.isDown) cam.scrollY -= speed
-        if (cursors?.down?.isDown || wasd.S?.isDown) cam.scrollY += speed
-      }
-    })
 
     // Mouse wheel zoom
     this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _gameObjects: unknown[], _deltaX: number, deltaY: number) => {
@@ -386,7 +374,36 @@ class GameScene extends Phaser.Scene {
     })
   }
 
-  // Set controlled character - centers camera on character and zooms in
+  // Draw the selection indicator (soft glowing disc)
+  private drawSelectionIndicator() {
+    if (!this.selectionIndicator) return
+
+    this.selectionIndicator.clear()
+
+    // Draw multiple concentric circles for a soft glow effect
+    const radius = TILE_SIZE * 0.6
+    const colors = [
+      { color: 0x00ff88, alpha: 0.1, r: radius * 1.4 },
+      { color: 0x00ff88, alpha: 0.15, r: radius * 1.2 },
+      { color: 0x00ff88, alpha: 0.2, r: radius },
+      { color: 0x00ffaa, alpha: 0.3, r: radius * 0.8 },
+    ]
+
+    colors.forEach(({ color, alpha, r }) => {
+      this.selectionIndicator!.fillStyle(color, alpha)
+      this.selectionIndicator!.fillCircle(0, 0, r)
+    })
+  }
+
+  // Position the selection indicator under a character
+  private positionSelectionIndicator(x: number, y: number) {
+    if (this.selectionIndicator) {
+      this.selectionIndicator.setPosition(x, y)
+      this.selectionIndicator.setVisible(true)
+    }
+  }
+
+  // Set controlled character - centers camera on character and zooms in with animation
   setControlledCharacter(characterId: string) {
     this.controlledCharacterId = characterId
 
@@ -396,23 +413,38 @@ class GameScene extends Phaser.Scene {
       const cam = this.cameras.main
       const sprite = this.characterSprites.get(characterId)
 
-      // Zoom in and center on character
-      cam.setZoom(1)
-      cam.centerOn(
-        char.x * TILE_SIZE + TILE_SIZE / 2,
-        char.y * TILE_SIZE + TILE_SIZE / 2
-      )
+      const targetX = char.x * TILE_SIZE + TILE_SIZE / 2
+      const targetY = char.y * TILE_SIZE + TILE_SIZE / 2
 
-      // Start following the character sprite
-      if (sprite) {
-        cam.startFollow(sprite, true, 0.1, 0.1)
-      }
+      // Show selection indicator under character
+      this.positionSelectionIndicator(targetX, targetY)
+
+      // Animated zoom in and pan to character
+      this.tweens.add({
+        targets: cam,
+        zoom: 1,
+        scrollX: targetX - cam.width / 2,
+        scrollY: targetY - cam.height / 2,
+        duration: this.zoomDuration,
+        ease: "Cubic.easeOut",
+        onComplete: () => {
+          // Start following the character sprite after zoom completes
+          if (sprite) {
+            cam.startFollow(sprite, true, 0.1, 0.1)
+          }
+        }
+      })
     }
   }
 
-  // Clear controlled character - zooms out to show whole map
+  // Clear controlled character - zooms out to show whole map with animation
   clearControlledCharacter() {
     this.controlledCharacterId = null
+
+    // Hide selection indicator
+    if (this.selectionIndicator) {
+      this.selectionIndicator.setVisible(false)
+    }
 
     if (this.mapData) {
       const cam = this.cameras.main
@@ -422,9 +454,92 @@ class GameScene extends Phaser.Scene {
       // Stop following any sprite
       cam.stopFollow()
 
-      // Zoom out and center on map
-      cam.setZoom(0.25)
-      cam.centerOn(mapWidth / 2, mapHeight / 2)
+      // Animated zoom out and center on map
+      this.tweens.add({
+        targets: cam,
+        zoom: 0.25,
+        scrollX: mapWidth / 2 - cam.width / 2,
+        scrollY: mapHeight / 2 - cam.height / 2,
+        duration: this.zoomDuration,
+        ease: "Cubic.easeOut"
+      })
+    }
+  }
+
+  // Phaser's update loop - called every frame
+  update(_time: number, _delta: number) {
+    const cam = this.cameras.main
+    const now = Date.now()
+
+    // When controlling a character: send move input via WebSocket
+    if (this.controlledCharacterId && this.mapData) {
+      // Check if character is currently animating - don't send new moves
+      if (!this.movingCharacters.has(this.controlledCharacterId)) {
+        if (now - this.lastMoveTime > this.moveDebounceTime) {
+          let direction: "n" | "s" | "e" | "w" | null = null
+
+          if (this.cursors?.up?.isDown || this.wasd.W?.isDown) direction = "n"
+          else if (this.cursors?.down?.isDown || this.wasd.S?.isDown) direction = "s"
+          else if (this.cursors?.left?.isDown || this.wasd.A?.isDown) direction = "w"
+          else if (this.cursors?.right?.isDown || this.wasd.D?.isDown) direction = "e"
+
+          if (direction && this.onMoveInput) {
+            this.lastMoveTime = now
+            this.onMoveInput(direction)
+          }
+        }
+      }
+    } else {
+      // No character controlled: pan camera with WASD/arrows
+      const speed = 16
+      if (this.cursors?.left?.isDown || this.wasd.A?.isDown) cam.scrollX -= speed
+      if (this.cursors?.right?.isDown || this.wasd.D?.isDown) cam.scrollX += speed
+      if (this.cursors?.up?.isDown || this.wasd.W?.isDown) cam.scrollY -= speed
+      if (this.cursors?.down?.isDown || this.wasd.S?.isDown) cam.scrollY += speed
+    }
+  }
+
+  // Animate character movement with tween (called when receiving WebSocket event)
+  animateCharacterMove(characterId: string, newX: number, newY: number) {
+    const sprite = this.characterSprites.get(characterId)
+    if (!sprite) return
+
+    // Mark character as moving
+    this.movingCharacters.add(characterId)
+
+    // Calculate target pixel position
+    const targetX = newX * TILE_SIZE + TILE_SIZE / 2
+    const targetY = newY * TILE_SIZE + TILE_SIZE / 2
+
+    // Animate the movement using a tween
+    this.tweens.add({
+      targets: sprite,
+      x: targetX,
+      y: targetY,
+      duration: this.moveDuration,
+      ease: "Linear",
+      onComplete: () => {
+        // Mark character as done moving
+        this.movingCharacters.delete(characterId)
+
+        // Update character data
+        const char = this.characters.find(c => c.id === characterId)
+        if (char) {
+          char.x = newX
+          char.y = newY
+        }
+      }
+    })
+
+    // Also move selection indicator if this is the controlled character
+    if (characterId === this.controlledCharacterId && this.selectionIndicator) {
+      this.tweens.add({
+        targets: this.selectionIndicator,
+        x: targetX,
+        y: targetY,
+        duration: this.moveDuration,
+        ease: "Linear"
+      })
     }
   }
 
@@ -436,11 +551,6 @@ class GameScene extends Phaser.Scene {
           char.x * TILE_SIZE + TILE_SIZE / 2,
           char.y * TILE_SIZE + TILE_SIZE / 2
         )
-        if (char.controlled) {
-          sprite.setTint(0x00ff00)
-        } else {
-          sprite.clearTint()
-        }
       }
     })
     this.characters = characters
@@ -457,7 +567,8 @@ export function GamePage() {
   const { isAuthenticated, user: authUser } = useAuth()
   const gameContainerRef = useRef<HTMLDivElement>(null)
   const phaserGameRef = useRef<Phaser.Game | null>(null)
-  const initializingRef = useRef(false) // Prevent double init from Strict Mode
+  const hasEverInitializedRef = useRef(false) // NEVER reset - prevents Strict Mode double init
+  const gameDataRef = useRef<GameDTO | null>(null) // Store game data for Phaser init
 
   const [game, setGame] = useState<GameDTO | null>(null)
   const [mapData, setMapData] = useState<MapData | null>(null)
@@ -465,6 +576,28 @@ export function GamePage() {
   const [error, setError] = useState<string | null>(null)
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null)
   const [controlledCharacterId, setControlledCharacterId] = useState<string | null>(null)
+
+  // Handle WebSocket character move events
+  const handleCharacterMove = useCallback((event: CharacterMoveEvent) => {
+    const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+    if (scene) {
+      scene.animateCharacterMove(event.characterId, event.x, event.y)
+    }
+  }, [])
+
+  // Handle WebSocket errors
+  const handleWebSocketError = useCallback((message: string) => {
+    console.error("WebSocket error:", message)
+  }, [])
+
+  // WebSocket connection
+  const { isConnected, sendMove } = useGameWebSocket({
+    gameId: gameId || "",
+    onCharacterMove: handleCharacterMove,
+    onError: handleWebSocketError,
+    onConnected: () => console.log("Game WebSocket connected"),
+    onDisconnected: () => console.log("Game WebSocket disconnected"),
+  })
 
   // Load game data
   useEffect(() => {
@@ -475,6 +608,7 @@ export function GamePage() {
         setIsLoading(true)
         const gameData = await getGame(gameId!)
         setGame(gameData)
+        gameDataRef.current = gameData // Store for Phaser init
 
         // Find if current user controls a character
         const currentPlayer = gameData.players.find(p =>
@@ -499,13 +633,17 @@ export function GamePage() {
     loadGame()
   }, [gameId, authUser])
 
-  // Initialize Phaser when map data is loaded
+  // Initialize Phaser when map data is loaded (only once)
   useEffect(() => {
-    if (!mapData || !game || !gameContainerRef.current) return
+    // Wait for both mapData and gameDataRef to be ready
+    if (!mapData || !gameDataRef.current || !gameContainerRef.current) return
 
-    // Prevent double initialization from React Strict Mode
-    if (phaserGameRef.current || initializingRef.current) return
-    initializingRef.current = true
+    // Prevent double initialization - this ref is NEVER reset
+    if (hasEverInitializedRef.current) return
+    hasEverInitializedRef.current = true
+
+    // Capture game data at init time from ref
+    const initialGameData = gameDataRef.current
 
     async function initPhaser() {
       // Collect all unique asset IDs
@@ -525,8 +663,8 @@ export function GamePage() {
         }
       }
 
-      // From characters
-      game!.characters.forEach(c => allAssetIds.add(c.assetId))
+      // From characters (use captured initialGameData)
+      initialGameData.characters.forEach(c => allAssetIds.add(c.assetId))
 
       // Load asset metadata and properties
       const assetMap = new Map<string, { storageKeyPrefix: string }>()
@@ -539,19 +677,25 @@ export function GamePage() {
             const asset = await getAssetById(assetId)
             assetMap.set(assetId, { storageKeyPrefix: asset.storageKeyPrefix })
 
-            // Try to load properties (for tiles/paths)
-            try {
-              const props = await getAssetFile<TileProperties>(asset.storageKeyPrefix, "properties.json")
-              tileProperties.set(assetId, props)
-            } catch {
-              // Not a tile asset, try definition.json for characters/objects
+            // Load the appropriate metadata file based on asset type
+            if (asset.type === "TILE") {
+              // Tiles have properties.json
+              try {
+                const props = await getAssetFile<TileProperties>(asset.storageKeyPrefix, "properties.json")
+                tileProperties.set(assetId, props)
+              } catch {
+                // Missing properties.json - use defaults
+              }
+            } else if (asset.type === "CHARACTER" || asset.type === "OBJECT") {
+              // Characters and Objects have definition.json
               try {
                 const def = await getAssetFile<EntityDefinition>(asset.storageKeyPrefix, "definition.json")
                 entityDefinitions.set(assetId, def)
               } catch {
-                // Neither - that's ok
+                // Missing definition.json - use defaults
               }
             }
+            // MAP type doesn't need additional files loaded here
           } catch (err) {
             console.warn(`Failed to load asset ${assetId}:`, err)
           }
@@ -566,25 +710,28 @@ export function GamePage() {
         height: gameContainerRef.current!.clientHeight,
         backgroundColor: "#1a1a2e",
         pixelArt: true,
-        scene: GameScene
+        scene: GameScene,
+        input: {
+          keyboard: true
+        }
       }
 
       const phaserGame = new Phaser.Game(config)
       phaserGameRef.current = phaserGame
 
-      // Start scene with data
+      // Start scene with data (use initialGameData captured at effect start)
       phaserGame.scene.start("GameScene", {
         mapData: mapData!,
-        characters: game!.characters,
+        characters: initialGameData.characters,
         assetMap,
         tileProperties,
         entityDefinitions,
         onCharacterClick: (characterId: string) => {
           setSelectedCharacter(characterId)
         },
-        onCharacterMove: (characterId: string, x: number, y: number) => {
-          // Local movement only - backend sync tracked in hexmanos-d9j
-          console.log(`Character ${characterId} moved to (${x}, ${y})`)
+        onMoveInput: (direction: "n" | "s" | "e" | "w") => {
+          // Send move command via WebSocket
+          sendMove(direction)
         }
       })
     }
@@ -596,9 +743,12 @@ export function GamePage() {
         phaserGameRef.current.destroy(true)
         phaserGameRef.current = null
       }
-      initializingRef.current = false
+      // NOTE: Do NOT reset hasEverInitializedRef - it prevents Strict Mode double init
     }
-  }, [mapData, game])
+  // Only depend on mapData - game state updates are handled via scene.updateCharacters()
+  // sendMove is a stable reference (no dependencies)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapData])
 
   async function handleTakeOver() {
     if (!gameId || !selectedCharacter) return
@@ -606,13 +756,17 @@ export function GamePage() {
     try {
       await takeOverCharacter(gameId, selectedCharacter)
       setControlledCharacterId(selectedCharacter)
-      const updated = await getGame(gameId)
-      setGame(updated)
+
       const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene
+      const updated = await getGame(gameId)
+
       if (scene) {
         scene.updateCharacters(updated.characters)
         scene.setControlledCharacter(selectedCharacter)
       }
+
+      // Update state AFTER scene operations
+      setGame(updated)
     } catch (err) {
       console.error("Failed to take over character:", err)
     }
@@ -803,6 +957,20 @@ export function GamePage() {
 
           {/* Controls hint */}
           <div className="mt-auto text-xs text-zinc-500">
+            {/* WebSocket status */}
+            <div className="flex items-center gap-1 mb-2">
+              {isConnected ? (
+                <>
+                  <Wifi className="w-3 h-3 text-green-400" />
+                  <span className="text-green-400">Connected</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-3 h-3 text-red-400" />
+                  <span className="text-red-400">Disconnected</span>
+                </>
+              )}
+            </div>
             {controlledCharacterId ? (
               <>
                 <p className="text-green-400">WASD / Arrows: Move character</p>

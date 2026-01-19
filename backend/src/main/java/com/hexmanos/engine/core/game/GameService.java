@@ -332,6 +332,52 @@ public class GameService {
     }
 
     /**
+     * Move a character in the game.
+     * Returns the updated character position, or throws if invalid.
+     */
+    public MoveResult moveCharacter(UUID gameId, UUID playerId, String direction) {
+        Game game = getGame(gameId);
+
+        if (game.getStatus() != Game.GameStatus.RUNNING) {
+            throw new IllegalArgumentException("Game is not running");
+        }
+
+        // Get the character controlled by this player
+        UUID characterId = roomManager.getControlledCharacter(gameId, playerId)
+                .orElseThrow(() -> new IllegalArgumentException("Player does not control any character"));
+
+        // Validate direction and convert to delta
+        int dx = 0, dy = 0;
+        switch (direction.toLowerCase()) {
+            case "n", "up" -> dy = -1;
+            case "s", "down" -> dy = 1;
+            case "e", "right" -> dx = 1;
+            case "w", "left" -> dx = -1;
+            default -> throw new IllegalArgumentException("Invalid direction: " + direction);
+        }
+
+        // Execute the move
+        if (!roomManager.moveCharacter(gameId, characterId, dx, dy)) {
+            throw new IllegalArgumentException("Move failed");
+        }
+
+        // Get the updated character
+        GameCharacter character = roomManager.getState(gameId)
+                .findCharacter(characterId)
+                .orElseThrow(() -> new IllegalStateException("Character not found after move"));
+
+        game.touch();
+        gameRepository.save(game);
+
+        return new MoveResult(characterId, character.getX(), character.getY(), direction);
+    }
+
+    /**
+     * Result of a character move operation.
+     */
+    public record MoveResult(UUID characterId, int x, int y, String direction) {}
+
+    /**
      * Clean up expired games.
      */
     public void cleanupExpiredGames(Instant cutoff) {

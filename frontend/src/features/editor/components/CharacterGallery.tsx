@@ -3,7 +3,7 @@ import { X, User, Copy, Edit2, Package } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/ui/status-badge"
 import { getAssetsByType, getAssetFileUrl, getAssetFile } from "@/api/assets"
-import type { AssetDTO, AssetType } from "@/api/types"
+import type { AssetDTO } from "@/api/types"
 
 // Definition structure to check for visual states
 interface EntityDefinition {

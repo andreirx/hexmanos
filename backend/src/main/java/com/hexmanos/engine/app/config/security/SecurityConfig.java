@@ -46,6 +46,7 @@ public class SecurityConfig {
                     .requestMatchers("/actuator/health").permitAll()
                     .requestMatchers("/api/public/**").permitAll()
                     .requestMatchers("/api/assets/files/**").permitAll() // Asset files are public
+                    .requestMatchers("/ws/**").permitAll() // WebSocket endpoints (auth handled by STOMP)
                     // All other API endpoints require authentication
                     .requestMatchers("/api/**").authenticated()
                     .anyRequest().permitAll()
