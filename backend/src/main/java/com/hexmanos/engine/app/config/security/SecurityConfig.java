@@ -45,6 +45,7 @@ public class SecurityConfig {
                     // Public endpoints
                     .requestMatchers("/actuator/health").permitAll()
                     .requestMatchers("/api/public/**").permitAll()
+                    .requestMatchers("/api/assets/files/**").permitAll() // Asset files are public
                     // All other API endpoints require authentication
                     .requestMatchers("/api/**").authenticated()
                     .anyRequest().permitAll()
