@@ -65,7 +65,9 @@ interface MapData {
   tileSize: number
   layers: {
     terrain: (MapTile | null)[][]
-    paths: (MapPath | null)[][]
+    waterPaths: (MapPath | null)[][]  // Rivers, moats, lava - renders above terrain
+    groundPaths: (MapPath | null)[][] // Roads, bridges - renders above water paths
+    paths?: (MapPath | null)[][]      // Legacy field for backwards compatibility
   }
   characters: MapCharacter[]
 }
@@ -139,9 +141,15 @@ class GameScene extends Phaser.Scene {
         if (tile?.tileAssetId) {
           terrainAssetIds.add(tile.tileAssetId)
         }
-        const path = layers.paths[y]?.[x]
-        if (path?.pathAssetId) {
-          pathAssetIds.add(path.pathAssetId)
+        // Scan water paths
+        const waterPath = layers.waterPaths?.[y]?.[x]
+        if (waterPath?.pathAssetId) {
+          pathAssetIds.add(waterPath.pathAssetId)
+        }
+        // Scan ground paths
+        const groundPath = layers.groundPaths?.[y]?.[x]
+        if (groundPath?.pathAssetId) {
+          pathAssetIds.add(groundPath.pathAssetId)
         }
       }
     }
@@ -255,22 +263,16 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    // PASS 3: Draw paths (WATER first, then LAND for bridges)
-    const drawPathsOfTerrainType = (targetTerrainType: "LAND" | "WATER" | undefined) => {
+    // PASS 3: Draw paths (waterPaths first, then groundPaths for bridges)
+    const drawPathLayer = (pathLayer: (MapPath | null)[][] | undefined) => {
+      if (!pathLayer) return
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
-          const path = layers.paths[y]?.[x]
+          const path = pathLayer[y]?.[x]
           if (!path) continue
 
-          const pathProps = this.tileProperties.get(path.pathAssetId)
-          const pathTerrainType = pathProps?.terrainType || "LAND"
-
-          // Skip if not the terrain type we're drawing
-          if (targetTerrainType === "WATER" && pathTerrainType !== "WATER") continue
-          if (targetTerrainType === "LAND" && pathTerrainType === "WATER") continue
-
           const variation = calculatePathVariation(
-            x, y, width, height, layers.paths, path.pathAssetId
+            x, y, width, height, pathLayer, path.pathAssetId
           )
           const key = `path_${path.pathAssetId}_${variation}`
 
@@ -285,8 +287,10 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    drawPathsOfTerrainType("WATER")
-    drawPathsOfTerrainType("LAND")
+    // Draw water paths first (rivers, moats, lava)
+    drawPathLayer(layers.waterPaths)
+    // Draw ground paths on top (roads, bridges)
+    drawPathLayer(layers.groundPaths)
 
     // Create selection indicator (glowing disc under controlled character)
     this.selectionIndicator = this.add.graphics()
@@ -656,10 +660,21 @@ export function GamePage() {
         }
       }
 
-      // From paths
-      for (const row of mapData!.layers.paths) {
-        for (const path of row) {
-          if (path?.pathAssetId) allAssetIds.add(path.pathAssetId)
+      // From water paths
+      if (mapData!.layers.waterPaths) {
+        for (const row of mapData!.layers.waterPaths) {
+          for (const path of row) {
+            if (path?.pathAssetId) allAssetIds.add(path.pathAssetId)
+          }
+        }
+      }
+
+      // From ground paths
+      if (mapData!.layers.groundPaths) {
+        for (const row of mapData!.layers.groundPaths) {
+          for (const path of row) {
+            if (path?.pathAssetId) allAssetIds.add(path.pathAssetId)
+          }
         }
       }
 

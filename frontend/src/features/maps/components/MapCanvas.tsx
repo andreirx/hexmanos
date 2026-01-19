@@ -44,7 +44,7 @@ interface MapCanvasProps {
   showPaths: boolean
   showCharacters: boolean
   showTransitions: boolean
-  activeLayer: "terrain" | "paths" | "characters"
+  activeLayer: "terrain" | "water" | "ground" | "characters"
   currentTool: "select" | "paint" | "erase" | "pan" | "rect" | "disc"
   onCellClick: (x: number, y: number) => void
   onShapeStart?: (x: number, y: number) => void
@@ -381,29 +381,22 @@ export function MapCanvas({
     }
 
     // PASS 3: Draw paths (on top of terrain + transitions)
-    // Water paths (rivers) are drawn FIRST, then land paths on top (allowing bridges over rivers)
+    // Water paths (rivers, moats, lava) are drawn FIRST, then ground paths on top (roads, bridges)
     if (showPaths) {
-      // Helper function to draw paths of a specific terrain type
-      const drawPathsOfTerrainType = (targetTerrainType: "LAND" | "WATER" | undefined) => {
+      // Helper function to draw a path layer
+      const drawPathLayer = (pathLayer: (typeof mapData.layers.waterPaths)) => {
+        if (!pathLayer) return
         for (let y = 0; y < mapHeight; y++) {
           for (let x = 0; x < mapWidth; x++) {
-            const path = mapData.layers.paths[y]?.[x]
+            const path = pathLayer[y]?.[x]
             if (!path) continue
 
             const asset = assetCache.get(path.pathAssetId)
             if (!asset) continue
 
-            // Check terrain type - default to LAND if not specified
-            const pathProps = tileProperties.get(path.pathAssetId)
-            const pathTerrainType = pathProps?.terrainType || "LAND"
-
-            // Skip if not the terrain type we're drawing this pass
-            if (targetTerrainType === "WATER" && pathTerrainType !== "WATER") continue
-            if (targetTerrainType === "LAND" && pathTerrainType === "WATER") continue
-
             const variation = calculatePathVariation(
               x, y, mapWidth, mapHeight,
-              mapData.layers.paths, path.pathAssetId
+              pathLayer, path.pathAssetId
             )
             const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${variation}.png`)
             const img = getImage(url)
@@ -415,11 +408,11 @@ export function MapCanvas({
         }
       }
 
-      // First pass: Draw WATER paths (rivers) - underneath
-      drawPathsOfTerrainType("WATER")
+      // First pass: Draw water paths (rivers, moats, lava) - underneath
+      drawPathLayer(mapData.layers.waterPaths)
 
-      // Second pass: Draw LAND paths - on top (bridges over rivers)
-      drawPathsOfTerrainType("LAND")
+      // Second pass: Draw ground paths (roads, bridges) - on top
+      drawPathLayer(mapData.layers.groundPaths)
     }
 
     // PASS 4: Draw characters and objects with animation
@@ -510,8 +503,11 @@ export function MapCanvas({
     }
 
     // Layer overlay hint
-    if (activeLayer === "paths") {
-      ctx.fillStyle = "#ffa50011"
+    if (activeLayer === "water") {
+      ctx.fillStyle = "#3b82f611" // Blue tint for water layer
+      ctx.fillRect(0, 0, mapData.width * mapData.tileSize, mapData.height * mapData.tileSize)
+    } else if (activeLayer === "ground") {
+      ctx.fillStyle = "#f5920011" // Amber tint for ground/roads layer
       ctx.fillRect(0, 0, mapData.width * mapData.tileSize, mapData.height * mapData.tileSize)
     } else if (activeLayer === "characters") {
       ctx.fillStyle = "#a855f711"
@@ -527,8 +523,12 @@ export function MapCanvas({
       const y1 = Math.max(shapeStart.y, hoverCell.y)
 
       // Determine preview color based on layer
-      const previewColor = activeLayer === "paths" ? "rgba(255, 165, 0, 0.3)" : "rgba(59, 130, 246, 0.3)"
-      const borderColor = activeLayer === "paths" ? "rgba(255, 165, 0, 0.8)" : "rgba(59, 130, 246, 0.8)"
+      const previewColor = activeLayer === "water" ? "rgba(59, 130, 246, 0.3)" // Blue for water
+        : activeLayer === "ground" ? "rgba(245, 146, 0, 0.3)" // Amber for ground/roads
+        : "rgba(59, 130, 246, 0.3)" // Blue default
+      const borderColor = activeLayer === "water" ? "rgba(59, 130, 246, 0.8)"
+        : activeLayer === "ground" ? "rgba(245, 146, 0, 0.8)"
+        : "rgba(59, 130, 246, 0.8)"
 
       ctx.fillStyle = previewColor
       ctx.strokeStyle = borderColor
@@ -588,7 +588,9 @@ export function MapCanvas({
       const tileSize = mapData.tileSize
       const { x, y } = hoverCell
       if (x >= 0 && x < mapData.width && y >= 0 && y < mapData.height) {
-        const previewColor = activeLayer === "paths" ? "rgba(255, 165, 0, 0.3)" : "rgba(59, 130, 246, 0.3)"
+        const previewColor = activeLayer === "water" ? "rgba(59, 130, 246, 0.3)" // Blue for water
+          : activeLayer === "ground" ? "rgba(245, 146, 0, 0.3)" // Amber for ground/roads
+          : "rgba(59, 130, 246, 0.3)" // Blue default
         ctx.fillStyle = previewColor
         ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize)
       }
