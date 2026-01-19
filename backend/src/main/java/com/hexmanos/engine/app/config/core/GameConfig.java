@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hexmanos.engine.core.asset.AssetRepository;
 import com.hexmanos.engine.core.files.FileStorageService;
 import com.hexmanos.engine.core.game.*;
+import com.hexmanos.engine.core.user.UserRepository;
 import com.hexmanos.engine.external.postgres.game.PostgresGamePlayerRepository;
 import com.hexmanos.engine.external.postgres.game.PostgresGameRepository;
 import org.springframework.context.annotation.Bean;
@@ -33,6 +34,7 @@ public class GameConfig {
     public GameService gameService(PostgresGameRepository gameRepository,
                                    PostgresGamePlayerRepository playerRepository,
                                    AssetRepository assetRepository,
+                                   UserRepository userRepository,
                                    FileStorageService fileStorageService,
                                    GameRoomManager roomManager,
                                    SnapshotService snapshotService,
@@ -42,6 +44,7 @@ public class GameConfig {
                 gameRepository,
                 playerRepository,
                 assetRepository,
+                userRepository,
                 fileStorageService,
                 roomManager,
                 snapshotService,

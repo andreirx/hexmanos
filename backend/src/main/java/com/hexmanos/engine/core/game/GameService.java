@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hexmanos.engine.core.asset.Asset;
 import com.hexmanos.engine.core.asset.AssetRepository;
 import com.hexmanos.engine.core.files.FileStorageService;
+import com.hexmanos.engine.core.user.User;
+import com.hexmanos.engine.core.user.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -21,6 +23,7 @@ public class GameService {
     private final GameRepository gameRepository;
     private final GamePlayerRepository playerRepository;
     private final AssetRepository assetRepository;
+    private final UserRepository userRepository;
     private final FileStorageService storageService;
     private final GameRoomManager roomManager;
     private final SnapshotService snapshotService;
@@ -33,16 +36,31 @@ public class GameService {
      * Create a new game.
      */
     public Game createGame(UUID hostPlayerId, UUID mapAssetId, String name, String password) {
-        // Validate map exists and is approved
+        // Validate map exists
         Asset mapAsset = assetRepository.findById(mapAssetId)
                 .orElseThrow(() -> new IllegalArgumentException("Map not found: " + mapAssetId));
 
-        if (mapAsset.getStatus() != Asset.AssetStatus.APPROVED) {
-            throw new IllegalArgumentException("Map is not approved");
-        }
-
         if (mapAsset.getType() != Asset.AssetType.MAP) {
             throw new IllegalArgumentException("Asset is not a map");
+        }
+
+        // Check map status - allow PENDING maps only if created by the same user
+        if (mapAsset.getStatus() != Asset.AssetStatus.APPROVED) {
+            // Get the player's cognito sub to compare with asset author
+            User player = userRepository.findById(hostPlayerId)
+                    .orElseThrow(() -> new IllegalArgumentException("Player not found"));
+
+            boolean isOwnMap = player.getCognitoSub().equals(mapAsset.getAuthorId());
+
+            if (!isOwnMap) {
+                throw new IllegalArgumentException("Map is not approved");
+            }
+
+            if (mapAsset.getStatus() == Asset.AssetStatus.REJECTED) {
+                throw new IllegalArgumentException("Map has been rejected");
+            }
+
+            log.info("Allowing PENDING map {} for author {}", mapAssetId, player.getDisplayName());
         }
 
         // Create the game
