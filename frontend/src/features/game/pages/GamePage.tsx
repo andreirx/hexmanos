@@ -430,16 +430,16 @@ export function GamePage() {
           </div>
 
           {/* Players */}
-          <Card>
+          <Card className="bg-zinc-800 border-zinc-700">
             <CardHeader className="py-2 px-3">
-              <CardTitle className="text-sm">Players ({game.players.length})</CardTitle>
+              <CardTitle className="text-sm text-zinc-100">Players ({game.players.length})</CardTitle>
             </CardHeader>
             <CardContent className="py-2 px-3">
               <ul className="space-y-1 text-sm text-zinc-400">
                 {game.players.map(player => (
                   <li key={player.id} className="flex items-center gap-2">
                     <User className="w-3 h-3" />
-                    <span className={player.role === "HOST" ? "text-yellow-400" : ""}>
+                    <span className={player.role === "HOST" ? "text-yellow-400" : "text-zinc-300"}>
                       {player.role}
                     </span>
                   </li>
@@ -450,9 +450,9 @@ export function GamePage() {
 
           {/* Character control */}
           {controlledCharacterId ? (
-            <Card>
+            <Card className="bg-zinc-800 border-zinc-700">
               <CardHeader className="py-2 px-3">
-                <CardTitle className="text-sm">Controlling</CardTitle>
+                <CardTitle className="text-sm text-zinc-100">Controlling</CardTitle>
               </CardHeader>
               <CardContent className="py-2 px-3">
                 {(() => {
@@ -473,9 +473,9 @@ export function GamePage() {
               </CardContent>
             </Card>
           ) : selectedChar && !selectedChar.controlled ? (
-            <Card>
+            <Card className="bg-zinc-800 border-zinc-700">
               <CardHeader className="py-2 px-3">
-                <CardTitle className="text-sm">Selected: {selectedChar.name}</CardTitle>
+                <CardTitle className="text-sm text-zinc-100">Selected: {selectedChar.name}</CardTitle>
               </CardHeader>
               <CardContent className="py-2 px-3">
                 <div className="space-y-2">
