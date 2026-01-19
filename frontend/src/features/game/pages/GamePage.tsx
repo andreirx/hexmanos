@@ -6,68 +6,279 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Header } from "@/components/layout"
 import { useAuth } from "@/context/AuthContext"
 import { getGame, takeOverCharacter, relinquishCharacter, pauseGame, stopGame } from "@/api/games"
-import { getAssetFile, getAssetById, getTileThumbnailUrl, getEntityThumbnailUrl } from "@/api/assets"
+import { getAssetFile, getAssetById, getAssetFileUrl } from "@/api/assets"
 import { ArrowLeft, Pause, Square, User, Heart } from "lucide-react"
 import type { GameDTO, GameCharacterDTO } from "@/api/types"
 
-const TILE_SIZE = 32
+// Match the editor's tile size (128px)
+const TILE_SIZE = 128
+
+// ============================================
+// Asset Loading & Caching Types
+// ============================================
+
+interface TileProperties {
+  name: string
+  tileSize: number
+  passable: boolean
+  variations: number
+  tileType?: "TILE" | "PATH"
+  terrainType?: "LAND" | "WATER"
+}
+
+interface EntityDefinition {
+  name: string
+  spriteSize: number
+  entityType?: "CHARACTER" | "OBJECT"
+  visualStates?: string[]
+  states: Record<string, { frames: number; loop: boolean }>
+}
+
+interface MapTile {
+  tileAssetId: string
+  seed: number
+}
+
+interface MapPath {
+  pathAssetId: string
+}
+
+interface MapCharacter {
+  characterAssetId: string
+  x: number
+  y: number
+}
+
+interface MapData {
+  name: string
+  width: number
+  height: number
+  tileSize: number
+  layers: {
+    terrain: (MapTile | null)[][]
+    paths: (MapPath | null)[][]
+  }
+  characters: MapCharacter[]
+}
+
+// ============================================
+// Rendering Helpers (ported from MapCanvas)
+// ============================================
+
+function seededRandom(seed: number): number {
+  const x = Math.sin(seed * 9999) * 10000
+  return x - Math.floor(x)
+}
+
+function getVariationFromSeed(seed: number, variations: number): number {
+  return Math.floor(seededRandom(seed) * variations)
+}
+
+const DIRECTION_OFFSETS = {
+  n:  { dx: 0,  dy: -1 },
+  ne: { dx: 1,  dy: -1 },
+  e:  { dx: 1,  dy: 0 },
+  se: { dx: 1,  dy: 1 },
+  s:  { dx: 0,  dy: 1 },
+  sw: { dx: -1, dy: 1 },
+  w:  { dx: -1, dy: 0 },
+  nw: { dx: -1, dy: -1 }
+} as const
+
+type TransitionDirection = keyof typeof DIRECTION_OFFSETS
+
+// Path variation: Up=8, Down=4, Left=2, Right=1
+function calculatePathVariation(
+  paths: (MapPath | null)[][],
+  x: number, y: number,
+  width: number, height: number,
+  currentPathAssetId: string
+): number {
+  let bits = 0
+  if (y > 0 && paths[y - 1]?.[x]?.pathAssetId === currentPathAssetId) bits |= 8
+  if (y < height - 1 && paths[y + 1]?.[x]?.pathAssetId === currentPathAssetId) bits |= 4
+  if (x > 0 && paths[y]?.[x - 1]?.pathAssetId === currentPathAssetId) bits |= 2
+  if (x < width - 1 && paths[y]?.[x + 1]?.pathAssetId === currentPathAssetId) bits |= 1
+  return bits === 0 ? 0 : bits - 1
+}
+
+// ============================================
+// Phaser Game Scene
+// ============================================
 
 class GameScene extends Phaser.Scene {
-  private mapData: any = null
+  private mapData: MapData | null = null
   private characters: GameCharacterDTO[] = []
   private characterSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
-  private tileImages: Map<string, HTMLImageElement> = new Map()
-  private characterImages: Map<string, HTMLImageElement> = new Map()
   private onCharacterClick: ((characterId: string) => void) | null = null
+
+  // Asset data
+  private assetMap: Map<string, { storageKeyPrefix: string }> = new Map()
+  private tileProperties: Map<string, TileProperties> = new Map()
+  private entityDefinitions: Map<string, EntityDefinition> = new Map()
 
   constructor() {
     super({ key: "GameScene" })
   }
 
   init(data: {
-    mapData: any
+    mapData: MapData
     characters: GameCharacterDTO[]
-    tileImages: Map<string, HTMLImageElement>
-    characterImages: Map<string, HTMLImageElement>
+    assetMap: Map<string, { storageKeyPrefix: string }>
+    tileProperties: Map<string, TileProperties>
+    entityDefinitions: Map<string, EntityDefinition>
     onCharacterClick: (characterId: string) => void
   }) {
     this.mapData = data.mapData
     this.characters = data.characters
-    this.tileImages = data.tileImages
-    this.characterImages = data.characterImages
+    this.assetMap = data.assetMap
+    this.tileProperties = data.tileProperties
+    this.entityDefinitions = data.entityDefinitions
     this.onCharacterClick = data.onCharacterClick
   }
 
   preload() {
-    // Load tile textures
-    this.tileImages.forEach((img, assetId) => {
-      if (!this.textures.exists(`tile_${assetId}`)) {
-        this.textures.addImage(`tile_${assetId}`, img)
+    if (!this.mapData) return
+
+    const { width, height, layers } = this.mapData
+
+    // Collect all unique asset IDs
+    const terrainAssetIds = new Set<string>()
+    const pathAssetIds = new Set<string>()
+    const characterAssetIds = new Set<string>()
+
+    // Scan terrain layer
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const tile = layers.terrain[y]?.[x]
+        if (tile?.tileAssetId) {
+          terrainAssetIds.add(tile.tileAssetId)
+        }
+        const path = layers.paths[y]?.[x]
+        if (path?.pathAssetId) {
+          pathAssetIds.add(path.pathAssetId)
+        }
+      }
+    }
+
+    // Collect character asset IDs
+    this.characters.forEach(c => characterAssetIds.add(c.assetId))
+
+    // Load terrain tiles: base + 8 transitions for each
+    terrainAssetIds.forEach(assetId => {
+      const asset = this.assetMap.get(assetId)
+      if (!asset) return
+
+      const props = this.tileProperties.get(assetId)
+      const variations = props?.variations ?? 1
+
+      // Load all variations of base tile
+      for (let v = 0; v < variations; v++) {
+        const key = `terrain_${assetId}_${v}`
+        const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${v}.png`)
+        this.load.image(key, url)
+      }
+
+      // Load all 8 transition images (always from tile_0)
+      const directions: TransitionDirection[] = ["n", "ne", "e", "se", "s", "sw", "w", "nw"]
+      directions.forEach(dir => {
+        const key = `transition_${assetId}_${dir}`
+        const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_0_transition_${dir}.png`)
+        this.load.image(key, url)
+      })
+    })
+
+    // Load path tiles: all 15 variations (0-14) for each
+    pathAssetIds.forEach(assetId => {
+      const asset = this.assetMap.get(assetId)
+      if (!asset) return
+
+      for (let v = 0; v < 15; v++) {
+        const key = `path_${assetId}_${v}`
+        const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${v}.png`)
+        this.load.image(key, url)
       }
     })
 
-    // Load character textures
-    this.characterImages.forEach((img, assetId) => {
-      if (!this.textures.exists(`char_${assetId}`)) {
-        this.textures.addImage(`char_${assetId}`, img)
+    // Load character/object sprites
+    characterAssetIds.forEach(assetId => {
+      const asset = this.assetMap.get(assetId)
+      if (!asset) return
+
+      const def = this.entityDefinitions.get(assetId)
+      let fileName: string
+      if (def?.visualStates && def.visualStates.length > 0) {
+        const firstVs = def.visualStates[0]
+        fileName = `${firstVs}_idle_0.png`
+      } else {
+        fileName = "idle_0.png"
       }
+
+      const key = `char_${assetId}`
+      const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
+      this.load.image(key, url)
     })
   }
 
   create() {
-    // Draw terrain layer
-    if (this.mapData?.layers?.terrain) {
-      const terrain = this.mapData.layers.terrain
-      for (let y = 0; y < terrain.length; y++) {
-        for (let x = 0; x < terrain[y].length; x++) {
-          const tile = terrain[y][x]
-          if (tile && tile.tileAssetId) {
-            const textureKey = `tile_${tile.tileAssetId}`
-            if (this.textures.exists(textureKey)) {
+    if (!this.mapData) return
+
+    const { width, height, layers } = this.mapData
+
+    // PASS 1: Draw base terrain tiles
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const tile = layers.terrain[y]?.[x]
+        if (!tile) continue
+
+        const props = this.tileProperties.get(tile.tileAssetId)
+        const variations = props?.variations ?? 1
+        const variation = getVariationFromSeed(tile.seed, variations)
+        const key = `terrain_${tile.tileAssetId}_${variation}`
+
+        if (this.textures.exists(key)) {
+          this.add.image(
+            x * TILE_SIZE + TILE_SIZE / 2,
+            y * TILE_SIZE + TILE_SIZE / 2,
+            key
+          )
+        }
+      }
+    }
+
+    // PASS 2: Draw transitions (Stacking Algorithm)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const tile = layers.terrain[y]?.[x]
+        if (!tile) continue
+
+        // Check each direction
+        for (const [dir, offset] of Object.entries(DIRECTION_OFFSETS) as [TransitionDirection, {dx: number, dy: number}][]) {
+          const nx = x + offset.dx
+          const ny = y + offset.dy
+
+          // Skip if neighbor is out of bounds
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
+
+          const neighbor = layers.terrain[ny]?.[nx]
+
+          // Determine if we should draw transition
+          let shouldDraw = false
+          if (!neighbor) {
+            // Neighbor is void - always draw transition
+            shouldDraw = true
+          } else if (neighbor.tileAssetId !== tile.tileAssetId) {
+            // Different tile - dominant tile (higher assetId) wins
+            shouldDraw = tile.tileAssetId > neighbor.tileAssetId
+          }
+
+          if (shouldDraw) {
+            const key = `transition_${tile.tileAssetId}_${dir}`
+            if (this.textures.exists(key)) {
               this.add.image(
-                x * TILE_SIZE + TILE_SIZE / 2,
-                y * TILE_SIZE + TILE_SIZE / 2,
-                textureKey
+                nx * TILE_SIZE + TILE_SIZE / 2,
+                ny * TILE_SIZE + TILE_SIZE / 2,
+                key
               )
             }
           }
@@ -75,14 +286,47 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    // Draw characters
+    // PASS 3: Draw paths (WATER first, then LAND for bridges)
+    const drawPathsOfTerrainType = (targetTerrainType: "LAND" | "WATER" | undefined) => {
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const path = layers.paths[y]?.[x]
+          if (!path) continue
+
+          const pathProps = this.tileProperties.get(path.pathAssetId)
+          const pathTerrainType = pathProps?.terrainType || "LAND"
+
+          // Skip if not the terrain type we're drawing
+          if (targetTerrainType === "WATER" && pathTerrainType !== "WATER") continue
+          if (targetTerrainType === "LAND" && pathTerrainType === "WATER") continue
+
+          const variation = calculatePathVariation(
+            layers.paths, x, y, width, height, path.pathAssetId
+          )
+          const key = `path_${path.pathAssetId}_${variation}`
+
+          if (this.textures.exists(key)) {
+            this.add.image(
+              x * TILE_SIZE + TILE_SIZE / 2,
+              y * TILE_SIZE + TILE_SIZE / 2,
+              key
+            )
+          }
+        }
+      }
+    }
+
+    drawPathsOfTerrainType("WATER")
+    drawPathsOfTerrainType("LAND")
+
+    // PASS 4: Draw characters
     this.characters.forEach(char => {
-      const textureKey = `char_${char.assetId}`
-      if (this.textures.exists(textureKey)) {
+      const key = `char_${char.assetId}`
+      if (this.textures.exists(key)) {
         const sprite = this.add.sprite(
           char.x * TILE_SIZE + TILE_SIZE / 2,
           char.y * TILE_SIZE + TILE_SIZE / 2,
-          textureKey
+          key
         )
         sprite.setInteractive({ useHandCursor: true })
         sprite.on("pointerdown", () => {
@@ -101,42 +345,54 @@ class GameScene extends Phaser.Scene {
     })
 
     // Set up camera
-    const mapWidth = (this.mapData?.width || 20) * TILE_SIZE
-    const mapHeight = (this.mapData?.height || 15) * TILE_SIZE
+    const mapWidth = width * TILE_SIZE
+    const mapHeight = height * TILE_SIZE
     this.cameras.main.setBounds(0, 0, mapWidth, mapHeight)
 
-    // Add WASD controls for camera pan
+    // Start zoomed out to fit the map, center on map
+    this.cameras.main.setZoom(0.25)
+    this.cameras.main.centerOn(mapWidth / 2, mapHeight / 2)
+
+    // Add keyboard controls for camera
     const cursors = this.input.keyboard?.createCursorKeys()
-    if (cursors) {
-      this.input.keyboard?.on("keydown", () => {
-        const cam = this.cameras.main
-        const speed = 8
-        if (cursors.left?.isDown || this.input.keyboard?.checkDown(this.input.keyboard.addKey("A"))) {
-          cam.scrollX -= speed
-        }
-        if (cursors.right?.isDown || this.input.keyboard?.checkDown(this.input.keyboard.addKey("D"))) {
-          cam.scrollX += speed
-        }
-        if (cursors.up?.isDown || this.input.keyboard?.checkDown(this.input.keyboard.addKey("W"))) {
-          cam.scrollY -= speed
-        }
-        if (cursors.down?.isDown || this.input.keyboard?.checkDown(this.input.keyboard.addKey("S"))) {
-          cam.scrollY += speed
-        }
-      })
+    const wasd = {
+      W: this.input.keyboard?.addKey("W"),
+      A: this.input.keyboard?.addKey("A"),
+      S: this.input.keyboard?.addKey("S"),
+      D: this.input.keyboard?.addKey("D"),
     }
+
+    // Camera movement in update loop
+    this.events.on("update", () => {
+      const cam = this.cameras.main
+      const speed = 16
+
+      if (cursors?.left?.isDown || wasd.A?.isDown) cam.scrollX -= speed
+      if (cursors?.right?.isDown || wasd.D?.isDown) cam.scrollX += speed
+      if (cursors?.up?.isDown || wasd.W?.isDown) cam.scrollY -= speed
+      if (cursors?.down?.isDown || wasd.S?.isDown) cam.scrollY += speed
+    })
+
+    // Mouse wheel zoom
+    this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _gameObjects: unknown[], _deltaX: number, deltaY: number) => {
+      const cam = this.cameras.main
+      const zoomFactor = 1.1
+      if (deltaY < 0) {
+        cam.zoom = Math.min(2, cam.zoom * zoomFactor)
+      } else {
+        cam.zoom = Math.max(0.1, cam.zoom / zoomFactor)
+      }
+    })
   }
 
   updateCharacters(characters: GameCharacterDTO[]) {
     characters.forEach(char => {
       const sprite = this.characterSprites.get(char.id)
       if (sprite) {
-        // Update position
         sprite.setPosition(
           char.x * TILE_SIZE + TILE_SIZE / 2,
           char.y * TILE_SIZE + TILE_SIZE / 2
         )
-        // Update tint based on control status
         if (char.controlled) {
           sprite.setTint(0x00ff00)
         } else {
@@ -148,15 +404,20 @@ class GameScene extends Phaser.Scene {
   }
 }
 
+// ============================================
+// React Component
+// ============================================
+
 export function GamePage() {
   const { gameId } = useParams<{ gameId: string }>()
   const navigate = useNavigate()
   const { isAuthenticated, user: authUser } = useAuth()
   const gameContainerRef = useRef<HTMLDivElement>(null)
   const phaserGameRef = useRef<Phaser.Game | null>(null)
+  const initializingRef = useRef(false) // Prevent double init from Strict Mode
 
   const [game, setGame] = useState<GameDTO | null>(null)
-  const [mapData, setMapData] = useState<any>(null)
+  const [mapData, setMapData] = useState<MapData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null)
@@ -182,7 +443,7 @@ export function GamePage() {
 
         // Load map data
         const mapAsset = await getAssetById(gameData.mapAssetId)
-        const mapJson = await getAssetFile<any>(mapAsset.storageKeyPrefix, "map.json")
+        const mapJson = await getAssetFile<MapData>(mapAsset.storageKeyPrefix, "map.json")
         setMapData(mapJson)
       } catch (err) {
         console.error("Failed to load game:", err)
@@ -197,68 +458,70 @@ export function GamePage() {
 
   // Initialize Phaser when map data is loaded
   useEffect(() => {
-    if (!mapData || !game || !gameContainerRef.current || phaserGameRef.current) return
+    if (!mapData || !game || !gameContainerRef.current) return
+
+    // Prevent double initialization from React Strict Mode
+    if (phaserGameRef.current || initializingRef.current) return
+    initializingRef.current = true
 
     async function initPhaser() {
-      // Load tile images
-      const tileImages = new Map<string, HTMLImageElement>()
-      const characterImages = new Map<string, HTMLImageElement>()
+      // Collect all unique asset IDs
+      const allAssetIds = new Set<string>()
 
-      // Get unique tile asset IDs from terrain layer
-      const tileAssetIds = new Set<string>()
-      if (mapData.layers?.terrain) {
-        for (const row of mapData.layers.terrain) {
-          for (const tile of row) {
-            if (tile?.tileAssetId) {
-              tileAssetIds.add(tile.tileAssetId)
+      // From terrain
+      for (const row of mapData!.layers.terrain) {
+        for (const tile of row) {
+          if (tile?.tileAssetId) allAssetIds.add(tile.tileAssetId)
+        }
+      }
+
+      // From paths
+      for (const row of mapData!.layers.paths) {
+        for (const path of row) {
+          if (path?.pathAssetId) allAssetIds.add(path.pathAssetId)
+        }
+      }
+
+      // From characters
+      game!.characters.forEach(c => allAssetIds.add(c.assetId))
+
+      // Load asset metadata and properties
+      const assetMap = new Map<string, { storageKeyPrefix: string }>()
+      const tileProperties = new Map<string, TileProperties>()
+      const entityDefinitions = new Map<string, EntityDefinition>()
+
+      await Promise.all(
+        Array.from(allAssetIds).map(async (assetId) => {
+          try {
+            const asset = await getAssetById(assetId)
+            assetMap.set(assetId, { storageKeyPrefix: asset.storageKeyPrefix })
+
+            // Try to load properties (for tiles/paths)
+            try {
+              const props = await getAssetFile<TileProperties>(asset.storageKeyPrefix, "properties.json")
+              tileProperties.set(assetId, props)
+            } catch {
+              // Not a tile asset, try definition.json for characters/objects
+              try {
+                const def = await getAssetFile<EntityDefinition>(asset.storageKeyPrefix, "definition.json")
+                entityDefinitions.set(assetId, def)
+              } catch {
+                // Neither - that's ok
+              }
             }
+          } catch (err) {
+            console.warn(`Failed to load asset ${assetId}:`, err)
           }
-        }
-      }
+        })
+      )
 
-      // Load tile images
-      for (const assetId of tileAssetIds) {
-        try {
-          const tileAsset = await getAssetById(assetId)
-          const url = getTileThumbnailUrl(tileAsset.storageKeyPrefix)
-          const img = new Image()
-          img.crossOrigin = "anonymous"
-          await new Promise<void>((resolve, reject) => {
-            img.onload = () => resolve()
-            img.onerror = reject
-            img.src = url
-          })
-          tileImages.set(assetId, img)
-        } catch (err) {
-          console.warn(`Failed to load tile ${assetId}:`, err)
-        }
-      }
-
-      // Get unique character asset IDs (includes both CHARACTER and OBJECT types)
-      const charAssetIds = new Set(game!.characters.map(c => c.assetId))
-      for (const assetId of charAssetIds) {
-        try {
-          const charAsset = await getAssetById(assetId)
-          const url = await getEntityThumbnailUrl(charAsset.storageKeyPrefix)
-          const img = new Image()
-          img.crossOrigin = "anonymous"
-          await new Promise<void>((resolve, reject) => {
-            img.onload = () => resolve()
-            img.onerror = reject
-            img.src = url
-          })
-          characterImages.set(assetId, img)
-        } catch (err) {
-          console.warn(`Failed to load character ${assetId}:`, err)
-        }
-      }
-
+      // Create Phaser game
       const config: Phaser.Types.Core.GameConfig = {
         type: Phaser.AUTO,
         parent: gameContainerRef.current!,
-        width: Math.min((mapData.width || 20) * TILE_SIZE, 800),
-        height: Math.min((mapData.height || 15) * TILE_SIZE, 600),
-        backgroundColor: "#1a1a1a",
+        width: gameContainerRef.current!.clientWidth,
+        height: gameContainerRef.current!.clientHeight,
+        backgroundColor: "#1a1a2e",
         pixelArt: true,
         scene: GameScene
       }
@@ -268,10 +531,11 @@ export function GamePage() {
 
       // Start scene with data
       phaserGame.scene.start("GameScene", {
-        mapData,
+        mapData: mapData!,
         characters: game!.characters,
-        tileImages,
-        characterImages,
+        assetMap,
+        tileProperties,
+        entityDefinitions,
         onCharacterClick: (characterId: string) => {
           setSelectedCharacter(characterId)
         }
@@ -285,6 +549,7 @@ export function GamePage() {
         phaserGameRef.current.destroy(true)
         phaserGameRef.current = null
       }
+      initializingRef.current = false
     }
   }, [mapData, game])
 
@@ -294,10 +559,8 @@ export function GamePage() {
     try {
       await takeOverCharacter(gameId, selectedCharacter)
       setControlledCharacterId(selectedCharacter)
-      // Refresh game state
       const updated = await getGame(gameId)
       setGame(updated)
-      // Update Phaser scene
       const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene
       if (scene) {
         scene.updateCharacters(updated.characters)
@@ -313,10 +576,8 @@ export function GamePage() {
     try {
       await relinquishCharacter(gameId)
       setControlledCharacterId(null)
-      // Refresh game state
       const updated = await getGame(gameId)
       setGame(updated)
-      // Update Phaser scene
       const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene
       if (scene) {
         scene.updateCharacters(updated.characters)
@@ -351,7 +612,7 @@ export function GamePage() {
       <div className="h-screen flex flex-col bg-zinc-900">
         <Header />
         <div className="flex-1 flex items-center justify-center">
-          <Card className="max-w-md">
+          <Card className="max-w-md bg-zinc-800 border-zinc-700">
             <CardContent className="p-6 text-center">
               <p className="text-zinc-400 mb-4">Please log in to play</p>
               <Button onClick={() => navigate("/auth/login")}>Log In</Button>
@@ -378,7 +639,7 @@ export function GamePage() {
       <div className="h-screen flex flex-col bg-zinc-900">
         <Header />
         <div className="flex-1 flex items-center justify-center">
-          <Card className="max-w-md">
+          <Card className="max-w-md bg-zinc-800 border-zinc-700">
             <CardContent className="p-6 text-center">
               <p className="text-red-400 mb-4">{error || "Game not found"}</p>
               <Button onClick={() => navigate("/lobby")}>Back to Lobby</Button>
@@ -490,13 +751,20 @@ export function GamePage() {
               </CardContent>
             </Card>
           ) : null}
+
+          {/* Controls hint */}
+          <div className="mt-auto text-xs text-zinc-500">
+            <p>WASD / Arrows: Pan camera</p>
+            <p>Mouse wheel: Zoom</p>
+            <p>Click character: Select</p>
+          </div>
         </div>
 
         {/* Main game area */}
-        <div className="flex-1 flex items-center justify-center bg-zinc-950 p-4">
+        <div className="flex-1 flex items-center justify-center bg-zinc-950 p-0">
           <div
             ref={gameContainerRef}
-            className="border border-zinc-700 rounded-lg overflow-hidden"
+            className="w-full h-full"
             style={{ imageRendering: "pixelated" }}
           />
         </div>
