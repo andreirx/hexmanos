@@ -5,8 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hexmanos.engine.core.asset.Asset;
 import com.hexmanos.engine.core.asset.AssetRepository;
 import com.hexmanos.engine.core.files.FileStorageService;
-import com.hexmanos.engine.core.user.User;
-import com.hexmanos.engine.core.user.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -23,7 +21,6 @@ public class GameService {
     private final GameRepository gameRepository;
     private final GamePlayerRepository playerRepository;
     private final AssetRepository assetRepository;
-    private final UserRepository userRepository;
     private final FileStorageService storageService;
     private final GameRoomManager roomManager;
     private final SnapshotService snapshotService;
@@ -46,11 +43,8 @@ public class GameService {
 
         // Check map status - allow PENDING maps only if created by the same user
         if (mapAsset.getStatus() != Asset.AssetStatus.APPROVED) {
-            // Get the player's cognito sub to compare with asset author
-            User player = userRepository.findById(hostPlayerId)
-                    .orElseThrow(() -> new IllegalArgumentException("Player not found"));
-
-            boolean isOwnMap = player.getCognitoSub().equals(mapAsset.getAuthorId());
+            // Asset authorId is the internal user UUID, compare directly with hostPlayerId
+            boolean isOwnMap = hostPlayerId.toString().equals(mapAsset.getAuthorId());
 
             if (!isOwnMap) {
                 throw new IllegalArgumentException("Map is not approved");
@@ -60,7 +54,7 @@ public class GameService {
                 throw new IllegalArgumentException("Map has been rejected");
             }
 
-            log.info("Allowing PENDING map {} for author {}", mapAssetId, player.getDisplayName());
+            log.info("Allowing PENDING map {} for owner {}", mapAssetId, hostPlayerId);
         }
 
         // Create the game
