@@ -583,7 +583,7 @@ export function GamePage() {
           setSelectedCharacter(characterId)
         },
         onCharacterMove: (characterId: string, x: number, y: number) => {
-          // TODO: Send movement to backend via WebSocket or API
+          // Local movement only - backend sync tracked in hexmanos-d9j
           console.log(`Character ${characterId} moved to (${x}, ${y})`)
         }
       })

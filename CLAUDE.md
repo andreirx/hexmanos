@@ -236,6 +236,7 @@ You have MAP.md files in every folder describing its contents - a gist of the pr
 USE THEM for documentation and UPDATE them after a task is complete and "bd close" the tasks.
 NEVER REMOVE FUNCTIONALITY - if we have it, it was intended - unless EXPLICITLY ASKED FOR BY THE USER.
 When there's a problem, NEVER CONTRADICT THE EVIDENCE - think harder.
+Do not put TODOs in the code, put tasks in beads.
 
 ### A. Backlog Management
 1.  **Check Status:** Always start by checking `bd ready`.

@@ -97,6 +97,9 @@ export function PixelCanvas({
   const [lineStart, setLineStart] = useState<{ x: number; y: number } | null>(null)
   const [lineEnd, setLineEnd] = useState<{ x: number; y: number } | null>(null)
 
+  // Hover position for brush preview
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null)
+
   // Initialize offscreen canvas
   useEffect(() => {
     if (!offscreenRef.current) {
@@ -155,6 +158,68 @@ export function PixelCanvas({
     },
     [color, width, height, brushSize]
   )
+
+  // Get all pixels that would be affected by a brush stroke at (x, y)
+  const getBrushPixels = useCallback((x: number, y: number): { x: number; y: number }[] => {
+    const pixels: { x: number; y: number }[] = []
+    const halfBrush = Math.floor(brushSize / 2)
+    for (let dy = 0; dy < brushSize; dy++) {
+      for (let dx = 0; dx < brushSize; dx++) {
+        const px = x - halfBrush + dx
+        const py = y - halfBrush + dy
+        if (isInBounds(px, py)) {
+          pixels.push({ x: px, y: py })
+        }
+      }
+    }
+    return pixels
+  }, [brushSize, width, height])
+
+  // Bresenham's line algorithm - returns all points on the line
+  const getLinePoints = useCallback((x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] => {
+    const points: { x: number; y: number }[] = []
+    const dx = Math.abs(x1 - x0)
+    const dy = Math.abs(y1 - y0)
+    const sx = x0 < x1 ? 1 : -1
+    const sy = y0 < y1 ? 1 : -1
+    let err = dx - dy
+    let x = x0
+    let y = y0
+
+    while (true) {
+      points.push({ x, y })
+      if (x === x1 && y === y1) break
+      const e2 = 2 * err
+      if (e2 > -dy) {
+        err -= dy
+        x += sx
+      }
+      if (e2 < dx) {
+        err += dx
+        y += sy
+      }
+    }
+    return points
+  }, [])
+
+  // Get all pixels that would be affected by drawing a line (with brush size)
+  const getLinePixels = useCallback((x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] => {
+    const linePoints = getLinePoints(x0, y0, x1, y1)
+    const allPixels = new Set<string>()
+    const result: { x: number; y: number }[] = []
+
+    for (const point of linePoints) {
+      const brushPixels = getBrushPixels(point.x, point.y)
+      for (const pixel of brushPixels) {
+        const key = `${pixel.x},${pixel.y}`
+        if (!allPixels.has(key)) {
+          allPixels.add(key)
+          result.push(pixel)
+        }
+      }
+    }
+    return result
+  }, [getLinePoints, getBrushPixels])
 
   // Bresenham's line algorithm with brush size
   const drawLineDirect = useCallback(
@@ -531,25 +596,44 @@ export function PixelCanvas({
       ctx.restore()
     }
 
-    // Draw line preview
+    // Draw line preview - show ALL pixels that will be affected
     if (lineStart && lineEnd) {
       ctx.save()
       ctx.translate(pan.x, pan.y)
 
-      // Draw preview line showing pixels that will be drawn
-      ctx.strokeStyle = "rgba(0, 150, 255, 0.8)"
-      ctx.lineWidth = 2
-      ctx.setLineDash([4, 4])
-      ctx.beginPath()
-      ctx.moveTo((lineStart.x + 0.5) * zoom, (lineStart.y + 0.5) * zoom)
-      ctx.lineTo((lineEnd.x + 0.5) * zoom, (lineEnd.y + 0.5) * zoom)
-      ctx.stroke()
-      ctx.setLineDash([])
+      // Get all pixels that will be drawn with the line
+      const linePixels = getLinePixels(lineStart.x, lineStart.y, lineEnd.x, lineEnd.y)
 
-      // Draw start and end markers
-      ctx.fillStyle = "rgba(0, 150, 255, 0.5)"
-      ctx.fillRect(lineStart.x * zoom, lineStart.y * zoom, zoom, zoom)
-      ctx.fillRect(lineEnd.x * zoom, lineEnd.y * zoom, zoom, zoom)
+      // Draw each pixel preview with outline
+      ctx.fillStyle = "rgba(0, 150, 255, 0.3)"
+      ctx.strokeStyle = "rgba(0, 150, 255, 0.8)"
+      ctx.lineWidth = 1
+      for (const pixel of linePixels) {
+        ctx.fillRect(pixel.x * zoom, pixel.y * zoom, zoom, zoom)
+        ctx.strokeRect(pixel.x * zoom + 0.5, pixel.y * zoom + 0.5, zoom - 1, zoom - 1)
+      }
+
+      ctx.restore()
+    }
+
+    // Draw brush preview for pencil/eraser when hovering (not drawing, not using line tool)
+    if (hoverPos && !isDrawing && !lineStart && (tool === "pencil" || tool === "eraser")) {
+      ctx.save()
+      ctx.translate(pan.x, pan.y)
+
+      // Get all pixels that would be affected by the brush
+      const brushPixels = getBrushPixels(hoverPos.x, hoverPos.y)
+
+      // Draw each pixel preview with outline
+      const previewColor = tool === "eraser" ? "rgba(255, 100, 100, 0.3)" : "rgba(0, 150, 255, 0.3)"
+      const outlineColor = tool === "eraser" ? "rgba(255, 100, 100, 0.8)" : "rgba(0, 150, 255, 0.8)"
+      ctx.fillStyle = previewColor
+      ctx.strokeStyle = outlineColor
+      ctx.lineWidth = 1
+      for (const pixel of brushPixels) {
+        ctx.fillRect(pixel.x * zoom, pixel.y * zoom, zoom, zoom)
+        ctx.strokeRect(pixel.x * zoom + 0.5, pixel.y * zoom + 0.5, zoom - 1, zoom - 1)
+      }
 
       ctx.restore()
     }
@@ -583,7 +667,7 @@ export function PixelCanvas({
     ctx.lineWidth = 2
     ctx.strokeRect(0, 0, width * zoom, height * zoom)
     ctx.restore()
-  }, [width, height, pan, showGrid, gridColor, zoom, selection, lineStart, lineEnd])
+  }, [width, height, pan, showGrid, gridColor, zoom, selection, lineStart, lineEnd, hoverPos, tool, isDrawing, getBrushPixels, getLinePixels])
 
   // Re-render when zoom/pan/selection changes
   useEffect(() => {
@@ -715,7 +799,13 @@ export function PixelCanvas({
       return
     }
 
-    if (!coords) return
+    if (!coords) {
+      setHoverPos(null)
+      return
+    }
+
+    // Always track hover position for brush preview
+    setHoverPos(coords)
 
     if (tool === "select") {
       if (isSelecting && selectionStart.current) {
@@ -856,6 +946,7 @@ export function PixelCanvas({
     setIsResizingSelection(false)
     setLineStart(null)
     setLineEnd(null)
+    setHoverPos(null)
     lastDrawnPixel.current = null
     isDirty.current = false
   }

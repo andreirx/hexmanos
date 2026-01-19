@@ -694,6 +694,9 @@ export function MapEditorPage() {
             onCellClick={handleCellClick}
             onShapeStart={handleShapeStart}
             onShapeEnd={handleShapeEnd}
+            shapeStart={shapeStart}
+            selectedTileAsset={selectedTileAsset}
+            selectedPathAsset={selectedPathAsset}
           />
         </div>
 

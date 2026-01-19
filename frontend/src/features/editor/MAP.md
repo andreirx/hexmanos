@@ -83,9 +83,15 @@ Full-featured sprite editor for characters and objects.
 - Auto-calculated initial zoom to fit canvas
 - Preserves zoom/pan when switching frames
 
-**Tool Previews:**
-- Line tool: Dashed blue preview line from start to current mouse position
-- Line tool: Start and end pixels highlighted with semi-transparent blue
+**Tool Previews (CRITICAL - DO NOT REMOVE):**
+- **Pencil/Eraser hover**: Shows all pixels that will be affected by the brush
+  - Blue fill+outline for pencil, red fill+outline for eraser
+  - Works with all brush sizes (1, 2, 4, 8, 16)
+  - Preview disappears while actively drawing
+- **Line tool**: Shows ALL pixels that will be drawn (using Bresenham algorithm)
+  - Each pixel shown with blue fill and outline
+  - Respects brush size (shows thick line preview for larger brushes)
+  - Preview updates in real-time as you drag
 
 **Brush Sizes:**
 - 1, 2, 4, 8, or 16 pixels
