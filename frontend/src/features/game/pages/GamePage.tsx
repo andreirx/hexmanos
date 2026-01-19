@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Header } from "@/components/layout"
 import { useAuth } from "@/context/AuthContext"
 import { getGame, takeOverCharacter, relinquishCharacter, pauseGame, stopGame } from "@/api/games"
-import { getAssetFileUrl, getAssetFile, getAssetById } from "@/api/assets"
+import { getAssetFile, getAssetById, getTileThumbnailUrl, getEntityThumbnailUrl } from "@/api/assets"
 import { ArrowLeft, Pause, Square, User, Heart } from "lucide-react"
 import type { GameDTO, GameCharacterDTO } from "@/api/types"
 
@@ -220,7 +220,7 @@ export function GamePage() {
       for (const assetId of tileAssetIds) {
         try {
           const tileAsset = await getAssetById(assetId)
-          const url = getAssetFileUrl(tileAsset.storageKeyPrefix, "full.png")
+          const url = getTileThumbnailUrl(tileAsset.storageKeyPrefix)
           const img = new Image()
           img.crossOrigin = "anonymous"
           await new Promise<void>((resolve, reject) => {
@@ -234,12 +234,12 @@ export function GamePage() {
         }
       }
 
-      // Get unique character asset IDs
+      // Get unique character asset IDs (includes both CHARACTER and OBJECT types)
       const charAssetIds = new Set(game!.characters.map(c => c.assetId))
       for (const assetId of charAssetIds) {
         try {
           const charAsset = await getAssetById(assetId)
-          const url = getAssetFileUrl(charAsset.storageKeyPrefix, "idle_down_0.png")
+          const url = await getEntityThumbnailUrl(charAsset.storageKeyPrefix)
           const img = new Image()
           img.crossOrigin = "anonymous"
           await new Promise<void>((resolve, reject) => {

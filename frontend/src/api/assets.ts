@@ -171,3 +171,71 @@ export async function loadAssetImage(storageKeyPrefix: string, fileName: string)
     img.src = url
   })
 }
+
+// ============================================
+// Asset thumbnail utilities
+// ============================================
+
+interface EntityDefinition {
+  name: string
+  spriteSize: number
+  entityType?: "CHARACTER" | "OBJECT"
+  visualStates?: string[]
+  states: Record<string, { frames: number; loop: boolean }>
+}
+
+// Cache for entity definitions
+const entityDefinitionCache = new Map<string, EntityDefinition>()
+
+/**
+ * Get the thumbnail filename for a tile asset.
+ * Tiles use "tile_0.png" as their base image.
+ */
+export function getTileThumbnailFilename(): string {
+  return "tile_0.png"
+}
+
+/**
+ * Get the thumbnail filename for a character/object asset.
+ * Reads definition.json to determine visual states.
+ * @param storageKeyPrefix The asset's storage key prefix
+ * @returns The thumbnail filename (e.g., "idle_0.png" or "full_idle_0.png")
+ */
+export async function getEntityThumbnailFilename(storageKeyPrefix: string): Promise<string> {
+  try {
+    // Check cache first
+    let definition = entityDefinitionCache.get(storageKeyPrefix)
+    if (!definition) {
+      definition = await getAssetFile<EntityDefinition>(storageKeyPrefix, "definition.json")
+      entityDefinitionCache.set(storageKeyPrefix, definition)
+    }
+
+    // Determine thumbnail based on visual states
+    if (definition.visualStates && definition.visualStates.length > 0) {
+      const firstVisualState = definition.visualStates[0]
+      return `${firstVisualState}_idle_0.png`
+    }
+
+    // Legacy format - no visual states prefix
+    return "idle_0.png"
+  } catch {
+    // Fallback to legacy format on error
+    return "idle_0.png"
+  }
+}
+
+/**
+ * Get the thumbnail URL for a tile asset.
+ */
+export function getTileThumbnailUrl(storageKeyPrefix: string, bustCache = false): string {
+  return getAssetFileUrl(storageKeyPrefix, getTileThumbnailFilename(), bustCache)
+}
+
+/**
+ * Get the thumbnail URL for a character/object asset.
+ * Async because it needs to read definition.json.
+ */
+export async function getEntityThumbnailUrl(storageKeyPrefix: string, bustCache = false): Promise<string> {
+  const filename = await getEntityThumbnailFilename(storageKeyPrefix)
+  return getAssetFileUrl(storageKeyPrefix, filename, bustCache)
+}
