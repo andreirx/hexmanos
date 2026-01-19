@@ -71,16 +71,26 @@ Full-featured sprite editor for characters and objects.
 - `brushSize`: 1, 2, 4, 8, or 16
 
 **Tools:**
-- `pencil`: Draw pixels
-- `eraser`: Clear pixels (transparent)
-- `select`: Rectangle selection (future)
+- `pencil`: Draw pixels with current brush size
+- `eraser`: Clear pixels (transparent) with current brush size
+- `line`: Click-drag to draw straight lines (preview shown while dragging)
+- `select`: Rectangle selection with move/resize handles
 
 **Features:**
 - `image-rendering: pixelated` for crisp pixels
 - Mouse wheel zoom centered on cursor
-- Right-click pan
+- Right-click / middle-click / Alt+click pan
 - Auto-calculated initial zoom to fit canvas
 - Preserves zoom/pan when switching frames
+
+**Tool Previews:**
+- Line tool: Dashed blue preview line from start to current mouse position
+- Line tool: Start and end pixels highlighted with semi-transparent blue
+
+**Brush Sizes:**
+- 1, 2, 4, 8, or 16 pixels
+- Applies to pencil, eraser, and line tools
+- Bresenham line algorithm used for smooth drawing when dragging
 
 ### CharacterGallery.tsx
 

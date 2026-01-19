@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react"
 import { RotateCw, RotateCcw, FlipHorizontal2 } from "lucide-react"
 
-export type CanvasTool = "pencil" | "eraser" | "select"
+export type CanvasTool = "pencil" | "eraser" | "select" | "line"
 
 export interface Selection {
   x: number
@@ -92,6 +92,10 @@ export function PixelCanvas({
   const [resizeHandle, setResizeHandle] = useState<string | null>(null)
   const selectionStart = useRef<{ x: number; y: number } | null>(null)
   const dragStart = useRef<{ x: number; y: number; selX: number; selY: number } | null>(null)
+
+  // Line tool state
+  const [lineStart, setLineStart] = useState<{ x: number; y: number } | null>(null)
+  const [lineEnd, setLineEnd] = useState<{ x: number; y: number } | null>(null)
 
   // Initialize offscreen canvas
   useEffect(() => {
@@ -527,6 +531,29 @@ export function PixelCanvas({
       ctx.restore()
     }
 
+    // Draw line preview
+    if (lineStart && lineEnd) {
+      ctx.save()
+      ctx.translate(pan.x, pan.y)
+
+      // Draw preview line showing pixels that will be drawn
+      ctx.strokeStyle = "rgba(0, 150, 255, 0.8)"
+      ctx.lineWidth = 2
+      ctx.setLineDash([4, 4])
+      ctx.beginPath()
+      ctx.moveTo((lineStart.x + 0.5) * zoom, (lineStart.y + 0.5) * zoom)
+      ctx.lineTo((lineEnd.x + 0.5) * zoom, (lineEnd.y + 0.5) * zoom)
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      // Draw start and end markers
+      ctx.fillStyle = "rgba(0, 150, 255, 0.5)"
+      ctx.fillRect(lineStart.x * zoom, lineStart.y * zoom, zoom, zoom)
+      ctx.fillRect(lineEnd.x * zoom, lineEnd.y * zoom, zoom, zoom)
+
+      ctx.restore()
+    }
+
     // Draw grid on top (only if zoom > 4)
     if (showGrid && zoom >= 4) {
       ctx.save()
@@ -556,7 +583,7 @@ export function PixelCanvas({
     ctx.lineWidth = 2
     ctx.strokeRect(0, 0, width * zoom, height * zoom)
     ctx.restore()
-  }, [width, height, pan, showGrid, gridColor, zoom, selection])
+  }, [width, height, pan, showGrid, gridColor, zoom, selection, lineStart, lineEnd])
 
   // Re-render when zoom/pan/selection changes
   useEffect(() => {
@@ -659,8 +686,14 @@ export function PixelCanvas({
           originalHeight: 0,
         })
       }
+    } else if (tool === "line") {
+      // Line tool: record start point
+      if (isInBounds(coords.x, coords.y)) {
+        setLineStart({ x: coords.x, y: coords.y })
+        setLineEnd({ x: coords.x, y: coords.y })
+      }
     } else {
-      // Drawing mode
+      // Drawing mode (pencil/eraser)
       setIsDrawing(true)
       isDirty.current = false
       if (isInBounds(coords.x, coords.y)) {
@@ -747,6 +780,9 @@ export function PixelCanvas({
           selectionStart.current = { x: coords.x, y: coords.y }
         }
       }
+    } else if (tool === "line" && lineStart) {
+      // Update line preview endpoint
+      setLineEnd({ x: coords.x, y: coords.y })
     } else if (isDrawing) {
       if (isInBounds(coords.x, coords.y)) {
         if (lastDrawnPixel.current) {
@@ -765,6 +801,17 @@ export function PixelCanvas({
   }
 
   const handleMouseUp = () => {
+    // Line tool: draw the final line
+    if (tool === "line" && lineStart && lineEnd) {
+      drawLineDirect(lineStart.x, lineStart.y, lineEnd.x, lineEnd.y)
+      isDirty.current = true
+      onCommit(new Uint8ClampedArray(livePixelsRef.current))
+      setLineStart(null)
+      setLineEnd(null)
+      render()
+      return
+    }
+
     if (isSelecting && selection && selection.width > 0 && selection.height > 0) {
       // Finalize selection - copy pixels and clear region
       const copiedPixels = copyRegion(selection.x, selection.y, selection.width, selection.height)
@@ -807,6 +854,8 @@ export function PixelCanvas({
     setIsSelecting(false)
     setIsDraggingSelection(false)
     setIsResizingSelection(false)
+    setLineStart(null)
+    setLineEnd(null)
     lastDrawnPixel.current = null
     isDirty.current = false
   }

@@ -8,7 +8,7 @@
     - Run `bd create "Title" -t task` for new discovered work.
     - Run `bd update <id> --status in_progress` when starting.
     - Run `bd close <id>` when finished.
-4. **Context:** If you need project context, read `AGENTS.md` and the `docs/` folder.
+4. **Context:** If you need project context, read `AGENTS.md` and the `docs/` folder and the MAP.md files in every folder.
 <!-- END BEADS INTEGRATION -->
 
 # Architecture Standards (Immutable)
@@ -234,6 +234,8 @@ You can "bd create" tasks.
 You have beads and you can "bd ready" and "bd list" to understand what's next.
 You have MAP.md files in every folder describing its contents - a gist of the project and each file and immediate subfolder listed and with a short summary of how they fit in the grand shcheme of things.  and then in each subfolder there are MAP.md files at every level.
 USE THEM for documentation and UPDATE them after a task is complete and "bd close" the tasks.
+NEVER REMOVE FUNCTIONALITY - if we have it, it was intended - unless EXPLICITLY ASKED FOR BY THE USER.
+When there's a problem, NEVER CONTRADICT THE EVIDENCE - think harder.
 
 ### A. Backlog Management
 1.  **Check Status:** Always start by checking `bd ready`.

@@ -38,7 +38,13 @@
       "Bash(find . *)",
       "Bash(cd /Users/apple/Documents/APLICATII BIJUTERIE/hexmanos && find:*)",
       "Bash(find frontend -path */tile* -o -path */Tile*)",
-      "Bash(./mvnw compile:*)"
+      "Bash(./mvnw compile:*)",
+      "Bash(./gradlew flywayRepair:*)",
+      "Bash(./gradlew build:*)",
+      "Bash(git fetch:*)",
+      "Bash(bd show:*)",
+      "Bash(PGPASSWORD='F0fkmghi1!' /Applications/Postgres.app/Contents/Versions/17/bin/psql:*)",
+      "Bash(find:*)"
     ]
   }
 }

@@ -47,6 +47,31 @@ Full-featured map editor.
 - Zoom/pan with mouse wheel and right-click
 - Save/load maps to backend
 
+## lib/
+
+| File | Purpose |
+|------|---------|
+| `map-logic.ts` | **Shared rendering logic** used by MapCanvas AND GamePage |
+
+### map-logic.ts (CRITICAL - DO NOT DUPLICATE)
+
+Shared map rendering algorithms. **NEVER duplicate this logic** - import from here.
+
+**Exports:**
+- `DIRECTION_OFFSETS`: Direction vectors for 8 directions (n, ne, e, se, s, sw, w, nw)
+- `ALL_DIRECTIONS`: Array of all direction keys
+- `seededRandom(seed)`: Deterministic pseudo-random from seed
+- `getVariationFromSeed(seed, variations)`: Get tile variation index
+- `getTransitionDirections(x, y, width, height, terrainLayer)`: Stacking algorithm - returns directions where transitions should be drawn
+- `getNeighborPosition(x, y, direction)`: Get neighbor coordinates
+- `calculatePathVariation(x, y, width, height, pathLayer, pathAssetId)`: Path connectivity bitmask (0-14)
+- `getMoveTarget(x, y, direction)`: Character movement helper
+- `isInBounds(x, y, width, height)`: Bounds checking
+
+**Used By:**
+- `MapCanvas.tsx` - Map editor rendering
+- `GamePage.tsx` - Game client rendering (identical logic ensures visual parity)
+
 ## components/
 
 | File | Purpose |
@@ -81,8 +106,20 @@ HTML5 Canvas for map rendering and editing.
 - Bresenham line algorithm for smooth path drawing
 - Shape tools for rectangle/disc fills
 - Mouse wheel zoom centered on cursor
-- Right-click panning
-- Grid overlay toggle
+- Right-click / middle-click / Alt+click panning
+- Grid overlay toggle (visible at zoom >= 0.2)
+
+**Shape Tool Previews (CRITICAL - DO NOT REMOVE):**
+- When using rect or disc tools, hovering shows a live preview of the shape
+- Preview fills cells with semi-transparent color (orange for paths, blue for terrain)
+- Preview draws border outline around the shape
+- For disc tool: Uses ellipse equation to determine which cells are inside
+- Implemented in render() using `shapeStart` and `hoverCell` state
+- Single-cell hover preview shown for paint tool when not in shape mode
+
+**Paint Tool Previews:**
+- Single cell highlight on hover showing where tile will be placed
+- Color varies by active layer (orange for paths, blue for terrain)
 
 ### MapGallery.tsx
 

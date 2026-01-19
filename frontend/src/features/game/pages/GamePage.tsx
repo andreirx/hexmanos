@@ -9,6 +9,15 @@ import { getGame, takeOverCharacter, relinquishCharacter, pauseGame, stopGame } 
 import { getAssetFile, getAssetById, getAssetFileUrl } from "@/api/assets"
 import { ArrowLeft, Pause, Square, User, Heart } from "lucide-react"
 import type { GameDTO, GameCharacterDTO } from "@/api/types"
+import {
+  getVariationFromSeed,
+  getTransitionDirections,
+  getNeighborPosition,
+  calculatePathVariation,
+  ALL_DIRECTIONS,
+  getMoveTarget,
+  isInBounds
+} from "@/features/maps/lib/map-logic"
 
 // Match the editor's tile size (128px)
 const TILE_SIZE = 128
@@ -61,46 +70,6 @@ interface MapData {
   characters: MapCharacter[]
 }
 
-// ============================================
-// Rendering Helpers (ported from MapCanvas)
-// ============================================
-
-function seededRandom(seed: number): number {
-  const x = Math.sin(seed * 9999) * 10000
-  return x - Math.floor(x)
-}
-
-function getVariationFromSeed(seed: number, variations: number): number {
-  return Math.floor(seededRandom(seed) * variations)
-}
-
-const DIRECTION_OFFSETS = {
-  n:  { dx: 0,  dy: -1 },
-  ne: { dx: 1,  dy: -1 },
-  e:  { dx: 1,  dy: 0 },
-  se: { dx: 1,  dy: 1 },
-  s:  { dx: 0,  dy: 1 },
-  sw: { dx: -1, dy: 1 },
-  w:  { dx: -1, dy: 0 },
-  nw: { dx: -1, dy: -1 }
-} as const
-
-type TransitionDirection = keyof typeof DIRECTION_OFFSETS
-
-// Path variation: Up=8, Down=4, Left=2, Right=1
-function calculatePathVariation(
-  paths: (MapPath | null)[][],
-  x: number, y: number,
-  width: number, height: number,
-  currentPathAssetId: string
-): number {
-  let bits = 0
-  if (y > 0 && paths[y - 1]?.[x]?.pathAssetId === currentPathAssetId) bits |= 8
-  if (y < height - 1 && paths[y + 1]?.[x]?.pathAssetId === currentPathAssetId) bits |= 4
-  if (x > 0 && paths[y]?.[x - 1]?.pathAssetId === currentPathAssetId) bits |= 2
-  if (x < width - 1 && paths[y]?.[x + 1]?.pathAssetId === currentPathAssetId) bits |= 1
-  return bits === 0 ? 0 : bits - 1
-}
 
 // ============================================
 // Phaser Game Scene
@@ -111,11 +80,17 @@ class GameScene extends Phaser.Scene {
   private characters: GameCharacterDTO[] = []
   private characterSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
   private onCharacterClick: ((characterId: string) => void) | null = null
+  private onCharacterMove: ((characterId: string, x: number, y: number) => void) | null = null
 
   // Asset data
   private assetMap: Map<string, { storageKeyPrefix: string }> = new Map()
   private tileProperties: Map<string, TileProperties> = new Map()
   private entityDefinitions: Map<string, EntityDefinition> = new Map()
+
+  // Character control state
+  private controlledCharacterId: string | null = null
+  private moveDebounceTime = 150 // ms between moves
+  private lastMoveTime = 0
 
   constructor() {
     super({ key: "GameScene" })
@@ -128,6 +103,7 @@ class GameScene extends Phaser.Scene {
     tileProperties: Map<string, TileProperties>
     entityDefinitions: Map<string, EntityDefinition>
     onCharacterClick: (characterId: string) => void
+    onCharacterMove: (characterId: string, x: number, y: number) => void
   }) {
     this.mapData = data.mapData
     this.characters = data.characters
@@ -135,6 +111,7 @@ class GameScene extends Phaser.Scene {
     this.tileProperties = data.tileProperties
     this.entityDefinitions = data.entityDefinitions
     this.onCharacterClick = data.onCharacterClick
+    this.onCharacterMove = data.onCharacterMove
   }
 
   preload() {
@@ -180,8 +157,7 @@ class GameScene extends Phaser.Scene {
       }
 
       // Load all 8 transition images (always from tile_0)
-      const directions: TransitionDirection[] = ["n", "ne", "e", "se", "s", "sw", "w", "nw"]
-      directions.forEach(dir => {
+      ALL_DIRECTIONS.forEach(dir => {
         const key = `transition_${assetId}_${dir}`
         const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_0_transition_${dir}.png`)
         this.load.image(key, url)
@@ -247,40 +223,26 @@ class GameScene extends Phaser.Scene {
     }
 
     // PASS 2: Draw transitions (Stacking Algorithm)
+    // Uses shared getTransitionDirections() to determine where to project transitions
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const tile = layers.terrain[y]?.[x]
         if (!tile) continue
 
-        // Check each direction
-        for (const [dir, offset] of Object.entries(DIRECTION_OFFSETS) as [TransitionDirection, {dx: number, dy: number}][]) {
-          const nx = x + offset.dx
-          const ny = y + offset.dy
+        // Get directions where this tile should project transitions
+        const directions = getTransitionDirections(x, y, width, height, layers.terrain)
 
-          // Skip if neighbor is out of bounds
-          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
+        // Draw transition for each direction
+        for (const dir of directions) {
+          const { nx, ny } = getNeighborPosition(x, y, dir)
+          const key = `transition_${tile.tileAssetId}_${dir}`
 
-          const neighbor = layers.terrain[ny]?.[nx]
-
-          // Determine if we should draw transition
-          let shouldDraw = false
-          if (!neighbor) {
-            // Neighbor is void - always draw transition
-            shouldDraw = true
-          } else if (neighbor.tileAssetId !== tile.tileAssetId) {
-            // Different tile - dominant tile (higher assetId) wins
-            shouldDraw = tile.tileAssetId > neighbor.tileAssetId
-          }
-
-          if (shouldDraw) {
-            const key = `transition_${tile.tileAssetId}_${dir}`
-            if (this.textures.exists(key)) {
-              this.add.image(
-                nx * TILE_SIZE + TILE_SIZE / 2,
-                ny * TILE_SIZE + TILE_SIZE / 2,
-                key
-              )
-            }
+          if (this.textures.exists(key)) {
+            this.add.image(
+              nx * TILE_SIZE + TILE_SIZE / 2,
+              ny * TILE_SIZE + TILE_SIZE / 2,
+              key
+            )
           }
         }
       }
@@ -301,7 +263,7 @@ class GameScene extends Phaser.Scene {
           if (targetTerrainType === "LAND" && pathTerrainType === "WATER") continue
 
           const variation = calculatePathVariation(
-            layers.paths, x, y, width, height, path.pathAssetId
+            x, y, width, height, layers.paths, path.pathAssetId
           )
           const key = `path_${path.pathAssetId}_${variation}`
 
@@ -353,7 +315,7 @@ class GameScene extends Phaser.Scene {
     this.cameras.main.setZoom(0.25)
     this.cameras.main.centerOn(mapWidth / 2, mapHeight / 2)
 
-    // Add keyboard controls for camera
+    // Add keyboard controls
     const cursors = this.input.keyboard?.createCursorKeys()
     const wasd = {
       W: this.input.keyboard?.addKey("W"),
@@ -362,15 +324,54 @@ class GameScene extends Phaser.Scene {
       D: this.input.keyboard?.addKey("D"),
     }
 
-    // Camera movement in update loop
+    // Movement/camera control in update loop
     this.events.on("update", () => {
       const cam = this.cameras.main
-      const speed = 16
+      const now = Date.now()
 
-      if (cursors?.left?.isDown || wasd.A?.isDown) cam.scrollX -= speed
-      if (cursors?.right?.isDown || wasd.D?.isDown) cam.scrollX += speed
-      if (cursors?.up?.isDown || wasd.W?.isDown) cam.scrollY -= speed
-      if (cursors?.down?.isDown || wasd.S?.isDown) cam.scrollY += speed
+      // When controlling a character: move character with WASD/arrows
+      if (this.controlledCharacterId && this.mapData) {
+        const char = this.characters.find(c => c.id === this.controlledCharacterId)
+        if (char && now - this.lastMoveTime > this.moveDebounceTime) {
+          let direction: "n" | "s" | "e" | "w" | null = null
+
+          if (cursors?.up?.isDown || wasd.W?.isDown) direction = "n"
+          else if (cursors?.down?.isDown || wasd.S?.isDown) direction = "s"
+          else if (cursors?.left?.isDown || wasd.A?.isDown) direction = "w"
+          else if (cursors?.right?.isDown || wasd.D?.isDown) direction = "e"
+
+          if (direction) {
+            const target = getMoveTarget(char.x, char.y, direction)
+            if (isInBounds(target.x, target.y, this.mapData.width, this.mapData.height)) {
+              // Update local position
+              char.x = target.x
+              char.y = target.y
+              this.lastMoveTime = now
+
+              // Update sprite position
+              const sprite = this.characterSprites.get(char.id)
+              if (sprite) {
+                sprite.setPosition(
+                  target.x * TILE_SIZE + TILE_SIZE / 2,
+                  target.y * TILE_SIZE + TILE_SIZE / 2
+                )
+              }
+
+              // Notify parent component
+              if (this.onCharacterMove) {
+                this.onCharacterMove(char.id, target.x, target.y)
+              }
+            }
+          }
+        }
+      } else {
+        // No character controlled: pan camera with WASD/arrows
+        const speed = 16
+        if (cursors?.left?.isDown || wasd.A?.isDown) cam.scrollX -= speed
+        if (cursors?.right?.isDown || wasd.D?.isDown) cam.scrollX += speed
+        if (cursors?.up?.isDown || wasd.W?.isDown) cam.scrollY -= speed
+        if (cursors?.down?.isDown || wasd.S?.isDown) cam.scrollY += speed
+      }
     })
 
     // Mouse wheel zoom
@@ -383,6 +384,48 @@ class GameScene extends Phaser.Scene {
         cam.zoom = Math.max(0.1, cam.zoom / zoomFactor)
       }
     })
+  }
+
+  // Set controlled character - centers camera on character and zooms in
+  setControlledCharacter(characterId: string) {
+    this.controlledCharacterId = characterId
+
+    // Find character and center camera on them
+    const char = this.characters.find(c => c.id === characterId)
+    if (char) {
+      const cam = this.cameras.main
+      const sprite = this.characterSprites.get(characterId)
+
+      // Zoom in and center on character
+      cam.setZoom(1)
+      cam.centerOn(
+        char.x * TILE_SIZE + TILE_SIZE / 2,
+        char.y * TILE_SIZE + TILE_SIZE / 2
+      )
+
+      // Start following the character sprite
+      if (sprite) {
+        cam.startFollow(sprite, true, 0.1, 0.1)
+      }
+    }
+  }
+
+  // Clear controlled character - zooms out to show whole map
+  clearControlledCharacter() {
+    this.controlledCharacterId = null
+
+    if (this.mapData) {
+      const cam = this.cameras.main
+      const mapWidth = this.mapData.width * TILE_SIZE
+      const mapHeight = this.mapData.height * TILE_SIZE
+
+      // Stop following any sprite
+      cam.stopFollow()
+
+      // Zoom out and center on map
+      cam.setZoom(0.25)
+      cam.centerOn(mapWidth / 2, mapHeight / 2)
+    }
   }
 
   updateCharacters(characters: GameCharacterDTO[]) {
@@ -538,6 +581,10 @@ export function GamePage() {
         entityDefinitions,
         onCharacterClick: (characterId: string) => {
           setSelectedCharacter(characterId)
+        },
+        onCharacterMove: (characterId: string, x: number, y: number) => {
+          // TODO: Send movement to backend via WebSocket or API
+          console.log(`Character ${characterId} moved to (${x}, ${y})`)
         }
       })
     }
@@ -564,6 +611,7 @@ export function GamePage() {
       const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene
       if (scene) {
         scene.updateCharacters(updated.characters)
+        scene.setControlledCharacter(selectedCharacter)
       }
     } catch (err) {
       console.error("Failed to take over character:", err)
@@ -581,6 +629,7 @@ export function GamePage() {
       const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene
       if (scene) {
         scene.updateCharacters(updated.characters)
+        scene.clearControlledCharacter()
       }
     } catch (err) {
       console.error("Failed to relinquish character:", err)
@@ -754,7 +803,14 @@ export function GamePage() {
 
           {/* Controls hint */}
           <div className="mt-auto text-xs text-zinc-500">
-            <p>WASD / Arrows: Pan camera</p>
+            {controlledCharacterId ? (
+              <>
+                <p className="text-green-400">WASD / Arrows: Move character</p>
+                <p>Camera follows character</p>
+              </>
+            ) : (
+              <p>WASD / Arrows: Pan camera</p>
+            )}
             <p>Mouse wheel: Zoom</p>
             <p>Click character: Select</p>
           </div>

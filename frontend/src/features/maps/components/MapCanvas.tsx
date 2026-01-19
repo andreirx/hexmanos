@@ -1,7 +1,13 @@
 import { useRef, useEffect, useCallback, useState } from "react"
 import { getAssetFileUrl, getAssetsByType, getAssetFile } from "@/api/assets"
-import type { MapData, MapPath } from "../pages/MapEditorPage"
+import type { MapData } from "../pages/MapEditorPage"
 import type { AssetDTO } from "@/api/types"
+import {
+  getVariationFromSeed,
+  getTransitionDirections,
+  getNeighborPosition,
+  calculatePathVariation
+} from "../lib/map-logic"
 
 interface TileProperties {
   name: string
@@ -90,46 +96,6 @@ function getImage(url: string): HTMLImageElement | null {
 const assetCache = new Map<string, AssetDTO>()
 const propertiesCache = new Map<string, TileProperties>()
 
-// ============================================================
-// HELPERS
-// ============================================================
-function seededRandom(seed: number): number {
-  const x = Math.sin(seed * 9999) * 10000
-  return x - Math.floor(x)
-}
-
-function getVariationFromSeed(seed: number, variations: number): number {
-  return Math.floor(seededRandom(seed) * variations)
-}
-
-// Transition direction offsets
-const DIRECTION_OFFSETS = {
-  n:  { dx: 0,  dy: -1 },
-  ne: { dx: 1,  dy: -1 },
-  e:  { dx: 1,  dy: 0 },
-  se: { dx: 1,  dy: 1 },
-  s:  { dx: 0,  dy: 1 },
-  sw: { dx: -1, dy: 1 },
-  w:  { dx: -1, dy: 0 },
-  nw: { dx: -1, dy: -1 }
-} as const
-
-type TransitionDirection = keyof typeof DIRECTION_OFFSETS
-
-// Path variation: Up=8, Down=4, Left=2, Right=1
-function calculatePathVariation(
-  paths: (MapPath | null)[][],
-  x: number, y: number,
-  width: number, height: number,
-  currentPathAssetId: string
-): number {
-  let bits = 0
-  if (y > 0 && paths[y - 1]?.[x]?.pathAssetId === currentPathAssetId) bits |= 8
-  if (y < height - 1 && paths[y + 1]?.[x]?.pathAssetId === currentPathAssetId) bits |= 4
-  if (x > 0 && paths[y]?.[x - 1]?.pathAssetId === currentPathAssetId) bits |= 2
-  if (x < width - 1 && paths[y]?.[x + 1]?.pathAssetId === currentPathAssetId) bits |= 1
-  return bits === 0 ? 0 : bits - 1
-}
 
 // ============================================================
 // COMPONENT
@@ -377,9 +343,7 @@ export function MapCanvas({
     }
 
     // PASS 2: Draw transitions (Stacking Algorithm)
-    // A tile projects its transition onto neighbors where:
-    // - Neighbor is void (empty), OR
-    // - Neighbor exists AND tile.assetId > neighbor.assetId (dominant wins)
+    // Uses shared getTransitionDirections() to determine where to project transitions
     if (showTransitions) {
       for (let y = 0; y < mapHeight; y++) {
         for (let x = 0; x < mapWidth; x++) {
@@ -389,40 +353,24 @@ export function MapCanvas({
           const tileAsset = assetCache.get(tile.tileAssetId)
           if (!tileAsset) continue
 
-          // Check each direction
-          for (const [dir, offset] of Object.entries(DIRECTION_OFFSETS) as [TransitionDirection, {dx: number, dy: number}][]) {
-            const nx = x + offset.dx
-            const ny = y + offset.dy
+          // Get directions where this tile should project transitions
+          const directions = getTransitionDirections(
+            x, y, mapWidth, mapHeight,
+            mapData.layers.terrain
+          )
 
-            // Skip if neighbor is out of bounds
-            if (nx < 0 || nx >= mapWidth || ny < 0 || ny >= mapHeight) continue
+          // Draw transition for each direction
+          for (const dir of directions) {
+            const { nx, ny } = getNeighborPosition(x, y, dir)
 
-            const neighbor = mapData.layers.terrain[ny]?.[nx]
+            const transitionUrl = getAssetFileUrl(
+              tileAsset.storageKeyPrefix,
+              `tile_0_transition_${dir}.png`
+            )
+            const transitionImg = getImage(transitionUrl)
 
-            // Determine if we should draw transition
-            let shouldDraw = false
-
-            if (!neighbor) {
-              // Condition 1: Neighbor is void - always draw transition
-              shouldDraw = true
-            } else if (neighbor.tileAssetId !== tile.tileAssetId) {
-              // Condition 2: Different tile - dominant tile (higher assetId) wins
-              shouldDraw = tile.tileAssetId > neighbor.tileAssetId
-            }
-
-            if (shouldDraw) {
-              // Draw THIS tile's transition onto the NEIGHBOR's position
-              // The transition file is named by where the solid edge is
-              // e.g., transition_n has solid at top - use it when projecting NORTH
-              const transitionUrl = getAssetFileUrl(
-                tileAsset.storageKeyPrefix,
-                `tile_0_transition_${dir}.png`
-              )
-              const transitionImg = getImage(transitionUrl)
-
-              if (transitionImg) {
-                ctx.drawImage(transitionImg, nx * tileSize, ny * tileSize, tileSize, tileSize)
-              }
+            if (transitionImg) {
+              ctx.drawImage(transitionImg, nx * tileSize, ny * tileSize, tileSize, tileSize)
             }
           }
         }
@@ -451,8 +399,8 @@ export function MapCanvas({
             if (targetTerrainType === "LAND" && pathTerrainType === "WATER") continue
 
             const variation = calculatePathVariation(
-              mapData.layers.paths, x, y,
-              mapWidth, mapHeight, path.pathAssetId
+              x, y, mapWidth, mapHeight,
+              mapData.layers.paths, path.pathAssetId
             )
             const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${variation}.png`)
             const img = getImage(url)
