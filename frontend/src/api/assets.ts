@@ -1,4 +1,5 @@
 import api from "@/lib/api"
+import { fetchAuthSession } from "aws-amplify/auth"
 import type {
   AssetDTO,
   CreateAssetRequest,
@@ -75,12 +76,26 @@ export async function uploadToPresignedUrl(
       },
     })
   } else {
-    // Local storage - use POST with form data
+    // Local storage - use POST with form data (requires auth)
     const formData = new FormData()
     formData.append("file", file)
+
+    // Get auth token for local storage endpoint
+    const headers: HeadersInit = {}
+    try {
+      const session = await fetchAuthSession()
+      const token = session.tokens?.accessToken?.toString()
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`
+      }
+    } catch {
+      // Continue without token
+    }
+
     await fetch(presignedUrl.uploadUrl, {
       method: "POST",
       body: formData,
+      headers,
     })
   }
 }
