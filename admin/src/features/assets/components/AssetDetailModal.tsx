@@ -30,9 +30,25 @@ interface MapData {
   tileSize: number
   layers: {
     terrain: (MapTile | null)[][]
-    paths: (MapPath | null)[][]
+    waterPaths?: (MapPath | null)[][]
+    groundPaths?: (MapPath | null)[][]
+    paths?: (MapPath | null)[][]  // Legacy
   }
   characters: MapCharacter[]
+}
+
+function normalizeMapData(data: MapData): MapData {
+  if (data.layers.waterPaths && data.layers.groundPaths) return data
+  const { width, height, layers } = data
+  const createEmpty = () => Array.from({ length: height }, () => Array.from({ length: width }, () => null))
+  return {
+    ...data,
+    layers: {
+      terrain: layers.terrain,
+      waterPaths: layers.waterPaths ?? createEmpty(),
+      groundPaths: layers.groundPaths ?? (layers.paths ? layers.paths.map(r => [...r]) : createEmpty())
+    }
+  }
 }
 
 interface MapTile {
@@ -381,7 +397,8 @@ function MapDetail({ asset }: { asset: AssetDTO }) {
     setIsLoading(true)
     setError(null)
     try {
-      const data = await getAssetFile<MapData>(asset.storageKeyPrefix, "map.json")
+      const rawData = await getAssetFile<MapData>(asset.storageKeyPrefix, "map.json")
+      const data = normalizeMapData(rawData)
       setMapData(data)
 
       // Collect all unique tile asset IDs
@@ -391,8 +408,11 @@ function MapDetail({ asset }: { asset: AssetDTO }) {
           const tile = data.layers.terrain[y]?.[x]
           if (tile) tileAssetIds.add(tile.tileAssetId)
 
-          const path = data.layers.paths[y]?.[x]
-          if (path) tileAssetIds.add(path.pathAssetId)
+          const waterPath = data.layers.waterPaths?.[y]?.[x]
+          if (waterPath) tileAssetIds.add(waterPath.pathAssetId)
+
+          const groundPath = data.layers.groundPaths?.[y]?.[x]
+          if (groundPath) tileAssetIds.add(groundPath.pathAssetId)
         }
       }
 
@@ -465,21 +485,24 @@ function MapDetail({ asset }: { asset: AssetDTO }) {
       }
     }
 
-    // Render paths layer (on top)
+    // Render water paths layer
     for (let y = 0; y < mapData.height; y++) {
       for (let x = 0; x < mapData.width; x++) {
-        const path = mapData.layers.paths[y]?.[x]
+        const path = mapData.layers.waterPaths?.[y]?.[x]
         if (path) {
           const img = tileImages.get(path.pathAssetId)
-          if (img) {
-            ctx.drawImage(
-              img,
-              x * previewTileSize,
-              y * previewTileSize,
-              previewTileSize,
-              previewTileSize
-            )
-          }
+          if (img) ctx.drawImage(img, x * previewTileSize, y * previewTileSize, previewTileSize, previewTileSize)
+        }
+      }
+    }
+
+    // Render ground paths layer (on top)
+    for (let y = 0; y < mapData.height; y++) {
+      for (let x = 0; x < mapData.width; x++) {
+        const path = mapData.layers.groundPaths?.[y]?.[x]
+        if (path) {
+          const img = tileImages.get(path.pathAssetId)
+          if (img) ctx.drawImage(img, x * previewTileSize, y * previewTileSize, previewTileSize, previewTileSize)
         }
       }
     }

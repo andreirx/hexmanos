@@ -11,9 +11,25 @@ interface MapData {
   tileSize: number
   layers: {
     terrain: (MapTile | null)[][]
-    paths: (MapPath | null)[][]
+    waterPaths?: (MapPath | null)[][]
+    groundPaths?: (MapPath | null)[][]
+    paths?: (MapPath | null)[][]  // Legacy
   }
   characters: { characterAssetId: string; x: number; y: number }[]
+}
+
+function normalizeMapData(data: MapData): MapData {
+  if (data.layers.waterPaths && data.layers.groundPaths) return data
+  const { width, height, layers } = data
+  const createEmpty = () => Array.from({ length: height }, () => Array.from({ length: width }, () => null))
+  return {
+    ...data,
+    layers: {
+      terrain: layers.terrain,
+      waterPaths: layers.waterPaths ?? createEmpty(),
+      groundPaths: layers.groundPaths ?? (layers.paths ? layers.paths.map(r => [...r]) : createEmpty())
+    }
+  }
 }
 
 interface MapTile {
@@ -44,8 +60,9 @@ export function MapThumbnail({ storageKeyPrefix, className = "" }: MapThumbnailP
     setError(false)
 
     try {
-      // Load map data
-      const data = await getAssetFile<MapData>(storageKeyPrefix, "map.json")
+      // Load and normalize map data
+      const rawData = await getAssetFile<MapData>(storageKeyPrefix, "map.json")
+      const data = normalizeMapData(rawData)
 
       // Collect all unique tile asset IDs
       const tileAssetIds = new Set<string>()
@@ -54,8 +71,11 @@ export function MapThumbnail({ storageKeyPrefix, className = "" }: MapThumbnailP
           const tile = data.layers.terrain[y]?.[x]
           if (tile) tileAssetIds.add(tile.tileAssetId)
 
-          const path = data.layers.paths[y]?.[x]
-          if (path) tileAssetIds.add(path.pathAssetId)
+          const waterPath = data.layers.waterPaths?.[y]?.[x]
+          if (waterPath) tileAssetIds.add(waterPath.pathAssetId)
+
+          const groundPath = data.layers.groundPaths?.[y]?.[x]
+          if (groundPath) tileAssetIds.add(groundPath.pathAssetId)
         }
       }
 
@@ -110,15 +130,24 @@ export function MapThumbnail({ storageKeyPrefix, className = "" }: MapThumbnailP
         }
       }
 
-      // Render paths
+      // Render water paths (rivers)
       for (let y = 0; y < data.height; y++) {
         for (let x = 0; x < data.width; x++) {
-          const path = data.layers.paths[y]?.[x]
+          const path = data.layers.waterPaths?.[y]?.[x]
           if (path) {
             const img = tileImages.get(path.pathAssetId)
-            if (img) {
-              ctx.drawImage(img, x * previewTileSize, y * previewTileSize, previewTileSize, previewTileSize)
-            }
+            if (img) ctx.drawImage(img, x * previewTileSize, y * previewTileSize, previewTileSize, previewTileSize)
+          }
+        }
+      }
+
+      // Render ground paths (roads/bridges - on top)
+      for (let y = 0; y < data.height; y++) {
+        for (let x = 0; x < data.width; x++) {
+          const path = data.layers.groundPaths?.[y]?.[x]
+          if (path) {
+            const img = tileImages.get(path.pathAssetId)
+            if (img) ctx.drawImage(img, x * previewTileSize, y * previewTileSize, previewTileSize, previewTileSize)
           }
         }
       }
