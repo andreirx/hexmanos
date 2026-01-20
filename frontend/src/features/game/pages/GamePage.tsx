@@ -385,7 +385,7 @@ class GameScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, mapWidth, mapHeight)
 
     // Start zoomed out to fit the map, center on map
-    this.cameras.main.setZoom(0.25)
+    this.cameras.main.setZoom(0.5)
     this.cameras.main.centerOn(mapWidth / 2, mapHeight / 2)
 
     // Initialize keyboard controls as class properties
@@ -492,7 +492,7 @@ class GameScene extends Phaser.Scene {
       // Animated zoom out and center on map
       this.tweens.add({
         targets: cam,
-        zoom: 0.25,
+        zoom: 0.5,
         scrollX: mapWidth / 2 - cam.width / 2,
         scrollY: mapHeight / 2 - cam.height / 2,
         duration: this.zoomDuration,
