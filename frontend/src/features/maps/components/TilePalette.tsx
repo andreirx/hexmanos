@@ -15,7 +15,7 @@ interface TileProperties {
 
 interface TilePaletteProps {
   selectedAssetId: string | null
-  onSelectAsset: (assetId: string | null) => void
+  onSelectAsset: (assetId: string | null, terrainType?: "LAND" | "WATER") => void
   tileType: "TILE" | "PATH"
 }
 
@@ -63,7 +63,8 @@ export function TilePalette({ selectedAssetId, onSelectAsset, tileType }: TilePa
 
         // Auto-select the first tile if none is selected
         if (!selectedAssetId && filteredTiles.length > 0) {
-          onSelectAsset(filteredTiles[0].id)
+          const firstProps = propsMap.get(filteredTiles[0].id)
+          onSelectAsset(filteredTiles[0].id, firstProps?.terrainType)
         }
       } catch (err) {
         console.error("Failed to load tiles:", err)
@@ -102,7 +103,7 @@ export function TilePalette({ selectedAssetId, onSelectAsset, tileType }: TilePa
               return (
                 <button
                   key={tile.id}
-                  onClick={() => onSelectAsset(isSelected ? null : tile.id)}
+                  onClick={() => onSelectAsset(isSelected ? null : tile.id, isSelected ? undefined : props?.terrainType)}
                   className={`relative flex flex-col items-center p-2 rounded border-2 transition-all ${
                     isSelected
                       ? isWater
@@ -152,7 +153,7 @@ export function TilePalette({ selectedAssetId, onSelectAsset, tileType }: TilePa
         {/* Clear selection */}
         {selectedAssetId && (
           <button
-            onClick={() => onSelectAsset(null)}
+            onClick={() => onSelectAsset(null, undefined)}
             className="w-full py-2 px-3 text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 rounded transition-colors mt-2"
           >
             Clear Selection

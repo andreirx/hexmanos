@@ -44,7 +44,7 @@ interface MapCanvasProps {
   showPaths: boolean
   showCharacters: boolean
   showTransitions: boolean
-  activeLayer: "terrain" | "water" | "ground" | "characters"
+  activeLayer: "terrain" | "paths" | "characters"
   currentTool: "select" | "paint" | "erase" | "pan" | "rect" | "disc"
   onCellClick: (x: number, y: number) => void
   onShapeStart?: (x: number, y: number) => void
@@ -503,11 +503,8 @@ export function MapCanvas({
     }
 
     // Layer overlay hint
-    if (activeLayer === "water") {
-      ctx.fillStyle = "#3b82f611" // Blue tint for water layer
-      ctx.fillRect(0, 0, mapData.width * mapData.tileSize, mapData.height * mapData.tileSize)
-    } else if (activeLayer === "ground") {
-      ctx.fillStyle = "#f5920011" // Amber tint for ground/roads layer
+    if (activeLayer === "paths") {
+      ctx.fillStyle = "#f5920011" // Orange tint for paths layer
       ctx.fillRect(0, 0, mapData.width * mapData.tileSize, mapData.height * mapData.tileSize)
     } else if (activeLayer === "characters") {
       ctx.fillStyle = "#a855f711"
@@ -523,11 +520,9 @@ export function MapCanvas({
       const y1 = Math.max(shapeStart.y, hoverCell.y)
 
       // Determine preview color based on layer
-      const previewColor = activeLayer === "water" ? "rgba(59, 130, 246, 0.3)" // Blue for water
-        : activeLayer === "ground" ? "rgba(245, 146, 0, 0.3)" // Amber for ground/roads
-        : "rgba(59, 130, 246, 0.3)" // Blue default
-      const borderColor = activeLayer === "water" ? "rgba(59, 130, 246, 0.8)"
-        : activeLayer === "ground" ? "rgba(245, 146, 0, 0.8)"
+      const previewColor = activeLayer === "paths" ? "rgba(245, 146, 0, 0.3)" // Orange for paths
+        : "rgba(59, 130, 246, 0.3)" // Blue default (terrain)
+      const borderColor = activeLayer === "paths" ? "rgba(245, 146, 0, 0.8)"
         : "rgba(59, 130, 246, 0.8)"
 
       ctx.fillStyle = previewColor
@@ -588,9 +583,8 @@ export function MapCanvas({
       const tileSize = mapData.tileSize
       const { x, y } = hoverCell
       if (x >= 0 && x < mapData.width && y >= 0 && y < mapData.height) {
-        const previewColor = activeLayer === "water" ? "rgba(59, 130, 246, 0.3)" // Blue for water
-          : activeLayer === "ground" ? "rgba(245, 146, 0, 0.3)" // Amber for ground/roads
-          : "rgba(59, 130, 246, 0.3)" // Blue default
+        const previewColor = activeLayer === "paths" ? "rgba(245, 146, 0, 0.3)" // Orange for paths
+          : "rgba(59, 130, 246, 0.3)" // Blue default (terrain)
         ctx.fillStyle = previewColor
         ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize)
       }

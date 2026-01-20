@@ -11,7 +11,7 @@ import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
 import {
   Save, FolderOpen, FilePlus, Grid3X3, Users, Layers, Trash2, Eye, EyeOff,
-  ZoomIn, ZoomOut, Move, MousePointer2, Route, Square, Circle, Droplets
+  ZoomIn, ZoomOut, Move, MousePointer2, Route, Square, Circle
 } from "lucide-react"
 import type { UserDTO, AssetDTO } from "@/api/types"
 
@@ -51,7 +51,7 @@ export interface MapData {
 
 // Tool types
 type MapTool = "select" | "paint" | "erase" | "pan" | "rect" | "disc"
-type ActiveLayer = "terrain" | "water" | "ground" | "characters"
+type ActiveLayer = "terrain" | "paths" | "characters"
 
 const DEFAULT_MAP_WIDTH = 16
 const DEFAULT_MAP_HEIGHT = 16
@@ -138,7 +138,14 @@ export function MapEditorPage() {
   // Selection state - only asset ID, no variation needed
   const [selectedTileAsset, setSelectedTileAsset] = useState<string | null>(null)
   const [selectedPathAsset, setSelectedPathAsset] = useState<string | null>(null)
+  const [selectedPathTerrainType, setSelectedPathTerrainType] = useState<"LAND" | "WATER" | undefined>(undefined)
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null)
+
+  // Handler for path selection - stores both asset ID and terrainType
+  const handlePathAssetSelect = (assetId: string | null, terrainType?: "LAND" | "WATER") => {
+    setSelectedPathAsset(assetId)
+    setSelectedPathTerrainType(terrainType)
+  }
 
   // UI state
   const [isSaving, setIsSaving] = useState(false)
@@ -232,45 +239,34 @@ export function MapEditorPage() {
     })
   }, [currentTool, selectedTileAsset])
 
-  // Handle canvas cell click for water paths (rivers, moats)
-  const handleWaterPathClick = useCallback((x: number, y: number) => {
+  // Handle canvas cell click for paths - auto-routes based on selected path's terrainType
+  const handlePathClick = useCallback((x: number, y: number) => {
     if (currentTool === "pan" || currentTool === "select") return
 
     setMapData(prev => {
       const newWaterPaths = prev.layers.waterPaths.map(row => [...row])
-
-      if (currentTool === "erase") {
-        newWaterPaths[y][x] = null
-      } else if (currentTool === "paint" && selectedPathAsset) {
-        newWaterPaths[y][x] = { pathAssetId: selectedPathAsset }
-      }
-
-      return {
-        ...prev,
-        layers: { ...prev.layers, waterPaths: newWaterPaths }
-      }
-    })
-  }, [currentTool, selectedPathAsset])
-
-  // Handle canvas cell click for ground paths (roads, bridges)
-  const handleGroundPathClick = useCallback((x: number, y: number) => {
-    if (currentTool === "pan" || currentTool === "select") return
-
-    setMapData(prev => {
       const newGroundPaths = prev.layers.groundPaths.map(row => [...row])
 
       if (currentTool === "erase") {
+        // Erase from both layers
+        newWaterPaths[y][x] = null
         newGroundPaths[y][x] = null
       } else if (currentTool === "paint" && selectedPathAsset) {
-        newGroundPaths[y][x] = { pathAssetId: selectedPathAsset }
+        // Route to appropriate layer based on terrainType
+        if (selectedPathTerrainType === "WATER") {
+          newWaterPaths[y][x] = { pathAssetId: selectedPathAsset }
+        } else {
+          // Default to ground (LAND or undefined)
+          newGroundPaths[y][x] = { pathAssetId: selectedPathAsset }
+        }
       }
 
       return {
         ...prev,
-        layers: { ...prev.layers, groundPaths: newGroundPaths }
+        layers: { ...prev.layers, waterPaths: newWaterPaths, groundPaths: newGroundPaths }
       }
     })
-  }, [currentTool, selectedPathAsset])
+  }, [currentTool, selectedPathAsset, selectedPathTerrainType])
 
   // Handle canvas cell click for characters
   const handleCharacterClick = useCallback((x: number, y: number) => {
@@ -303,14 +299,12 @@ export function MapEditorPage() {
   const handleCellClick = useCallback((x: number, y: number) => {
     if (activeLayer === "terrain") {
       handleTerrainClick(x, y)
-    } else if (activeLayer === "water") {
-      handleWaterPathClick(x, y)
-    } else if (activeLayer === "ground") {
-      handleGroundPathClick(x, y)
+    } else if (activeLayer === "paths") {
+      handlePathClick(x, y)
     } else if (activeLayer === "characters") {
       handleCharacterClick(x, y)
     }
-  }, [activeLayer, handleTerrainClick, handleWaterPathClick, handleGroundPathClick, handleCharacterClick])
+  }, [activeLayer, handleTerrainClick, handlePathClick, handleCharacterClick])
 
   // Shape tool handlers
   const handleShapeStart = useCallback((x: number, y: number) => {
@@ -337,10 +331,13 @@ export function MapEditorPage() {
             if (cx >= 0 && cx < prev.width && cy >= 0 && cy < prev.height) {
               if (activeLayer === "terrain" && selectedTileAsset) {
                 newTerrain[cy][cx] = { tileAssetId: selectedTileAsset, seed: generateSeed() }
-              } else if (activeLayer === "water" && selectedPathAsset) {
-                newWaterPaths[cy][cx] = { pathAssetId: selectedPathAsset }
-              } else if (activeLayer === "ground" && selectedPathAsset) {
-                newGroundPaths[cy][cx] = { pathAssetId: selectedPathAsset }
+              } else if (activeLayer === "paths" && selectedPathAsset) {
+                // Route to appropriate layer based on terrainType
+                if (selectedPathTerrainType === "WATER") {
+                  newWaterPaths[cy][cx] = { pathAssetId: selectedPathAsset }
+                } else {
+                  newGroundPaths[cy][cx] = { pathAssetId: selectedPathAsset }
+                }
               }
             }
           }
@@ -361,10 +358,13 @@ export function MapEditorPage() {
               if (dx * dx + dy * dy <= 1) {
                 if (activeLayer === "terrain" && selectedTileAsset) {
                   newTerrain[cy][cx] = { tileAssetId: selectedTileAsset, seed: generateSeed() }
-                } else if (activeLayer === "water" && selectedPathAsset) {
-                  newWaterPaths[cy][cx] = { pathAssetId: selectedPathAsset }
-                } else if (activeLayer === "ground" && selectedPathAsset) {
-                  newGroundPaths[cy][cx] = { pathAssetId: selectedPathAsset }
+                } else if (activeLayer === "paths" && selectedPathAsset) {
+                  // Route to appropriate layer based on terrainType
+                  if (selectedPathTerrainType === "WATER") {
+                    newWaterPaths[cy][cx] = { pathAssetId: selectedPathAsset }
+                  } else {
+                    newGroundPaths[cy][cx] = { pathAssetId: selectedPathAsset }
+                  }
                 }
               }
             }
@@ -379,7 +379,7 @@ export function MapEditorPage() {
     })
 
     setShapeStart(null)
-  }, [shapeStart, currentTool, activeLayer, selectedTileAsset, selectedPathAsset])
+  }, [shapeStart, currentTool, activeLayer, selectedTileAsset, selectedPathAsset, selectedPathTerrainType])
 
   // Handle saving the map
   const handleSave = async () => {
@@ -651,15 +651,15 @@ export function MapEditorPage() {
 
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setActiveLayer("water")}
+                    onClick={() => setActiveLayer("paths")}
                     className={`flex-1 py-2 px-3 rounded text-sm transition-colors ${
-                      activeLayer === "water"
-                        ? "bg-blue-600 text-white"
+                      activeLayer === "paths"
+                        ? "bg-orange-600 text-white"
                         : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
                     }`}
                   >
-                    <Droplets className="w-4 h-4 inline mr-2" />
-                    Water
+                    <Route className="w-4 h-4 inline mr-2" />
+                    Paths
                   </button>
                   <button
                     onClick={() => setShowPaths(!showPaths)}
@@ -667,20 +667,6 @@ export function MapEditorPage() {
                     title="Toggle paths visibility"
                   >
                     {showPaths ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setActiveLayer("ground")}
-                    className={`flex-1 py-2 px-3 rounded text-sm transition-colors ${
-                      activeLayer === "ground"
-                        ? "bg-amber-600 text-white"
-                        : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
-                    }`}
-                  >
-                    <Route className="w-4 h-4 inline mr-2" />
-                    Roads
                   </button>
                 </div>
 
@@ -794,10 +780,10 @@ export function MapEditorPage() {
             />
           )}
 
-          {(activeLayer === "water" || activeLayer === "ground") && (
+          {activeLayer === "paths" && (
             <TilePalette
               selectedAssetId={selectedPathAsset}
-              onSelectAsset={setSelectedPathAsset}
+              onSelectAsset={handlePathAssetSelect}
               tileType="PATH"
             />
           )}
@@ -818,16 +804,10 @@ export function MapEditorPage() {
                   Transitions blend automatically at boundaries.
                 </p>
               )}
-              {activeLayer === "water" && (
+              {activeLayer === "paths" && (
                 <p className="text-xs text-zinc-400">
-                  Select a water path (river, moat, lava) and paint.
-                  Water paths block movement unless covered by a road (bridge).
-                </p>
-              )}
-              {activeLayer === "ground" && (
-                <p className="text-xs text-zinc-400">
-                  Select a road/path type and paint. Roads make cells passable.
-                  Paint roads over water to create bridges.
+                  Select a path type and paint. Water paths (rivers) render below
+                  land paths (roads). Paint roads over water to create bridges.
                 </p>
               )}
               {activeLayer === "characters" && (
