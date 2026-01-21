@@ -27,8 +27,14 @@ export function configureAmplify() {
           oauth: {
             domain: `${playerPoolConfig.domain}.auth.${playerPoolConfig.region}.amazoncognito.com`,
             scopes: ["email", "openid", "profile"],
-            redirectSignIn: ["http://localhost:5173/auth/callback"],
-            redirectSignOut: ["http://localhost:5173"],
+            redirectSignIn: [
+              "http://localhost:5173/auth/callback",
+              "https://fxcom.bijup.com/auth/callback",
+            ],
+            redirectSignOut: [
+              "http://localhost:5173",
+              "https://fxcom.bijup.com",
+            ],
             responseType: "code",
           },
         },

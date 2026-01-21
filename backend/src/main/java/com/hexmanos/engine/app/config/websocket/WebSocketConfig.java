@@ -34,9 +34,10 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         // WebSocket endpoint - clients connect here
         registry.addEndpoint("/ws/game")
                 .setAllowedOrigins(
-                    "http://localhost:5173",  // Player frontend
-                    "http://localhost:5174",  // Admin frontend
-                    "http://localhost:8080"
+                    "http://localhost:5173",  // Player frontend (dev)
+                    "http://localhost:5174",  // Admin frontend (dev)
+                    "http://localhost:8080",
+                    "https://fxcom.bijup.com" // Player frontend (prod)
                 )
                 .withSockJS();  // Fallback for browsers without WebSocket support
     }

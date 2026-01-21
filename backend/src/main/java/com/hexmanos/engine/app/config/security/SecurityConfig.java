@@ -87,9 +87,10 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(List.of(
-            "http://localhost:5173",  // Player frontend
-            "http://localhost:5174",  // Admin frontend
-            "http://localhost:8080"
+            "http://localhost:5173",  // Player frontend (dev)
+            "http://localhost:5174",  // Admin frontend (dev)
+            "http://localhost:8080",
+            "https://fxcom.bijup.com" // Player frontend (prod)
         ));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
