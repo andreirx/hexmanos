@@ -55,12 +55,21 @@ public class UserController {
 
         String cognitoSub = jwt.getSubject();
         String email = jwt.getClaimAsString("email");
-        String username = jwt.getClaimAsString("cognito:username");
-        if (username == null) {
-            username = jwt.getClaimAsString("preferred_username");
+
+        // For display name, prefer: name > preferred_username > email prefix > cognito:username
+        // This handles Google OAuth users who get ugly usernames like "Google_123456789"
+        String displayName = jwt.getClaimAsString("name");
+        if (displayName == null || displayName.isBlank()) {
+            displayName = jwt.getClaimAsString("preferred_username");
         }
-        if (username == null) {
-            username = email != null ? email.split("@")[0] : "user";
+        if (displayName == null || displayName.isBlank()) {
+            displayName = email != null ? email.split("@")[0] : null;
+        }
+        if (displayName == null || displayName.isBlank()) {
+            displayName = jwt.getClaimAsString("cognito:username");
+        }
+        if (displayName == null || displayName.isBlank()) {
+            displayName = "user";
         }
 
         // Determine pool from issuer
@@ -68,7 +77,7 @@ public class UserController {
         User.UserPool pool = issuer.contains("admin") ? User.UserPool.ADMIN : User.UserPool.PLAYER;
 
         // Sync user (creates if not exists, updates last login if exists)
-        User user = userService.syncFromCognito(cognitoSub, pool, username, email);
+        User user = userService.syncFromCognito(cognitoSub, pool, displayName, email);
 
         return ResponseEntity.ok(UserDTO.DTOMapper.toDTO(user));
     }
