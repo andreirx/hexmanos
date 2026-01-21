@@ -237,6 +237,7 @@ USE THEM for documentation and UPDATE them after a task is complete and "bd clos
 NEVER REMOVE FUNCTIONALITY - if we have it, it was intended - unless EXPLICITLY ASKED FOR BY THE USER.
 When there's a problem, NEVER CONTRADICT THE EVIDENCE - think harder.
 Do not put TODOs in the code, put tasks in beads.
+When you work on a task changing structures or formats or schemas (refactoring), check if you need to make changes to all components editors, game engine, admin interface, and game renderer.
 
 ### A. Backlog Management
 1.  **Check Status:** Always start by checking `bd ready`.
