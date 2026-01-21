@@ -6,7 +6,10 @@ interface HeaderProps {
 }
 
 export function Header({ title = "Hexmanos" }: HeaderProps) {
-  const { user, isLoading, logout } = useAuth()
+  const { user, backendUser, isLoading, logout } = useAuth()
+
+  // Prefer backend user's display name, fall back to Cognito username
+  const displayName = backendUser?.displayName || user?.username || "User"
 
   return (
     <header className="flex justify-between items-center px-4 py-3 border-b border-zinc-800 bg-zinc-900">
@@ -21,7 +24,7 @@ export function Header({ title = "Hexmanos" }: HeaderProps) {
         ) : user ? (
           <div className="flex items-center gap-4">
             <span className="text-sm text-zinc-400">
-              Welcome, <span className="text-zinc-200">{user.username}</span>
+              Welcome, <span className="text-zinc-200">{displayName}</span>
             </span>
             <button
               onClick={() => logout()}
