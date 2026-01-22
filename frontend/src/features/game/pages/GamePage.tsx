@@ -223,21 +223,34 @@ class GameScene extends Phaser.Scene {
       }
     })
 
-    // Load character/object sprites - ALL idle frames for animation
+    // Load character/object sprites - idle and walk frames for animation
     characterAssetIds.forEach(assetId => {
       const asset = this.assetMap.get(assetId)
       if (!asset) return
 
       const def = this.entityDefinitions.get(assetId)
-      const idleFrameCount = def?.states?.idle?.frames ?? 1
       const visualStatePrefix = def?.visualStates?.[0] ? `${def.visualStates[0]}_` : ""
 
       // Load all idle frames
+      const idleFrameCount = def?.states?.idle?.frames ?? 1
       for (let i = 0; i < idleFrameCount; i++) {
         const key = `char_${assetId}_idle_${i}`
         const fileName = `${visualStatePrefix}idle_${i}.png`
         const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
         this.load.image(key, url)
+      }
+
+      // Load walk frames for all directions
+      const walkDirections = ["down", "up", "left", "right"] as const
+      for (const dir of walkDirections) {
+        const walkState = `walk_${dir}`
+        const walkFrameCount = def?.states?.[walkState]?.frames ?? 0
+        for (let i = 0; i < walkFrameCount; i++) {
+          const key = `char_${assetId}_${walkState}_${i}`
+          const fileName = `${visualStatePrefix}${walkState}_${i}.png`
+          const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
+          this.load.image(key, url)
+        }
       }
     })
   }
@@ -336,9 +349,9 @@ class GameScene extends Phaser.Scene {
 
       if (!this.textures.exists(firstFrameKey)) return
 
-      // Create animation if it doesn't exist and has multiple frames
-      const animKey = `anim_${char.assetId}_idle`
-      if (idleFrameCount > 1 && !this.anims.exists(animKey)) {
+      // Create idle animation if it doesn't exist and has multiple frames
+      const idleAnimKey = `anim_${char.assetId}_idle`
+      if (idleFrameCount > 1 && !this.anims.exists(idleAnimKey)) {
         const frames: Phaser.Types.Animations.AnimationFrame[] = []
         for (let i = 0; i < idleFrameCount; i++) {
           const frameKey = `char_${char.assetId}_idle_${i}`
@@ -349,11 +362,38 @@ class GameScene extends Phaser.Scene {
 
         if (frames.length > 0) {
           this.anims.create({
-            key: animKey,
+            key: idleAnimKey,
             frames: frames,
             frameRate: 4, // 4 FPS for idle animation
             repeat: -1 // Loop forever
           })
+        }
+      }
+
+      // Create walk animations for all directions
+      const walkDirections = ["down", "up", "left", "right"] as const
+      for (const dir of walkDirections) {
+        const walkState = `walk_${dir}`
+        const walkFrameCount = def?.states?.[walkState]?.frames ?? 0
+        const walkAnimKey = `anim_${char.assetId}_${walkState}`
+
+        if (walkFrameCount > 0 && !this.anims.exists(walkAnimKey)) {
+          const frames: Phaser.Types.Animations.AnimationFrame[] = []
+          for (let i = 0; i < walkFrameCount; i++) {
+            const frameKey = `char_${char.assetId}_${walkState}_${i}`
+            if (this.textures.exists(frameKey)) {
+              frames.push({ key: frameKey })
+            }
+          }
+
+          if (frames.length > 0) {
+            this.anims.create({
+              key: walkAnimKey,
+              frames: frames,
+              frameRate: 8, // 8 FPS for walk animation (faster than idle)
+              repeat: -1 // Loop while walking
+            })
+          }
         }
       }
 
@@ -372,8 +412,8 @@ class GameScene extends Phaser.Scene {
       })
 
       // Play idle animation if it exists
-      if (this.anims.exists(animKey)) {
-        sprite.play(animKey)
+      if (this.anims.exists(idleAnimKey)) {
+        sprite.play(idleAnimKey)
       }
 
       this.characterSprites.set(char.id, sprite)
@@ -535,9 +575,13 @@ class GameScene extends Phaser.Scene {
   }
 
   // Animate character movement with tween (called when receiving WebSocket event)
-  animateCharacterMove(characterId: string, newX: number, newY: number) {
+  animateCharacterMove(characterId: string, newX: number, newY: number, direction?: string) {
     const sprite = this.characterSprites.get(characterId)
     if (!sprite) return
+
+    // Get the character's asset ID for animation lookup
+    const char = this.characters.find(c => c.id === characterId)
+    if (!char) return
 
     // Mark character as moving
     this.movingCharacters.add(characterId)
@@ -545,6 +589,27 @@ class GameScene extends Phaser.Scene {
     // Calculate target pixel position
     const targetX = newX * TILE_SIZE + TILE_SIZE / 2
     const targetY = newY * TILE_SIZE + TILE_SIZE / 2
+
+    // Play walk animation if it exists, otherwise keep showing idle
+    if (direction) {
+      const directionMap: Record<string, string> = {
+        "n": "walk_up",
+        "s": "walk_down",
+        "e": "walk_right",
+        "w": "walk_left",
+        "up": "walk_up",
+        "down": "walk_down",
+        "right": "walk_right",
+        "left": "walk_left",
+      }
+      const walkState = directionMap[direction.toLowerCase()] || "walk_down"
+      const walkAnimKey = `anim_${char.assetId}_${walkState}`
+
+      // Only play walk animation if it exists (otherwise keep current frame)
+      if (this.anims.exists(walkAnimKey)) {
+        sprite.play(walkAnimKey)
+      }
+    }
 
     // Animate the movement using a tween
     this.tweens.add({
@@ -558,10 +623,20 @@ class GameScene extends Phaser.Scene {
         this.movingCharacters.delete(characterId)
 
         // Update character data
-        const char = this.characters.find(c => c.id === characterId)
-        if (char) {
-          char.x = newX
-          char.y = newY
+        char.x = newX
+        char.y = newY
+
+        // Return to idle: try animation first, fall back to static texture
+        const idleAnimKey = `anim_${char.assetId}_idle`
+        if (this.anims.exists(idleAnimKey)) {
+          sprite.play(idleAnimKey)
+        } else {
+          // No idle animation (single frame) - stop any animation and show static idle frame
+          sprite.stop()
+          const idleTextureKey = `char_${char.assetId}_idle_0`
+          if (this.textures.exists(idleTextureKey)) {
+            sprite.setTexture(idleTextureKey)
+          }
         }
       }
     })
@@ -616,7 +691,7 @@ export function GamePage() {
   const handleCharacterMove = useCallback((event: CharacterMoveEvent) => {
     const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
     if (scene) {
-      scene.animateCharacterMove(event.characterId, event.x, event.y)
+      scene.animateCharacterMove(event.characterId, event.x, event.y, event.direction)
     }
   }, [])
 
