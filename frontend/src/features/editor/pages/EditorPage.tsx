@@ -7,8 +7,9 @@ import { Header } from "@/components/layout"
 import { getPresignedUrl, uploadToPresignedUrl, registerAsset, getAssetFile, loadAssetImage } from "@/api/assets"
 import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
-import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, Pencil, Eraser, Square, Undo2, Redo2, MoveLeft, MoveRight, Minus, User, Package, ArrowRightLeft, CopyPlus } from "lucide-react"
+import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, Pencil, Eraser, Square, Undo2, Redo2, MoveLeft, MoveRight, Minus, User, Package, ArrowRightLeft, CopyPlus, Wand2 } from "lucide-react"
 import type { UserDTO, AssetDTO } from "@/api/types"
+import { generateStickmanAnimations } from "../utils/stickmanGenerator"
 
 // Entity type for the editor
 type EntityType = "CHARACTER" | "OBJECT"
@@ -813,6 +814,41 @@ export function EditorPage() {
     })
   }
 
+  // Generate stickman animations for the current visual state
+  const handleGenerateStickman = () => {
+    if (entityType !== "CHARACTER") {
+      setStatusMessage({ type: "error", text: "Stickman generator only works for characters" })
+      return
+    }
+
+    const stickmanData = generateStickmanAnimations(currentColor)
+
+    setAnimationData((prev) => {
+      const newData = { ...prev }
+      const vsData = { ...newData[currentVisualState] }
+
+      // Update each animation state with generated frames
+      for (const [stateId, frames] of Object.entries(stickmanData)) {
+        if (vsData[stateId]) {
+          vsData[stateId] = {
+            frames: frames.map((pixels: Uint8ClampedArray) => ({ pixels })),
+          }
+        }
+      }
+
+      newData[currentVisualState] = vsData
+      return newData
+    })
+
+    // Clear undo history for all frames in this visual state
+    historyRef.current.clear()
+
+    setStatusMessage({
+      type: "success",
+      text: `Stickman generated for "${currentVisualState}" visual state with color ${currentColor}`,
+    })
+  }
+
   const pixelsToBlob = (pixels: Uint8ClampedArray): Promise<Blob> => {
     return new Promise((resolve, reject) => {
       const canvas = document.createElement("canvas")
@@ -1329,6 +1365,28 @@ export function EditorPage() {
             </Button>
           </CardContent>
         </Card>
+
+        {entityType === "CHARACTER" && (
+          <Card className="bg-zinc-800 border-zinc-700">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-zinc-300">Auto-Generate</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Button
+                variant="outline"
+                className="w-full bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
+                onClick={handleGenerateStickman}
+                title={`Generate stickman with current color (${currentColor}) for ${currentVisualState} visual state`}
+              >
+                <Wand2 className="w-4 h-4 mr-2" />
+                Generate Stickman
+              </Button>
+              <p className="text-xs text-zinc-500 mt-2">
+                Generates all animation frames for the current visual state ({currentVisualState}) using the selected color.
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Main Canvas Area */}
