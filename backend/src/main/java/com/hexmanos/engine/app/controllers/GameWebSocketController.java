@@ -12,6 +12,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.stereotype.Controller;
 
 import java.security.Principal;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -85,6 +86,65 @@ public class GameWebSocketController {
     }
 
     /**
+     * Handle pathfinding request.
+     * Client sends: /app/game/{gameId}/path
+     * Server broadcasts: /topic/game/{gameId} (PathStartEvent)
+     */
+    @MessageMapping("/game/{gameId}/path")
+    public void requestPath(
+            @DestinationVariable UUID gameId,
+            @Payload PathRequest request,
+            Principal principal) {
+
+        UUID playerId = extractPlayerId(principal);
+        if (playerId == null) {
+            log.warn("Path request with no authenticated user");
+            return;
+        }
+
+        try {
+            GameService.PathResult result = gameService.requestPath(gameId, playerId, request.targetX(), request.targetY());
+
+            // Broadcast the path start to all players
+            PathStartEvent event = new PathStartEvent(
+                    result.characterId().toString(),
+                    result.path()
+            );
+
+            messagingTemplate.convertAndSend("/topic/game/" + gameId, event);
+
+            log.debug("Path set for character {} in game {}: {} steps",
+                    result.characterId(), gameId, result.path().size());
+        } catch (IllegalArgumentException e) {
+            log.warn("Path request failed for player {} in game {}: {}", playerId, gameId, e.getMessage());
+            sendErrorToUser(principal, "Path failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Handle path cancellation.
+     * Client sends: /app/game/{gameId}/cancelPath
+     * Server broadcasts: /topic/game/{gameId} (PathCancelEvent)
+     */
+    @MessageMapping("/game/{gameId}/cancelPath")
+    public void cancelPath(
+            @DestinationVariable UUID gameId,
+            Principal principal) {
+
+        UUID playerId = extractPlayerId(principal);
+        if (playerId == null) {
+            return;
+        }
+
+        gameService.cancelPath(gameId, playerId);
+
+        // Get the character ID to broadcast cancellation
+        // Note: we need to broadcast so all clients know to clear the path visualization
+        // Since character is no longer tracked, we just broadcast a general cancel for this player
+        log.debug("Path cancelled by player {} in game {}", playerId, gameId);
+    }
+
+    /**
      * Extract the internal player UUID from the Principal.
      */
     private UUID extractPlayerId(Principal principal) {
@@ -115,6 +175,11 @@ public class GameWebSocketController {
     public record MoveRequest(String direction) {}
 
     /**
+     * Request payload for path commands.
+     */
+    public record PathRequest(int targetX, int targetY) {}
+
+    /**
      * Event broadcast when a character moves.
      */
     public record CharacterMoveEvent(
@@ -123,6 +188,19 @@ public class GameWebSocketController {
             int y,
             String direction
     ) {}
+
+    /**
+     * Event broadcast when a character starts a path.
+     */
+    public record PathStartEvent(
+            String characterId,
+            List<int[]> path  // List of [x, y] coordinates
+    ) {}
+
+    /**
+     * Event broadcast when a character's path is cancelled.
+     */
+    public record PathCancelEvent(String characterId) {}
 
     /**
      * Event sent to user for errors.

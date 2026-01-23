@@ -79,7 +79,8 @@ public class GameRoomManager {
     }
 
     /**
-     * Move a character in the game.
+     * Move a character in the game (single step).
+     * Validates terrain passability and character collisions.
      */
     public boolean moveCharacter(UUID gameId, UUID characterId, int dx, int dy) {
         GameState state = activeGames.get(gameId);
@@ -87,13 +88,34 @@ public class GameRoomManager {
             return false;
         }
 
-        Optional<GameCharacter> character = state.findCharacter(characterId);
-        if (character.isEmpty()) {
+        Optional<GameCharacter> characterOpt = state.findCharacter(characterId);
+        if (characterOpt.isEmpty()) {
             return false;
         }
 
-        // TODO: Add collision detection with map terrain
-        character.get().move(dx, dy);
+        GameCharacter character = characterOpt.get();
+        int newX = character.getX() + dx;
+        int newY = character.getY() + dy;
+
+        // Check terrain passability if terrain grid is initialized
+        TerrainGrid terrain = state.getTerrainGrid();
+        if (terrain != null) {
+            if (!terrain.isInBounds(newX, newY) || !terrain.isPassable(newX, newY)) {
+                log.debug("Move blocked: terrain not passable at ({}, {})", newX, newY);
+                return false;
+            }
+        }
+
+        // Check for character collisions
+        if (state.isOccupied(newX, newY, characterId)) {
+            log.debug("Move blocked: position ({}, {}) occupied by another character", newX, newY);
+            return false;
+        }
+
+        // Clear any existing path when manually moving
+        character.clearPath();
+
+        character.move(dx, dy);
         return true;
     }
 
@@ -176,5 +198,128 @@ public class GameRoomManager {
             return Collections.emptyList();
         }
         return state.getCharacters();
+    }
+
+    // ============================================
+    // Pathfinding methods
+    // ============================================
+
+    /**
+     * Request a path for a character to a target position.
+     * Returns the computed path, or empty list if no path found.
+     */
+    public List<Point> requestPath(UUID gameId, UUID characterId, int targetX, int targetY) {
+        GameState state = activeGames.get(gameId);
+        if (state == null) {
+            return Collections.emptyList();
+        }
+
+        Optional<GameCharacter> characterOpt = state.findCharacter(characterId);
+        if (characterOpt.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        GameCharacter character = characterOpt.get();
+        TerrainGrid terrain = state.getTerrainGrid();
+        if (terrain == null) {
+            log.warn("Terrain grid not initialized for game {}", gameId);
+            return Collections.emptyList();
+        }
+
+        // Compute path using A*
+        Point start = new Point(character.getX(), character.getY());
+        Point target = new Point(targetX, targetY);
+        Set<Point> obstacles = state.getOccupiedPositions(characterId);
+
+        List<Point> path = Pathfinder.findPath(start, target, terrain, obstacles);
+
+        if (!path.isEmpty()) {
+            character.setPath(path);
+            log.debug("Set path for character {} in game {}: {} steps", characterId, gameId, path.size());
+        } else {
+            log.debug("No path found for character {} to ({}, {}) in game {}", characterId, targetX, targetY, gameId);
+        }
+
+        return path;
+    }
+
+    /**
+     * Cancel the current path for a character.
+     */
+    public void cancelPath(UUID gameId, UUID characterId) {
+        GameState state = activeGames.get(gameId);
+        if (state == null) {
+            return;
+        }
+
+        state.findCharacter(characterId).ifPresent(character -> {
+            character.clearPath();
+            log.debug("Cancelled path for character {} in game {}", characterId, gameId);
+        });
+    }
+
+    /**
+     * Execute the next path step for a character.
+     * Returns the new position if moved, or null if no move was made.
+     */
+    public Point executePathStep(UUID gameId, UUID characterId) {
+        GameState state = activeGames.get(gameId);
+        if (state == null) {
+            return null;
+        }
+
+        Optional<GameCharacter> characterOpt = state.findCharacter(characterId);
+        if (characterOpt.isEmpty()) {
+            return null;
+        }
+
+        GameCharacter character = characterOpt.get();
+        if (!character.hasPath()) {
+            return null;
+        }
+
+        Point nextStep = character.getNextPathStep();
+        if (nextStep == null) {
+            character.clearPath();
+            return null;
+        }
+
+        // Calculate delta
+        int dx = nextStep.x() - character.getX();
+        int dy = nextStep.y() - character.getY();
+
+        // Re-validate the move (terrain or characters may have changed)
+        TerrainGrid terrain = state.getTerrainGrid();
+        if (terrain != null && !terrain.isPassable(nextStep.x(), nextStep.y())) {
+            log.debug("Path step blocked by terrain at {}", nextStep);
+            character.clearPath();
+            return null;
+        }
+
+        if (state.isOccupied(nextStep.x(), nextStep.y(), characterId)) {
+            log.debug("Path step blocked by character at {}", nextStep);
+            character.clearPath();
+            return null;
+        }
+
+        // Execute the move (don't use moveCharacter as it clears the path)
+        character.move(dx, dy);
+        character.advancePath();
+
+        return nextStep;
+    }
+
+    /**
+     * Check if a character has an active path.
+     */
+    public boolean hasPath(UUID gameId, UUID characterId) {
+        GameState state = activeGames.get(gameId);
+        if (state == null) {
+            return false;
+        }
+
+        return state.findCharacter(characterId)
+                .map(GameCharacter::hasPath)
+                .orElse(false);
     }
 }

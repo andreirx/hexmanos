@@ -238,6 +238,7 @@ NEVER REMOVE FUNCTIONALITY - if we have it, it was intended - unless EXPLICITLY 
 When there's a problem, NEVER CONTRADICT THE EVIDENCE - think harder.
 Do not put TODOs in the code, put tasks in beads.
 When you work on a task changing structures or formats or schemas (refactoring), check if you need to make changes to all components editors, game engine, admin interface, and game renderer.
+Always mind the software development best practices. Clean code, clean architecture, contracts between modules.
 
 ### A. Backlog Management
 1.  **Check Status:** Always start by checking `bd ready`.

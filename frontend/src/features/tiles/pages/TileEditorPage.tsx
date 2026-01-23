@@ -22,6 +22,7 @@ interface TileProperties {
   variations: number
   tileType?: "TILE" | "PATH"  // PATH tiles have exactly 15 variations
   terrainType?: "LAND" | "WATER"  // WATER paths are rivers (not passable)
+  movementCost?: number  // 1=easy (default), 2=normal, 3+=difficult, 0=impassable (for pathfinding)
 }
 
 const TILE_SIZE = 128
@@ -91,6 +92,7 @@ export function TileEditorPage() {
   const [brushSize, setBrushSize] = useState(1)
   const [tileName, setTileName] = useState("")
   const [passable, setPassable] = useState(true)
+  const [movementCost, setMovementCost] = useState(1) // 1=easy (default), 2=normal, 3+=difficult
   const [tileType, setTileType] = useState<"TILE" | "PATH">("TILE")
   const [terrainType, setTerrainType] = useState<"LAND" | "WATER">("LAND")
   const [isSaving, setIsSaving] = useState(false)
@@ -165,6 +167,7 @@ export function TileEditorPage() {
       setVariations(newVariations)
       setCurrentVariationIndex(0)
       setPassable(properties.passable)
+      setMovementCost(properties.movementCost ?? 1) // Default to 1 if not set
       setTileType(properties.tileType || "TILE")
       setTerrainType(properties.terrainType || "LAND")
       clearAllHistory()
@@ -194,6 +197,7 @@ export function TileEditorPage() {
     setCurrentVariationIndex(0)
     setTileName("")
     setPassable(true)
+    setMovementCost(1)
     setTileType("TILE")
     setTerrainType("LAND")
     setLoadedAsset(null)
@@ -764,6 +768,10 @@ export function TileEditorPage() {
         ? terrainType === "LAND"  // LAND paths passable, WATER paths (rivers) not
         : passable
 
+      // Movement cost: 0 means impassable, 1+ is the cost
+      // If not passable, movementCost should be 0
+      const effectiveMovementCost = effectivePassable ? movementCost : 0
+
       const properties: TileProperties = {
         name: tileName,
         tileSize: TILE_SIZE,
@@ -771,6 +779,7 @@ export function TileEditorPage() {
         variations: variations.length,
         tileType: tileType,
         terrainType: terrainType,
+        movementCost: effectiveMovementCost,
       }
 
       const fileNames: string[] = ["properties.json"]
@@ -1565,6 +1574,37 @@ export function TileEditorPage() {
                     : passable
                       ? "Players can walk through"
                       : "Blocks player movement"}
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs text-zinc-400 block mb-2">
+                  Movement Cost {!passable && "(disabled when impassable)"}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={1}
+                    max={10}
+                    value={movementCost}
+                    onChange={(e) => setMovementCost(parseInt(e.target.value))}
+                    disabled={!passable}
+                    className="flex-1 h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+                  />
+                  <span className={`text-sm font-mono w-6 text-center ${!passable ? "text-zinc-600" : "text-zinc-100"}`}>
+                    {passable ? movementCost : 0}
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-500 mt-2">
+                  {!passable
+                    ? "Impassable tiles have cost 0"
+                    : movementCost === 1
+                      ? "Easy terrain (roads, plains)"
+                      : movementCost <= 3
+                        ? "Normal terrain (grass, dirt)"
+                        : movementCost <= 6
+                          ? "Difficult terrain (forest, hills)"
+                          : "Very difficult terrain (swamp, mountains)"}
                 </p>
               </div>
 

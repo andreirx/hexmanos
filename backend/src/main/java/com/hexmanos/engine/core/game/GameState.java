@@ -25,6 +25,9 @@ public class GameState implements Serializable {
     private List<GameCharacter> characters = new ArrayList<>();
     private Map<UUID, UUID> characterControl = new HashMap<>();  // characterId -> playerId
 
+    // Transient fields - not serialized to snapshots
+    private transient TerrainGrid terrainGrid;
+
     /**
      * Create a new game state for the given game.
      */
@@ -113,6 +116,45 @@ public class GameState implements Serializable {
         this.tick++;
         this.stateTime = Instant.now();
         // Future: Add autonomous character behavior here
+    }
+
+    /**
+     * Initialize the terrain grid from map data.
+     * Should be called after loading or restoring state.
+     *
+     * @param tileCosts Map of tile/path asset ID to movement cost (1 = default)
+     */
+    public void initializeTerrain(Map<String, Integer> tileCosts) {
+        this.terrainGrid = TerrainGrid.fromMapJson(mapDataJson, tileCosts);
+    }
+
+    /**
+     * Get the terrain grid (may be null if not initialized).
+     */
+    public TerrainGrid getTerrainGrid() {
+        return terrainGrid;
+    }
+
+    /**
+     * Get set of positions occupied by characters (excluding a specific character).
+     */
+    public Set<Point> getOccupiedPositions(UUID excludeCharacterId) {
+        Set<Point> occupied = new HashSet<>();
+        for (GameCharacter c : characters) {
+            if (!c.getId().equals(excludeCharacterId)) {
+                occupied.add(new Point(c.getX(), c.getY()));
+            }
+        }
+        return occupied;
+    }
+
+    /**
+     * Check if a position is occupied by a character (excluding a specific one).
+     */
+    public boolean isOccupied(int x, int y, UUID excludeCharacterId) {
+        return characters.stream()
+                .filter(c -> !c.getId().equals(excludeCharacterId))
+                .anyMatch(c -> c.getX() == x && c.getY() == y);
     }
 
     /**

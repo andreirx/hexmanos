@@ -13,16 +13,27 @@ export interface CharacterMoveEvent {
   direction: string
 }
 
+export interface PathStartEvent {
+  characterId: string
+  path: [number, number][]  // Array of [x, y] coordinates
+}
+
+export interface PathCancelEvent {
+  characterId: string
+}
+
 export interface GameWebSocketOptions {
   gameId: string
   onCharacterMove?: (event: CharacterMoveEvent) => void
+  onPathStart?: (event: PathStartEvent) => void
+  onPathCancel?: (event: PathCancelEvent) => void
   onError?: (message: string) => void
   onConnected?: () => void
   onDisconnected?: () => void
 }
 
 export function useGameWebSocket(options: GameWebSocketOptions) {
-  const { gameId, onCharacterMove, onError, onConnected, onDisconnected } = options
+  const { gameId, onCharacterMove, onPathStart, onPathCancel, onError, onConnected, onDisconnected } = options
 
   const clientRef = useRef<Client | null>(null)
   const subscriptionRef = useRef<StompSubscription | null>(null)
@@ -31,8 +42,8 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
   const currentGameIdRef = useRef<string | null>(null)
 
   // Store callbacks in refs to avoid dependency changes
-  const callbacksRef = useRef({ onCharacterMove, onError, onConnected, onDisconnected })
-  callbacksRef.current = { onCharacterMove, onError, onConnected, onDisconnected }
+  const callbacksRef = useRef({ onCharacterMove, onPathStart, onPathCancel, onError, onConnected, onDisconnected })
+  callbacksRef.current = { onCharacterMove, onPathStart, onPathCancel, onError, onConnected, onDisconnected }
 
   // Send move command - stable reference
   const sendMove = useCallback((direction: "n" | "s" | "e" | "w") => {
@@ -57,6 +68,34 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
 
     clientRef.current.publish({
       destination: `/app/game/${currentGameIdRef.current}/idle`,
+      body: "{}",
+    })
+    return true
+  }, [])
+
+  // Send path request - stable reference
+  const sendPath = useCallback((targetX: number, targetY: number) => {
+    if (!clientRef.current?.active || !currentGameIdRef.current) {
+      console.warn("Cannot send path: WebSocket not connected")
+      return false
+    }
+
+    console.log("[WebSocket] Publishing path request to:", targetX, targetY)
+    clientRef.current.publish({
+      destination: `/app/game/${currentGameIdRef.current}/path`,
+      body: JSON.stringify({ targetX, targetY }),
+    })
+    return true
+  }, [])
+
+  // Send cancel path - stable reference
+  const sendCancelPath = useCallback(() => {
+    if (!clientRef.current?.active || !currentGameIdRef.current) {
+      return false
+    }
+
+    clientRef.current.publish({
+      destination: `/app/game/${currentGameIdRef.current}/cancelPath`,
       body: "{}",
     })
     return true
@@ -133,9 +172,24 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
           `/topic/game/${gameId}`,
           (message: IMessage) => {
             try {
-              const event = JSON.parse(message.body) as CharacterMoveEvent
-              console.log("[WebSocket] Received move event:", event)
-              callbacksRef.current.onCharacterMove?.(event)
+              const event = JSON.parse(message.body)
+
+              // Detect event type by checking for specific fields
+              if ("path" in event && Array.isArray(event.path)) {
+                // PathStartEvent has a 'path' array
+                console.log("[WebSocket] Received path start event:", event)
+                callbacksRef.current.onPathStart?.(event as PathStartEvent)
+              } else if ("direction" in event) {
+                // CharacterMoveEvent has 'direction'
+                console.log("[WebSocket] Received move event:", event)
+                callbacksRef.current.onCharacterMove?.(event as CharacterMoveEvent)
+              } else if ("characterId" in event && Object.keys(event).length === 1) {
+                // PathCancelEvent only has 'characterId'
+                console.log("[WebSocket] Received path cancel event:", event)
+                callbacksRef.current.onPathCancel?.(event as PathCancelEvent)
+              } else {
+                console.log("[WebSocket] Unknown event type:", event)
+              }
             } catch (e) {
               console.error("Failed to parse WebSocket message:", e)
             }
@@ -206,5 +260,7 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
     isConnected,
     sendMove,
     sendIdle,
+    sendPath,
+    sendCancelPath,
   }
 }

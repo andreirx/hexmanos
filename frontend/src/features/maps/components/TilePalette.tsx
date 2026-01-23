@@ -11,6 +11,7 @@ interface TileProperties {
   variations: number
   tileType?: "TILE" | "PATH"
   terrainType?: "LAND" | "WATER"
+  movementCost?: number  // 1=easy (default), 2=normal, 3+=difficult, 0=impassable
 }
 
 interface TilePaletteProps {

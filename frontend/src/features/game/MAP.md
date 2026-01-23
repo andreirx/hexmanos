@@ -44,18 +44,53 @@ The core game rendering engine embedded in GamePage.tsx.
 - Sprites are interactive (click to select)
 - NO tinting used - selection indicated by glowing disc underlay
 
+### Player Colors
+8 distinct colors assigned to players (index 0-7):
+- 0: Red (`0xff4444`)
+- 1: Green (`0x44ff44`)
+- 2: Blue (`0x4444ff`)
+- 3: Yellow (`0xffff44`)
+- 4: Magenta (`0xff44ff`)
+- 5: Cyan (`0x44ffff`)
+- 6: Orange (`0xff8844`)
+- 7: Purple (`0x8844ff`)
+
+Host gets color 0, subsequent players cycle through colors.
+
 ### Selection Indicator
-- Soft glowing green disc rendered under the controlled character
+- Soft glowing disc rendered under the controlled character
+- Uses **current player's color** (not hardcoded green)
 - Multiple concentric semi-transparent circles for glow effect
-- Colors: `0x00ff88` and `0x00ffaa` with varying alpha (0.1 to 0.3)
+- Alpha values: 0.1 to 0.3 for soft glow
 - Radius based on TILE_SIZE (0.6x to 1.4x)
 - Moves with character during animations
+
+### Character Glow (All Controlled Characters)
+- Each character has a glow graphics layer
+- When controlled by any player, shows that player's color glow
+- `characterGlows` Map tracks glow per character
+- `updateCharacterGlow(characterId, controlledByPlayerId)` updates glow state
+- Glows animate with character movement
+
+### Click-Based Control
+- **Left-click character:** Auto take control (releases current if any)
+- **Left-click empty tile:** Release current character
+- **Left-click controlled character:** No-op (already controlled)
+- **Character controlled by other player:** Shows "unavailable" in console
+- No Take/Release buttons in UI - pure click interaction
 
 ### Camera System
 - **No character controlled:** WASD/arrows pan the camera, zoom 0.25x, centered on map
 - **Character controlled:** WASD/arrows send move commands, zoom 1x, camera follows character
 - Mouse wheel zoom (0.1x to 2x range)
 - Animated zoom transitions (300ms, Cubic.easeOut easing)
+
+### Pathfinding (Right-Click)
+- **Right-click target tile:** Sends path request to backend
+- Backend computes A* path and executes steps automatically (200ms per step)
+- Path visualization currently **disabled** (will be re-enabled for squad movement)
+- Manual movement (WASD) cancels active path
+- New path request cancels previous path
 
 ### Movement System
 
@@ -93,6 +128,12 @@ The core game rendering engine embedded in GamePage.tsx.
 - React state updates UI (sidebars), Phaser handles canvas rendering
 - This separation prevents the "Phaser recreation" bug where controlledCharacterId was lost
 
+**Cleanup on Unmount:**
+- When navigating away from game screen, controlled character is released
+- Uses refs (`gameIdRef`, `controlledCharacterIdRef`) to avoid stale closures
+- Calls `relinquishCharacter(gameId)` in useEffect cleanup
+- Fire-and-forget API call (component is unmounting)
+
 ## WebSocket Integration
 
 Uses the `useGameWebSocket` hook from `@/hooks/useGameWebSocket.ts`:
@@ -112,15 +153,28 @@ Uses the `useGameWebSocket` hook from `@/hooks/useGameWebSocket.ts`:
 |-----------|-------------|---------|---------|
 | Send | `/app/game/{gameId}/move` | `{ direction: "n"/"s"/"e"/"w" }` | Move controlled character |
 | Send | `/app/game/{gameId}/idle` | `{}` | Mark character as idle |
+| Send | `/app/game/{gameId}/path` | `{ targetX, targetY }` | Request A* path to target |
+| Send | `/app/game/{gameId}/cancelPath` | `{}` | Cancel current path |
 | Receive | `/topic/game/{gameId}` | `CharacterMoveEvent` | Character position update |
+| Receive | `/topic/game/{gameId}` | `PathStartEvent` | Path computed, started |
+| Receive | `/topic/game/{gameId}` | `PathCancelEvent` | Path cancelled |
 
-### CharacterMoveEvent
+### Event Types
 ```typescript
-{
+interface CharacterMoveEvent {
   characterId: string
   x: number
   y: number
   direction: string
+}
+
+interface PathStartEvent {
+  characterId: string
+  path: [number, number][]  // Array of [x, y] coordinates
+}
+
+interface PathCancelEvent {
+  characterId: string
 }
 ```
 

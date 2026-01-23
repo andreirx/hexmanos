@@ -45,7 +45,8 @@
       "Bash(bd show:*)",
       "Bash(PGPASSWORD='F0fkmghi1!' /Applications/Postgres.app/Contents/Versions/17/bin/psql:*)",
       "Bash(find:*)",
-      "Bash(npm run typecheck:*)"
+      "Bash(npm run typecheck:*)",
+      "Bash(grep:*)"
     ]
   }
 }

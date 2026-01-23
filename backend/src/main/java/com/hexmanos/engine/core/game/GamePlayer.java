@@ -18,6 +18,7 @@ public class GamePlayer {
     private UUID playerId;
     private PlayerRole role;
     private UUID controlledCharacterId;
+    private int colorIndex;  // 0-7 for 8 different player colors
     private Instant joinedAt;
     private Instant lastSeenAt;
 

@@ -12,6 +12,9 @@ import java.util.List;
 @Slf4j
 public class MapValidationService {
 
+    public static final int MIN_MAP_SIZE = 4;
+    public static final int MAX_MAP_SIZE = 256;
+
     /**
      * Validation result containing errors, warnings, and statistics.
      */
@@ -44,6 +47,19 @@ public class MapValidationService {
     ) {
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
+
+        // Validation Rule 0: Map size must be within bounds
+        if (width < MIN_MAP_SIZE || width > MAX_MAP_SIZE) {
+            errors.add(String.format("Map width must be between %d and %d (got %d).", MIN_MAP_SIZE, MAX_MAP_SIZE, width));
+        }
+        if (height < MIN_MAP_SIZE || height > MAX_MAP_SIZE) {
+            errors.add(String.format("Map height must be between %d and %d (got %d).", MIN_MAP_SIZE, MAX_MAP_SIZE, height));
+        }
+
+        // If dimensions are invalid, return early to prevent array index issues
+        if (!errors.isEmpty()) {
+            return new ValidationResult(false, errors, warnings, 0, 0, 0, 0);
+        }
 
         int terrainCount = 0;
         int pathCount = 0;

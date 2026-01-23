@@ -5,6 +5,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -27,6 +29,10 @@ public class GameCharacter implements Serializable {
     private int health;
     private int maxHealth;
     private boolean controlled;     // Has active player control
+
+    // Pathfinding state
+    private transient List<Point> currentPath;  // transient = not serialized to snapshots
+    private transient int pathIndex;
 
     /**
      * Create a new game character from a map placement.
@@ -108,5 +114,80 @@ public class GameCharacter implements Serializable {
      */
     public void idle() {
         this.currentState = "idle";
+    }
+
+    // ============================================
+    // Pathfinding methods
+    // ============================================
+
+    /**
+     * Set a new path for the character to follow.
+     * The first point should be the current position.
+     */
+    public void setPath(List<Point> path) {
+        this.currentPath = new ArrayList<>(path);
+        this.pathIndex = 0; // Start at current position
+    }
+
+    /**
+     * Get the next step in the path (the point to move to).
+     * Returns null if no path or at end of path.
+     */
+    public Point getNextPathStep() {
+        if (!hasPath()) {
+            return null;
+        }
+        // pathIndex points to current position, next step is pathIndex + 1
+        int nextIndex = pathIndex + 1;
+        if (nextIndex >= currentPath.size()) {
+            return null; // At end of path
+        }
+        return currentPath.get(nextIndex);
+    }
+
+    /**
+     * Advance to the next point in the path.
+     * Should be called after successfully moving to the next step.
+     */
+    public void advancePath() {
+        if (hasPath()) {
+            pathIndex++;
+            // If we've reached the end, clear the path
+            if (pathIndex >= currentPath.size() - 1) {
+                clearPath();
+            }
+        }
+    }
+
+    /**
+     * Clear the current path.
+     */
+    public void clearPath() {
+        this.currentPath = null;
+        this.pathIndex = 0;
+    }
+
+    /**
+     * Check if character has an active path.
+     */
+    public boolean hasPath() {
+        return currentPath != null && !currentPath.isEmpty() && pathIndex < currentPath.size() - 1;
+    }
+
+    /**
+     * Get the full current path (for visualization).
+     */
+    public List<Point> getCurrentPath() {
+        return currentPath != null ? new ArrayList<>(currentPath) : List.of();
+    }
+
+    /**
+     * Get remaining path points from current position.
+     */
+    public List<Point> getRemainingPath() {
+        if (currentPath == null || pathIndex >= currentPath.size()) {
+            return List.of();
+        }
+        return new ArrayList<>(currentPath.subList(pathIndex, currentPath.size()));
     }
 }

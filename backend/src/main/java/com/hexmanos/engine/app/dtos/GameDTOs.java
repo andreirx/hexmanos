@@ -6,6 +6,7 @@ import com.hexmanos.engine.core.game.GamePlayer;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -43,7 +44,8 @@ public class GameDTOs {
             List<GamePlayerDTO> players,
             List<GameCharacterDTO> characters
     ) {
-        public static GameDTO from(Game game, List<GamePlayer> players, List<GameCharacter> characters) {
+        public static GameDTO from(Game game, List<GamePlayer> players, List<GameCharacter> characters,
+                                   Map<UUID, UUID> characterControl) {
             return new GameDTO(
                     game.getId(),
                     game.getName(),
@@ -53,7 +55,9 @@ public class GameDTOs {
                     game.getCreatedAt(),
                     game.getLastActivityAt(),
                     players.stream().map(GamePlayerDTO::from).toList(),
-                    characters.stream().map(GameCharacterDTO::from).toList()
+                    characters.stream()
+                            .map(c -> GameCharacterDTO.from(c, characterControl.get(c.getId())))
+                            .toList()
             );
         }
 
@@ -77,6 +81,7 @@ public class GameDTOs {
             UUID playerId,
             String role,
             UUID controlledCharacterId,
+            int colorIndex,
             Instant joinedAt,
             Instant lastSeenAt
     ) {
@@ -86,6 +91,7 @@ public class GameDTOs {
                     player.getPlayerId(),
                     player.getRole().name(),
                     player.getControlledCharacterId(),
+                    player.getColorIndex(),
                     player.getJoinedAt(),
                     player.getLastSeenAt()
             );
@@ -102,9 +108,14 @@ public class GameDTOs {
             String visualState,
             int health,
             int maxHealth,
-            boolean controlled
+            boolean controlled,
+            UUID controlledByPlayerId  // The player ID controlling this character (for color lookup)
     ) {
         public static GameCharacterDTO from(GameCharacter character) {
+            return from(character, null);
+        }
+
+        public static GameCharacterDTO from(GameCharacter character, UUID controlledByPlayerId) {
             return new GameCharacterDTO(
                     character.getId(),
                     character.getAssetId(),
@@ -115,7 +126,8 @@ public class GameDTOs {
                     character.getVisualState(),
                     character.getHealth(),
                     character.getMaxHealth(),
-                    character.isControlled()
+                    character.isControlled(),
+                    controlledByPlayerId
             );
         }
     }

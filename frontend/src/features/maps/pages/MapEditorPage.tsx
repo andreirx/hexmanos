@@ -719,9 +719,9 @@ export function MapEditorPage() {
                   <input
                     type="number"
                     min={4}
-                    max={64}
+                    max={256}
                     value={mapData.width}
-                    onChange={(e) => handleResizeMap(Math.max(4, Math.min(64, parseInt(e.target.value) || 4)), mapData.height)}
+                    onChange={(e) => handleResizeMap(Math.max(4, Math.min(256, parseInt(e.target.value) || 4)), mapData.height)}
                     className="w-full px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-sm text-zinc-100"
                   />
                 </div>
@@ -730,9 +730,9 @@ export function MapEditorPage() {
                   <input
                     type="number"
                     min={4}
-                    max={64}
+                    max={256}
                     value={mapData.height}
-                    onChange={(e) => handleResizeMap(mapData.width, Math.max(4, Math.min(64, parseInt(e.target.value) || 4)))}
+                    onChange={(e) => handleResizeMap(mapData.width, Math.max(4, Math.min(256, parseInt(e.target.value) || 4)))}
                     className="w-full px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-sm text-zinc-100"
                   />
                 </div>

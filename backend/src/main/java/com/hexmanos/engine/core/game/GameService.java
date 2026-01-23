@@ -78,12 +78,13 @@ public class GameService {
 
         game = gameRepository.save(game);
 
-        // Add host as first player
+        // Add host as first player (color index 0)
         GamePlayer hostPlayer = new GamePlayer();
         hostPlayer.setId(UUID.randomUUID());
         hostPlayer.setGameId(game.getId());
         hostPlayer.setPlayerId(hostPlayerId);
         hostPlayer.setRole(GamePlayer.PlayerRole.HOST);
+        hostPlayer.setColorIndex(0);
         hostPlayer.setJoinedAt(Instant.now());
         hostPlayer.setLastSeenAt(Instant.now());
         playerRepository.save(hostPlayer);
@@ -108,6 +109,16 @@ public class GameService {
 
         // Try to restore from snapshot first
         if (roomManager.restoreFromSnapshot(gameId)) {
+            // Initialize terrain grid after restore (transient field)
+            GameState state = roomManager.getState(gameId);
+            if (state != null) {
+                // Load map data to get tile costs
+                Asset mapAsset = assetRepository.findById(game.getMapAssetId())
+                        .orElseThrow(() -> new IllegalStateException("Map not found"));
+                String mapDataJson = loadMapData(mapAsset.getStorageKeyPrefix());
+                Map<String, Integer> tileCosts = loadTileMovementCosts(mapDataJson);
+                state.initializeTerrain(tileCosts);
+            }
             game.setStatus(Game.GameStatus.RUNNING);
             game.touch();
             return gameRepository.save(game);
@@ -125,6 +136,10 @@ public class GameService {
         for (GameCharacter character : characters) {
             state.addCharacter(character);
         }
+
+        // Initialize terrain grid for pathfinding
+        Map<String, Integer> tileCosts = loadTileMovementCosts(mapDataJson);
+        state.initializeTerrain(tileCosts);
 
         // Load into memory
         roomManager.loadGame(gameId, state);
@@ -218,12 +233,17 @@ public class GameService {
             return existing.get();
         }
 
+        // Assign next available color index (0-7)
+        List<GamePlayer> existingPlayers = playerRepository.findByGameId(gameId);
+        int colorIndex = existingPlayers.size() % 8; // Cycle through 8 colors
+
         // Create player
         GamePlayer player = new GamePlayer();
         player.setId(UUID.randomUUID());
         player.setGameId(gameId);
         player.setPlayerId(playerId);
         player.setRole(GamePlayer.PlayerRole.PLAYER);
+        player.setColorIndex(colorIndex);
         player.setJoinedAt(Instant.now());
         player.setLastSeenAt(Instant.now());
         player = playerRepository.save(player);
@@ -335,6 +355,17 @@ public class GameService {
     }
 
     /**
+     * Get the character control map (characterId -> playerId).
+     */
+    public Map<UUID, UUID> getCharacterControl(UUID gameId) {
+        GameState state = roomManager.getState(gameId);
+        if (state == null) {
+            return Map.of();
+        }
+        return state.getCharacterControl();
+    }
+
+    /**
      * Move a character in the game.
      * Returns the updated character position, or throws if invalid.
      */
@@ -379,6 +410,94 @@ public class GameService {
      * Result of a character move operation.
      */
     public record MoveResult(UUID characterId, int x, int y, String direction) {}
+
+    /**
+     * Result of a path request operation.
+     */
+    public record PathResult(UUID characterId, List<int[]> path) {
+        public static PathResult from(UUID characterId, List<Point> points) {
+            List<int[]> pathCoords = points.stream()
+                    .map(p -> new int[]{p.x(), p.y()})
+                    .toList();
+            return new PathResult(characterId, pathCoords);
+        }
+    }
+
+    /**
+     * Request a path for a character to move to a target position.
+     * Uses A* pathfinding.
+     */
+    public PathResult requestPath(UUID gameId, UUID playerId, int targetX, int targetY) {
+        Game game = getGame(gameId);
+
+        if (game.getStatus() != Game.GameStatus.RUNNING) {
+            throw new IllegalArgumentException("Game is not running");
+        }
+
+        // Get the character controlled by this player
+        UUID characterId = roomManager.getControlledCharacter(gameId, playerId)
+                .orElseThrow(() -> new IllegalArgumentException("Player does not control any character"));
+
+        // Request path
+        List<Point> path = roomManager.requestPath(gameId, characterId, targetX, targetY);
+
+        if (path.isEmpty()) {
+            throw new IllegalArgumentException("No path found to target");
+        }
+
+        game.touch();
+        gameRepository.save(game);
+
+        return PathResult.from(characterId, path);
+    }
+
+    /**
+     * Cancel the current path for a player's controlled character.
+     */
+    public void cancelPath(UUID gameId, UUID playerId) {
+        Game game = getGame(gameId);
+
+        // Get the character controlled by this player
+        roomManager.getControlledCharacter(gameId, playerId).ifPresent(characterId ->
+                roomManager.cancelPath(gameId, characterId)
+        );
+
+        game.touch();
+        gameRepository.save(game);
+    }
+
+    /**
+     * Execute the next step in a character's path.
+     * Returns the move result if a step was taken, or null if no path or at end.
+     */
+    public MoveResult executePathStep(UUID gameId, UUID characterId) {
+        GameState state = roomManager.getState(gameId);
+        if (state == null) {
+            return null;
+        }
+
+        Point newPos = roomManager.executePathStep(gameId, characterId);
+        if (newPos == null) {
+            return null;
+        }
+
+        // Determine direction from the move
+        GameCharacter character = state.findCharacter(characterId).orElse(null);
+        if (character == null) {
+            return null;
+        }
+
+        // Get direction from character's current state (set by move())
+        String direction = switch (character.getCurrentState()) {
+            case "walk_up" -> "n";
+            case "walk_down" -> "s";
+            case "walk_left" -> "w";
+            case "walk_right" -> "e";
+            default -> "s";
+        };
+
+        return new MoveResult(characterId, newPos.x(), newPos.y(), direction);
+    }
 
     /**
      * Clean up expired games.
@@ -482,5 +601,112 @@ public class GameService {
             log.error("Failed to extract characters from map data", e);
         }
         return characters;
+    }
+
+    /**
+     * Load movement costs for all tiles referenced in the map.
+     * Reads each tile's properties.json to get passable and movementCost values.
+     *
+     * @return Map of tile asset ID to movement cost (0 = impassable)
+     */
+    private Map<String, Integer> loadTileMovementCosts(String mapDataJson) {
+        Map<String, Integer> tileCosts = new HashMap<>();
+        Set<String> tileAssetIds = new HashSet<>();
+
+        try {
+            JsonNode root = objectMapper.readTree(mapDataJson);
+            JsonNode layers = root.get("layers");
+            if (layers == null) {
+                return tileCosts;
+            }
+
+            int height = root.get("height").asInt();
+            int width = root.get("width").asInt();
+
+            // Collect tile asset IDs from terrain layer
+            JsonNode terrain = layers.get("terrain");
+            if (terrain != null && terrain.isArray()) {
+                for (int y = 0; y < terrain.size() && y < height; y++) {
+                    JsonNode row = terrain.get(y);
+                    if (row != null && row.isArray()) {
+                        for (int x = 0; x < row.size() && x < width; x++) {
+                            JsonNode cell = row.get(x);
+                            if (cell != null && !cell.isNull() && cell.has("tileAssetId")) {
+                                tileAssetIds.add(cell.get("tileAssetId").asText());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Collect path asset IDs from water and ground path layers
+            collectPathAssetIds(layers, "waterPaths", height, width, tileAssetIds);
+            collectPathAssetIds(layers, "groundPaths", height, width, tileAssetIds);
+
+            // Load properties for each unique tile asset
+            for (String assetId : tileAssetIds) {
+                try {
+                    Asset asset = assetRepository.findById(UUID.fromString(assetId)).orElse(null);
+                    if (asset == null) {
+                        log.warn("Tile asset not found: {}", assetId);
+                        continue;
+                    }
+
+                    String propertiesKey = asset.getStorageKeyPrefix() + "/properties.json";
+                    byte[] propertiesData = storageService.readBytes(propertiesKey);
+                    if (propertiesData == null) {
+                        log.debug("No properties.json for tile {}, using default passable=true, cost=1", assetId);
+                        tileCosts.put(assetId, 1);
+                        continue;
+                    }
+
+                    JsonNode props = objectMapper.readTree(propertiesData);
+
+                    // Check passable flag (default true)
+                    boolean passable = props.has("passable") ? props.get("passable").asBoolean(true) : true;
+                    if (!passable) {
+                        tileCosts.put(assetId, 0); // Impassable
+                        log.debug("Tile {} is impassable", assetId);
+                    } else {
+                        // Get movement cost (default 1)
+                        int movementCost = props.has("movementCost") ? props.get("movementCost").asInt(1) : 1;
+                        if (movementCost <= 0) {
+                            movementCost = 1; // Ensure at least 1 if passable
+                        }
+                        tileCosts.put(assetId, movementCost);
+                        log.debug("Tile {} has movement cost {}", assetId, movementCost);
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to load properties for tile {}: {}", assetId, e.getMessage());
+                    tileCosts.put(assetId, 1); // Default to passable
+                }
+            }
+
+            log.info("Loaded movement costs for {} tile assets", tileCosts.size());
+        } catch (Exception e) {
+            log.error("Failed to load tile movement costs from map data", e);
+        }
+
+        return tileCosts;
+    }
+
+    /**
+     * Helper to collect path asset IDs from a path layer.
+     */
+    private void collectPathAssetIds(JsonNode layers, String layerName, int height, int width, Set<String> assetIds) {
+        JsonNode pathLayer = layers.get(layerName);
+        if (pathLayer != null && pathLayer.isArray()) {
+            for (int y = 0; y < pathLayer.size() && y < height; y++) {
+                JsonNode row = pathLayer.get(y);
+                if (row != null && row.isArray()) {
+                    for (int x = 0; x < row.size() && x < width; x++) {
+                        JsonNode cell = row.get(x);
+                        if (cell != null && !cell.isNull() && cell.has("pathAssetId")) {
+                            assetIds.add(cell.get("pathAssetId").asText());
+                        }
+                    }
+                }
+            }
+        }
     }
 }

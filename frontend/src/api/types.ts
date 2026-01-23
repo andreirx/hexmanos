@@ -132,6 +132,7 @@ export interface GamePlayerDTO {
   playerId: string
   role: PlayerRole
   controlledCharacterId?: string
+  colorIndex: number  // 0-7 for 8 different player colors
   joinedAt: string
   lastSeenAt: string
 }
@@ -147,6 +148,7 @@ export interface GameCharacterDTO {
   health: number
   maxHealth: number
   controlled: boolean
+  controlledByPlayerId?: string  // The player ID controlling this character (for color lookup)
 }
 
 export interface CreateGameRequest {

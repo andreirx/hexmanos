@@ -13,6 +13,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -45,8 +46,9 @@ public class GameController {
             );
             List<GamePlayer> players = gameService.getPlayers(game.getId());
             List<GameCharacter> characters = gameService.getCharacters(game.getId());
+            Map<UUID, UUID> characterControl = gameService.getCharacterControl(game.getId());
             return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(GameDTO.from(game, players, characters));
+                    .body(GameDTO.from(game, players, characters, characterControl));
         } catch (IllegalArgumentException e) {
             log.warn("Failed to create game: {}", e.getMessage());
             return ResponseEntity.badRequest().build();
@@ -86,7 +88,8 @@ public class GameController {
             Game game = gameService.getGame(gameId);
             List<GamePlayer> players = gameService.getPlayers(gameId);
             List<GameCharacter> characters = gameService.getCharacters(gameId);
-            return ResponseEntity.ok(GameDTO.from(game, players, characters));
+            Map<UUID, UUID> characterControl = gameService.getCharacterControl(gameId);
+            return ResponseEntity.ok(GameDTO.from(game, players, characters, characterControl));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
         }
@@ -108,7 +111,8 @@ public class GameController {
             Game game = gameService.startGame(gameId, playerId);
             List<GamePlayer> players = gameService.getPlayers(gameId);
             List<GameCharacter> characters = gameService.getCharacters(gameId);
-            return ResponseEntity.ok(GameDTO.from(game, players, characters));
+            Map<UUID, UUID> characterControl = gameService.getCharacterControl(gameId);
+            return ResponseEntity.ok(GameDTO.from(game, players, characters, characterControl));
         } catch (IllegalArgumentException e) {
             log.warn("Failed to start game: {}", e.getMessage());
             return ResponseEntity.badRequest().build();
@@ -131,7 +135,8 @@ public class GameController {
             Game game = gameService.pauseGame(gameId, playerId);
             List<GamePlayer> players = gameService.getPlayers(gameId);
             List<GameCharacter> characters = gameService.getCharacters(gameId);
-            return ResponseEntity.ok(GameDTO.from(game, players, characters));
+            Map<UUID, UUID> characterControl = gameService.getCharacterControl(gameId);
+            return ResponseEntity.ok(GameDTO.from(game, players, characters, characterControl));
         } catch (IllegalArgumentException e) {
             log.warn("Failed to pause game: {}", e.getMessage());
             return ResponseEntity.badRequest().build();
