@@ -140,6 +140,14 @@ record CharacterIdleEvent(
 
 This architecture prevents animation state getting out of sync during zoom level changes on the frontend.
 
+### Frontend's Local Truth Mirror
+The frontend maintains a `characterStates` Map that tracks what the backend told it - NOT what
+the sprite is visually showing. This is critical because:
+- When a character has no walk animation, the sprite shows idle as a visual fallback
+- But the mirror remembers: "this character is actually WALKING"
+- When zooming (switching mipmaps), frontend asks the MIRROR what state to render
+- This prevents the bug where zooming makes characters "forget" they were walking
+
 ## Tile Properties Loading
 
 On game start, `loadTileMovementCosts()`:

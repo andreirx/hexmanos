@@ -18,6 +18,32 @@ Multiplayer game lobby and Phaser-based game client with real-time WebSocket syn
 4. **Frontend can interpolate/cache** for smoothness but syncs frequently
 5. **Zoom/mipmap changes are display-only** - they don't affect game state
 
+### The Local Truth Mirror Pattern
+
+The frontend maintains a **Local Truth Mirror** (`characterStates` Map) that tracks what the backend last told us - NOT what the sprite is currently showing.
+
+```typescript
+// Local Truth Mirror - tracks backend's authoritative state
+private characterStates: Map<string, {
+  x: number
+  y: number
+  state: string      // "idle", "walk_up", etc. - THE REAL STATE
+  assetId: string
+}> = new Map()
+```
+
+**Why this matters:**
+- When a character has no walk animation, the sprite shows idle as a visual FALLBACK
+- But the mirror remembers: "this character is actually WALKING"
+- When we zoom (switch mipmaps), we ask the MIRROR what state to render, not the sprite
+- This prevents the bug where zooming makes characters "forget" they were walking
+
+**Update flow:**
+1. `animateCharacterMove()` - updates mirror with backend state FIRST, then renders
+2. `setCharacterState()` - updates mirror AND renders (with visual fallback if needed)
+3. `switchMipLevel()` - reads from mirror to know the REAL state, reapplies animation
+4. `updateCharacters()` - updates mirror positions, preserves animation state
+
 ## Files
 
 | File | Purpose |

@@ -177,6 +177,18 @@ class GameScene extends Phaser.Scene {
   // Store guaranteed-valid idle texture for each character (fallback)
   private characterIdleTextures: Map<string, string> = new Map()
 
+  // ============================================
+  // LOCAL TRUTH MIRROR - Authoritative state from backend
+  // This map tracks what the backend last told us, NOT what the sprite is showing.
+  // When we switch mip levels, we consult THIS, not the sprite's current animation.
+  // ============================================
+  private characterStates: Map<string, {
+    x: number
+    y: number
+    state: string      // "idle", "walk_up", "walk_down", "walk_left", "walk_right"
+    assetId: string    // For animation key lookup
+  }> = new Map()
+
   // Keyboard controls (initialized in create())
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | null = null
   private wasd: { W: Phaser.Input.Keyboard.Key | null; A: Phaser.Input.Keyboard.Key | null; S: Phaser.Input.Keyboard.Key | null; D: Phaser.Input.Keyboard.Key | null } = { W: null, A: null, S: null, D: null }
@@ -229,6 +241,18 @@ class GameScene extends Phaser.Scene {
 
     // Store initial controlled character for setup in create()
     this.initialControlledCharacterId = data.initialControlledCharacterId
+
+    // Initialize Local Truth Mirror from character DTOs
+    // This is the authoritative state - what the backend told us
+    this.characterStates.clear()
+    data.characters.forEach(char => {
+      this.characterStates.set(char.id, {
+        x: char.x,
+        y: char.y,
+        state: "idle",  // Characters start idle
+        assetId: char.assetId
+      })
+    })
   }
 
   preload() {
@@ -709,46 +733,36 @@ class GameScene extends Phaser.Scene {
       }
     })
 
-    // Update character sprites (animations need special handling)
-    this.characters.forEach(char => {
-      const sprite = this.characterSprites.get(char.id)
+    // Update character sprites using LOCAL TRUTH MIRROR (not sprite's current animation!)
+    // The sprite might be showing a fallback (idle) even though the character is actually walking.
+    // We must consult characterStates to know the REAL state from the backend.
+    this.characterStates.forEach((charState, charId) => {
+      const sprite = this.characterSprites.get(charId)
       if (!sprite) return
 
       // Update scale for character sprites
       sprite.setScale(newScale)
 
-      // Get current animation key and switch to mip version
-      const currentAnimKey = sprite.anims.currentAnim?.key
-      if (currentAnimKey) {
-        // Build new animation key with the new mip suffix
-        // Parse: "anim_{assetId}_{state}" or "anim_{assetId}_{state}_{mip}"
-        const baseAnimKey = currentAnimKey.replace(/_mip64$/, "").replace(/_mip32$/, "")
-        const newAnimKey = newLevel === "full" ? baseAnimKey : `${baseAnimKey}_${newLevel}`
-        if (this.anims.exists(newAnimKey)) {
-          sprite.play(newAnimKey)
-        } else {
-          // Animation doesn't exist for this mip level - fall back to idle
-          const idleAnimKey = newLevel === "full"
-            ? `anim_${char.assetId}_idle`
-            : `anim_${char.assetId}_idle_${newLevel}`
-          if (this.anims.exists(idleAnimKey)) {
-            sprite.play(idleAnimKey)
-          } else {
-            // No idle animation either - use static idle texture
-            sprite.stop()
-            this.setCharacterIdleTexture(char.id)
-          }
-        }
+      // Use the AUTHORITATIVE state from our Local Truth Mirror, NOT the sprite's animation
+      const intendedState = charState.state  // e.g., "walk_down", "idle"
+      const assetId = charState.assetId
+
+      // Try to play the animation for the intended state at the new mip level
+      const mipAnimSuffix = newLevel === "full" ? "" : `_${newLevel}`
+      const animKey = `anim_${assetId}_${intendedState}${mipAnimSuffix}`
+
+      if (this.anims.exists(animKey)) {
+        sprite.play(animKey)
       } else {
-        // No animation playing - just update texture to new mip level
-        const currentTexture = sprite.texture.key
-        const baseTexture = currentTexture.replace(/_mip64$/, "").replace(/_mip32$/, "")
-        const newTexture = newLevel === "full" ? baseTexture : `${baseTexture}_${newLevel}`
-        if (this.textures.exists(newTexture)) {
-          sprite.setTexture(newTexture)
+        // Animation doesn't exist for this state at this mip level
+        // Fall back to idle animation
+        const idleAnimKey = `anim_${assetId}_idle${mipAnimSuffix}`
+        if (this.anims.exists(idleAnimKey)) {
+          sprite.play(idleAnimKey)
         } else {
-          // Texture doesn't exist - fall back to idle
-          this.setCharacterIdleTexture(char.id)
+          // No idle animation either - use static idle texture
+          sprite.stop()
+          this.setCharacterIdleTexture(charId)
         }
       }
 
@@ -920,7 +934,9 @@ class GameScene extends Phaser.Scene {
 
   /**
    * Set character to a specific animation state (called from backend events).
-   * This is the AUTHORITATIVE way to change character animation - uses backend state.
+   * This updates the LOCAL TRUTH MIRROR and then renders the appropriate animation.
+   * The visual may fall back to idle if the animation doesn't exist, but the mirror
+   * preserves the REAL state so switchMipLevel knows what to try at the new level.
    */
   setCharacterState(characterId: string, state: string) {
     const sprite = this.characterSprites.get(characterId)
@@ -928,6 +944,12 @@ class GameScene extends Phaser.Scene {
 
     const char = this.characters.find(c => c.id === characterId)
     if (!char) return
+
+    // UPDATE LOCAL TRUTH MIRROR - preserve the backend's authoritative state
+    const existingState = this.characterStates.get(characterId)
+    if (existingState) {
+      this.characterStates.set(characterId, { ...existingState, state })
+    }
 
     const mipSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
     const scale = getMipScale(this.currentMipLevel)
@@ -940,7 +962,8 @@ class GameScene extends Phaser.Scene {
     if (this.anims.exists(animKey)) {
       sprite.play(animKey)
     } else {
-      // Animation doesn't exist - fall back to idle
+      // Animation doesn't exist - VISUAL fallback to idle
+      // NOTE: The Local Truth Mirror still knows the REAL state!
       const idleAnimKey = `anim_${char.assetId}_idle${mipSuffix}`
       if (this.anims.exists(idleAnimKey)) {
         sprite.play(idleAnimKey)
@@ -995,6 +1018,16 @@ class GameScene extends Phaser.Scene {
     const char = this.characters.find(c => c.id === characterId)
     if (!char) return
 
+    // UPDATE LOCAL TRUTH MIRROR - This is the authoritative state from backend
+    // We store this BEFORE any visual fallback logic, so switchMipLevel knows the REAL state
+    const existingState = this.characterStates.get(characterId)
+    this.characterStates.set(characterId, {
+      x: newX,
+      y: newY,
+      state: state,  // The backend's authoritative animation state
+      assetId: existingState?.assetId ?? char.assetId
+    })
+
     // Mark character as moving
     this.movingCharacters.add(characterId)
 
@@ -1003,7 +1036,7 @@ class GameScene extends Phaser.Scene {
     const targetY = newY * TILE_SIZE + TILE_SIZE / 2
 
     // Play the animation state from backend (walk_up, walk_down, etc.)
-    // The backend tells us exactly what animation to play - no local state management
+    // The backend tells us exactly what animation to play - visual fallback happens in setCharacterState
     this.setCharacterState(characterId, state)
 
     // Animate the movement using a tween
@@ -1017,7 +1050,7 @@ class GameScene extends Phaser.Scene {
         // Mark character as done moving
         this.movingCharacters.delete(characterId)
 
-        // Update character data
+        // Update character data (for sprite position lookups)
         char.x = newX
         char.y = newY
 
@@ -1029,6 +1062,11 @@ class GameScene extends Phaser.Scene {
         // For PATH moves, wait for CharacterIdleEvent from backend (sent when path completes).
         // This prevents walk animation from playing forever after a single WASD move.
         if (!this.charactersWithActivePath.has(characterId)) {
+          // Update Local Truth Mirror to idle
+          const currentState = this.characterStates.get(characterId)
+          if (currentState) {
+            this.characterStates.set(characterId, { ...currentState, state: "idle" })
+          }
           this.setCharacterState(characterId, "idle")
         }
 
@@ -1070,6 +1108,16 @@ class GameScene extends Phaser.Scene {
           char.y * TILE_SIZE + TILE_SIZE / 2
         )
       }
+
+      // Update Local Truth Mirror with new positions
+      // Preserve existing state (animation) since this is a position sync, not a state change
+      const existingState = this.characterStates.get(char.id)
+      this.characterStates.set(char.id, {
+        x: char.x,
+        y: char.y,
+        state: existingState?.state ?? "idle",
+        assetId: char.assetId
+      })
 
       // Update glow based on control status
       this.updateCharacterGlow(char.id, char.controlledByPlayerId ?? null)

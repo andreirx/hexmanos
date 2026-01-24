@@ -56,13 +56,22 @@ Backend:
 - CharacterIdleEvent sent when character should stop walking
 - Game loop broadcasts all state changes
 
-Frontend:
-- setCharacterState(id, state) - renders what backend says
-- animateCharacterMove(id, x, y, state) - tween + animation from backend
-- For manual moves (WASD): auto-idle after animation (no path active)
-- For path moves: wait for CharacterIdleEvent from backend
-- Always ensure sprite visibility after any state change
+Frontend - LOCAL TRUTH MIRROR PATTERN:
+- characterStates Map tracks backend's authoritative state (NOT the sprite's animation)
+- animateCharacterMove() updates mirror FIRST, then renders with fallback
+- setCharacterState() updates mirror AND renders (fallback if animation missing)
+- switchMipLevel() reads from MIRROR to know the REAL state, not the sprite
+- This prevents state desync when visual fallbacks are used (e.g., idle shown when walking)
 ```
+
+### The State Desync Problem (and Solution)
+**Problem:** When a character has no walk animation, we show idle as a visual fallback.
+If we then zoom and ask the sprite "what animation are you playing?", it says "idle" -
+but the character is actually WALKING. We've lost the real state.
+
+**Solution:** The Local Truth Mirror (`characterStates` Map) preserves the backend's
+authoritative state independently of what the sprite is visually showing. When we
+switch mip levels, we consult the mirror, not the sprite.
 
 ## 2. Backend Architecture (Spring Boot + Java 17 + gradle)
 We follow a strict **Clean Architecture** separating `App` (Driver), `Core` (Domain), and `External` (Driven).
