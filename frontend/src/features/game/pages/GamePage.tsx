@@ -33,6 +33,12 @@ const getMipSuffix = (level: MipLevel): string => {
   if (level === "full") return ""
   return `-${level}`
 }
+// Scale factor to display smaller mipmaps at full tile size
+const getMipScale = (level: MipLevel): number => {
+  if (level === "full") return 1
+  if (level === "mip64") return 2
+  return 4  // mip32
+}
 
 // 8 player colors (index 0-7)
 const PLAYER_COLORS = [
@@ -173,6 +179,7 @@ class GameScene extends Phaser.Scene {
   // Mipmap level tracking
   private currentMipLevel: MipLevel = "full"
   private terrainImages: Map<string, { image: Phaser.GameObjects.Image; assetId: string; variation: number }> = new Map()
+  private transitionImages: Map<string, { image: Phaser.GameObjects.Image; assetId: string; direction: string }> = new Map()
   private pathImages: Map<string, { image: Phaser.GameObjects.Image; assetId: string; variation: number }> = new Map()
 
   constructor() {
@@ -346,6 +353,7 @@ class GameScene extends Phaser.Scene {
     // Determine initial mip level based on starting zoom (0.5)
     this.currentMipLevel = getMipLevel(0.5)
     const mipSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
+    const mipScale = getMipScale(this.currentMipLevel)
 
     // PASS 1: Draw base terrain tiles
     for (let y = 0; y < height; y++) {
@@ -364,6 +372,7 @@ class GameScene extends Phaser.Scene {
             y * TILE_SIZE + TILE_SIZE / 2,
             key
           )
+          image.setScale(mipScale)
           // Track terrain image for mip level switching
           this.terrainImages.set(`${x},${y}`, { image, assetId: tile.tileAssetId, variation })
         }
@@ -386,11 +395,15 @@ class GameScene extends Phaser.Scene {
           const key = `transition_${tile.tileAssetId}_${dir}${mipSuffix}`
 
           if (this.textures.exists(key)) {
-            this.add.image(
+            const transitionImage = this.add.image(
               nx * TILE_SIZE + TILE_SIZE / 2,
               ny * TILE_SIZE + TILE_SIZE / 2,
               key
             )
+            transitionImage.setScale(mipScale)
+            // Track transition image for mip level switching
+            const transitionKey = `${x},${y}_${dir}`
+            this.transitionImages.set(transitionKey, { image: transitionImage, assetId: tile.tileAssetId, direction: dir })
           }
         }
       }
@@ -415,6 +428,7 @@ class GameScene extends Phaser.Scene {
               y * TILE_SIZE + TILE_SIZE / 2,
               key
             )
+            image.setScale(mipScale)
             // Track path image for mip level switching
             this.pathImages.set(`${layerPrefix}_${x},${y}`, { image, assetId: path.pathAssetId, variation })
           }
@@ -504,6 +518,7 @@ class GameScene extends Phaser.Scene {
         char.y * TILE_SIZE + TILE_SIZE / 2,
         firstFrameKey
       )
+      sprite.setScale(mipScale)
 
       sprite.setInteractive({ useHandCursor: true })
       sprite.on("pointerdown", () => {
@@ -649,14 +664,24 @@ class GameScene extends Phaser.Scene {
   private switchMipLevel(newLevel: MipLevel) {
     if (newLevel === this.currentMipLevel) return
 
-    const oldSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
     const newSuffix = newLevel === "full" ? "" : `_${newLevel}`
+    const newScale = getMipScale(newLevel)
 
     // Update terrain images
     this.terrainImages.forEach(({ image, assetId, variation }) => {
       const newKey = `terrain_${assetId}_${variation}${newSuffix}`
       if (this.textures.exists(newKey)) {
         image.setTexture(newKey)
+        image.setScale(newScale)
+      }
+    })
+
+    // Update transition images
+    this.transitionImages.forEach(({ image, assetId, direction }) => {
+      const newKey = `transition_${assetId}_${direction}${newSuffix}`
+      if (this.textures.exists(newKey)) {
+        image.setTexture(newKey)
+        image.setScale(newScale)
       }
     })
 
@@ -665,6 +690,7 @@ class GameScene extends Phaser.Scene {
       const newKey = `path_${assetId}_${variation}${newSuffix}`
       if (this.textures.exists(newKey)) {
         image.setTexture(newKey)
+        image.setScale(newScale)
       }
     })
 
@@ -673,19 +699,24 @@ class GameScene extends Phaser.Scene {
       const sprite = this.characterSprites.get(char.id)
       if (!sprite) return
 
-      // Get current animation key
+      // Update scale for character sprites
+      sprite.setScale(newScale)
+
+      // Get current animation key and switch to mip version
       const currentAnimKey = sprite.anims.currentAnim?.key
       if (currentAnimKey) {
-        // Parse the animation key to find the base (e.g., "anim_assetId_idle")
-        // And switch to the mip version
-        const newAnimKey = currentAnimKey.replace(oldSuffix, newSuffix)
+        // Build new animation key with the new mip suffix
+        // Parse: "anim_{assetId}_{state}" or "anim_{assetId}_{state}_{mip}"
+        const baseAnimKey = currentAnimKey.replace(/_mip64$/, "").replace(/_mip32$/, "")
+        const newAnimKey = newLevel === "full" ? baseAnimKey : `${baseAnimKey}_${newLevel}`
         if (this.anims.exists(newAnimKey)) {
           sprite.play(newAnimKey)
         }
       } else {
         // No animation playing - just update texture
         const currentTexture = sprite.texture.key
-        const newTexture = currentTexture.replace(oldSuffix, newSuffix)
+        const baseTexture = currentTexture.replace(/_mip64$/, "").replace(/_mip32$/, "")
+        const newTexture = newLevel === "full" ? baseTexture : `${baseTexture}_${newLevel}`
         if (this.textures.exists(newTexture)) {
           sprite.setTexture(newTexture)
         }
@@ -767,11 +798,17 @@ class GameScene extends Phaser.Scene {
         scrollY: targetY - cam.height / 2,
         duration: this.zoomDuration,
         ease: "Cubic.easeOut",
+        onUpdate: () => {
+          // Switch mip level during zoom transition (only if level changed)
+          this.switchMipLevel(getMipLevel(cam.zoom))
+        },
         onComplete: () => {
           // Start following the character sprite after zoom completes
           if (sprite) {
             cam.startFollow(sprite, true, 0.1, 0.1)
           }
+          // Ensure correct mip level at final zoom
+          this.switchMipLevel(getMipLevel(1))
         }
       })
     }
@@ -801,7 +838,16 @@ class GameScene extends Phaser.Scene {
         scrollX: mapWidth / 2 - cam.width / 2,
         scrollY: mapHeight / 2 - cam.height / 2,
         duration: this.zoomDuration,
-        ease: "Cubic.easeOut"
+        ease: "Cubic.easeOut",
+        onUpdate: () => {
+          // Switch mip level during zoom transition
+          const newMipLevel = getMipLevel(cam.zoom)
+          this.switchMipLevel(newMipLevel)
+        },
+        onComplete: () => {
+          // Ensure correct mip level at final zoom
+          this.switchMipLevel(getMipLevel(0.5))
+        }
       })
     }
   }
