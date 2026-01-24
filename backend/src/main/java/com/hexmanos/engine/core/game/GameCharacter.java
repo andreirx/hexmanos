@@ -33,6 +33,7 @@ public class GameCharacter implements Serializable {
     // Pathfinding state
     private transient List<Point> currentPath;  // transient = not serialized to snapshots
     private transient int pathIndex;
+    private transient long lastMoveTime;        // For movement cost-based timing
 
     /**
      * Create a new game character from a map placement.
@@ -189,5 +190,19 @@ public class GameCharacter implements Serializable {
             return List.of();
         }
         return new ArrayList<>(currentPath.subList(pathIndex, currentPath.size()));
+    }
+
+    /**
+     * Get the last move time (for movement cost-based timing).
+     */
+    public long getLastMoveTime() {
+        return lastMoveTime;
+    }
+
+    /**
+     * Record that the character just moved.
+     */
+    public void recordMove() {
+        this.lastMoveTime = System.currentTimeMillis();
     }
 }

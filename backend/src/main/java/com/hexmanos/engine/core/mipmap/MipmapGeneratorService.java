@@ -157,10 +157,9 @@ public class MipmapGeneratorService {
                 continue;
             }
 
-            // Skip transition files (they don't need mipmaps)
-            if (fileName.contains("_transition_")) {
-                continue;
-            }
+            // NOTE: Transition files (_transition_) DO need mipmaps because the game
+            // loads textures at the current mip level. Without mipmaps, transitions
+            // won't render at non-full zoom levels.
 
             // Skip if mipmaps already exist
             if (hasMipmaps(storageKeyPrefix, fileName)) {

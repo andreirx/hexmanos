@@ -116,6 +116,7 @@ public class GameRoomManager {
         character.clearPath();
 
         character.move(dx, dy);
+        character.recordMove();  // Record for movement cost-based timing
         return true;
     }
 

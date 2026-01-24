@@ -1008,6 +1008,47 @@ class GameScene extends Phaser.Scene {
     sprite.setVisible(true)
   }
 
+  /**
+   * Get the movement cost for a tile at the given position.
+   * Checks terrain and paths, returns the highest movement cost found.
+   * Default is 1 if no specific cost is set.
+   */
+  private getMovementCostAt(x: number, y: number): number {
+    if (!this.mapData) return 1
+
+    let cost = 1
+
+    // Check terrain tile
+    const terrainTile = this.mapData.layers.terrain[y]?.[x]
+    if (terrainTile?.tileAssetId) {
+      const props = this.tileProperties.get(terrainTile.tileAssetId)
+      if (props?.movementCost !== undefined) {
+        cost = Math.max(cost, props.movementCost)
+      }
+    }
+
+    // Check ground path (roads, bridges) - may override terrain cost
+    const groundPath = this.mapData.layers.groundPaths?.[y]?.[x]
+    if (groundPath?.pathAssetId) {
+      const props = this.tileProperties.get(groundPath.pathAssetId)
+      if (props?.movementCost !== undefined) {
+        // Paths can make movement easier (lower cost) or harder
+        cost = props.movementCost
+      }
+    }
+
+    // Check water path (rivers, lava)
+    const waterPath = this.mapData.layers.waterPaths?.[y]?.[x]
+    if (waterPath?.pathAssetId) {
+      const props = this.tileProperties.get(waterPath.pathAssetId)
+      if (props?.movementCost !== undefined) {
+        cost = Math.max(cost, props.movementCost)
+      }
+    }
+
+    return cost
+  }
+
   // Animate character movement with tween (called when receiving WebSocket event)
   // The `state` parameter comes directly from the backend and determines what animation to play
   animateCharacterMove(characterId: string, newX: number, newY: number, state: string) {
@@ -1035,16 +1076,29 @@ class GameScene extends Phaser.Scene {
     const targetX = newX * TILE_SIZE + TILE_SIZE / 2
     const targetY = newY * TILE_SIZE + TILE_SIZE / 2
 
+    // Get movement cost for the destination tile
+    // Higher cost = slower movement and animation
+    const movementCost = this.getMovementCostAt(newX, newY)
+    const adjustedDuration = this.moveDuration * movementCost
+
     // Play the animation state from backend (walk_up, walk_down, etc.)
     // The backend tells us exactly what animation to play - visual fallback happens in setCharacterState
     this.setCharacterState(characterId, state)
+
+    // Slow down animation frame rate proportionally to movement cost
+    // Higher cost = slower animation frames (timeScale < 1)
+    if (movementCost > 1 && sprite.anims?.isPlaying) {
+      sprite.anims.timeScale = 1 / movementCost
+    } else if (sprite.anims) {
+      sprite.anims.timeScale = 1
+    }
 
     // Animate the movement using a tween
     this.tweens.add({
       targets: sprite,
       x: targetX,
       y: targetY,
-      duration: this.moveDuration,
+      duration: adjustedDuration,
       ease: "Linear",
       onComplete: () => {
         // Mark character as done moving
@@ -1053,6 +1107,11 @@ class GameScene extends Phaser.Scene {
         // Update character data (for sprite position lookups)
         char.x = newX
         char.y = newY
+
+        // Reset animation time scale to normal
+        if (sprite.anims) {
+          sprite.anims.timeScale = 1
+        }
 
         // Ensure correct scale (may have changed during movement)
         const currentScale = getMipScale(this.currentMipLevel)
@@ -1076,24 +1135,26 @@ class GameScene extends Phaser.Scene {
     })
 
     // Also move selection indicator if this is the controlled character
+    // Use adjusted duration to match sprite movement speed
     if (characterId === this.controlledCharacterId && this.selectionIndicator) {
       this.tweens.add({
         targets: this.selectionIndicator,
         x: targetX,
         y: targetY,
-        duration: this.moveDuration,
+        duration: adjustedDuration,
         ease: "Linear"
       })
     }
 
     // Move glow along with character
+    // Use adjusted duration to match sprite movement speed
     const glow = this.characterGlows.get(characterId)
     if (glow && glow.visible) {
       this.tweens.add({
         targets: glow,
         x: targetX,
         y: targetY,
-        duration: this.moveDuration,
+        duration: adjustedDuration,
         ease: "Linear"
       })
     }

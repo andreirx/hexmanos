@@ -111,7 +111,13 @@ This prevents desync bugs, especially during frontend-only operations like zoom/
 ### Path Execution (GameScheduler)
 - Runs every 200ms via `@Scheduled(fixedDelay = 200)`
 - Iterates all active games and characters with paths
-- Calls `GameService.executePathStep()` for each
+- **Movement cost timing:** `BASE_DELAY * movementCost` determines actual step delay
+  - Cost 1 = 200ms between steps
+  - Cost 2 = 400ms between steps
+  - Cost 3 = 600ms between steps
+- `GameCharacter.lastMoveTime` tracks when character last moved
+- Step skipped if not enough time has passed based on terrain cost
+- Calls `GameService.executePathStep()` for each character ready to move
 - Broadcasts `CharacterMoveEvent` via WebSocket (includes animation `state` from character)
 - On path completion: broadcasts `CharacterIdleEvent` so frontend switches to idle animation
 - Clears path on collision or terrain change

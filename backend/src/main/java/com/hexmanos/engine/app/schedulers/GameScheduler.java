@@ -30,6 +30,7 @@ public class GameScheduler {
     private final SimpMessagingTemplate messagingTemplate;
 
     private static final Duration EXPIRY_DURATION = Duration.ofDays(2);
+    private static final long BASE_MOVE_DELAY_MS = 200; // Base delay for movement cost 1
 
     /**
      * Save snapshots for all active games.
@@ -117,6 +118,10 @@ public class GameScheduler {
 
     /**
      * Execute path steps for all characters in a game.
+     * Movement is delayed based on terrain movement cost:
+     * - Cost 1 = 200ms between steps
+     * - Cost 2 = 400ms between steps
+     * - Cost 3 = 600ms between steps, etc.
      */
     private void executePathStepsForGame(UUID gameId) {
         GameState state = roomManager.getState(gameId);
@@ -124,15 +129,42 @@ public class GameScheduler {
             return;
         }
 
+        TerrainGrid terrain = state.getTerrainGrid();
+        long now = System.currentTimeMillis();
+
         List<GameCharacter> characters = state.getCharacters();
         for (GameCharacter character : characters) {
             if (!character.hasPath()) {
                 continue;
             }
 
+            // Check movement cost-based delay
+            Point nextStep = character.getNextPathStep();
+            if (nextStep == null) {
+                continue;
+            }
+
+            // Get movement cost for the destination tile
+            int movementCost = 1;
+            if (terrain != null) {
+                movementCost = Math.max(1, terrain.getCost(nextStep.x(), nextStep.y()));
+            }
+
+            // Calculate required delay based on movement cost
+            long requiredDelay = BASE_MOVE_DELAY_MS * movementCost;
+            long timeSinceLastMove = now - character.getLastMoveTime();
+
+            // Skip if not enough time has passed
+            if (timeSinceLastMove < requiredDelay) {
+                continue;
+            }
+
             try {
                 GameService.MoveResult result = gameService.executePathStep(gameId, character.getId());
                 if (result != null) {
+                    // Record move time for movement cost timing
+                    character.recordMove();
+
                     // Broadcast the move to all players (with animation state from backend)
                     CharacterMoveEvent event = new CharacterMoveEvent(
                             result.characterId().toString(),
@@ -143,8 +175,8 @@ public class GameScheduler {
                     );
                     messagingTemplate.convertAndSend("/topic/game/" + gameId, event);
 
-                    log.debug("Path step: Character {} moved to ({}, {}) in game {}",
-                            result.characterId(), result.x(), result.y(), gameId);
+                    log.debug("Path step: Character {} moved to ({}, {}) cost={} in game {}",
+                            result.characterId(), result.x(), result.y(), movementCost, gameId);
 
                     // Check if path completed (character no longer has path after this step)
                     if (!character.hasPath()) {
