@@ -122,9 +122,9 @@ This prevents desync bugs, especially during frontend-only operations like zoom/
 - On path completion: broadcasts `CharacterIdleEvent` so frontend switches to idle animation
 - Clears path on collision or terrain change
 
-## WebSocket Events (Backend-Driven Animation State)
+## WebSocket Events (Backend-Driven Animation State & Timing)
 
-The backend is AUTHORITATIVE for character animation state. Frontend renders exactly what backend tells it.
+The backend is AUTHORITATIVE for character animation state AND timing. Frontend renders exactly what backend tells it.
 
 ### CharacterMoveEvent
 ```java
@@ -132,9 +132,26 @@ record CharacterMoveEvent(
     String characterId,
     int x, int y,
     String direction,  // n, s, e, w
-    String state       // walk_up, walk_down, walk_left, walk_right (from GameCharacter.currentState)
+    String state,      // walk_up, walk_down, walk_left, walk_right (from GameCharacter.currentState)
+    long duration      // Duration in ms for this move (BASE_MOVE_DELAY_MS * movementCost)
 )
 ```
+
+### Backend-Dictated Timing (Single Source of Truth)
+
+The `duration` field ensures frontend animation perfectly matches backend simulation timing:
+
+- **`GameService.BASE_MOVE_DELAY_MS = 200`**: Base delay for movement cost 1
+- **Duration calculation**: `duration = BASE_MOVE_DELAY_MS * terrainMovementCost`
+  - Cost 1 terrain → 200ms duration
+  - Cost 2 terrain → 400ms duration
+  - Cost 3 terrain → 600ms duration
+- **Frontend tween**: Uses `event.duration` directly (no local calculation)
+- **Animation timeScale**: `STANDARD_ANIM_DURATION / duration` (slows animation frames for slow terrain)
+
+This eliminates the previous desync where frontend tweened at 150ms while backend waited 200ms+, causing stuttering.
+
+**Future-proof**: Haste/Slow buffs and other modifiers only need to change backend duration calculation.
 
 ### CharacterIdleEvent
 ```java

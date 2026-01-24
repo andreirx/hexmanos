@@ -257,9 +257,14 @@ JWT token validated during STOMP CONNECT:
   "characterId": "uuid",
   "x": 5,
   "y": 10,
-  "direction": "n"
+  "direction": "n",
+  "state": "walk_up",
+  "duration": 200
 }
 ```
+
+- **state**: Animation state to render (walk_up, walk_down, walk_left, walk_right)
+- **duration**: Move duration in ms (BASE_MOVE_DELAY_MS × movementCost). Backend is Single Source of Truth for timing.
 
 ### Movement Flow
 
