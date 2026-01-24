@@ -20,7 +20,6 @@ Hexmanos is a pixel art game asset workshop enabling creation of characters, til
 | `.gitignore` | File | Git ignore patterns |
 | `.gitattributes` | File | Git LFS and line ending settings |
 | `hexmanos.iml` | File | IntelliJ IDEA module file |
-| `repo-text-blob.py` | File | Utility script for code context extraction |
 
 ## Architecture Overview
 

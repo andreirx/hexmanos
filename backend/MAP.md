@@ -65,6 +65,7 @@ Pure Java business logic. No Spring dependencies.
 | `asset` | Asset POJO, AssetService, AssetRepository interface |
 | `files` | FileStorageService interface, PresignedUploadUrl |
 | `game` | Game, GamePlayer, GameCharacter, GameState POJOs, GameService, GameRoomManager, SnapshotService |
+| `mipmap` | MipmapGeneratorService for zoom-quality image variants |
 | `transition` | TransitionGeneratorService for tile blending |
 | `user` | User POJO, UserService, UserRepository interface |
 

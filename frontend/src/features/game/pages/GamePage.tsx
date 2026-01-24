@@ -22,6 +22,18 @@ import {
 // Match the editor's tile size (128px)
 const TILE_SIZE = 128
 
+// Mipmap levels for different zoom ranges
+type MipLevel = "full" | "mip64" | "mip32"
+const getMipLevel = (zoom: number): MipLevel => {
+  if (zoom >= 0.6) return "full"
+  if (zoom >= 0.3) return "mip64"
+  return "mip32"
+}
+const getMipSuffix = (level: MipLevel): string => {
+  if (level === "full") return ""
+  return `-${level}`
+}
+
 // 8 player colors (index 0-7)
 const PLAYER_COLORS = [
   0xff4444, // Red
@@ -158,6 +170,11 @@ class GameScene extends Phaser.Scene {
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | null = null
   private wasd: { W: Phaser.Input.Keyboard.Key | null; A: Phaser.Input.Keyboard.Key | null; S: Phaser.Input.Keyboard.Key | null; D: Phaser.Input.Keyboard.Key | null } = { W: null, A: null, S: null, D: null }
 
+  // Mipmap level tracking
+  private currentMipLevel: MipLevel = "full"
+  private terrainImages: Map<string, { image: Phaser.GameObjects.Image; assetId: string; variation: number }> = new Map()
+  private pathImages: Map<string, { image: Phaser.GameObjects.Image; assetId: string; variation: number }> = new Map()
+
   constructor() {
     super({ key: "GameScene" })
   }
@@ -235,7 +252,8 @@ class GameScene extends Phaser.Scene {
     // Collect character asset IDs
     this.characters.forEach(c => characterAssetIds.add(c.assetId))
 
-    // Load terrain tiles: base + 8 transitions for each
+    // Load terrain tiles: base + 8 transitions for each, plus mipmaps
+    const mipSuffixes: MipLevel[] = ["full", "mip64", "mip32"]
     terrainAssetIds.forEach(assetId => {
       const asset = this.assetMap.get(assetId)
       if (!asset) return
@@ -243,34 +261,46 @@ class GameScene extends Phaser.Scene {
       const props = this.tileProperties.get(assetId)
       const variations = props?.variations ?? 1
 
-      // Load all variations of base tile
+      // Load all variations of base tile with mipmaps
       for (let v = 0; v < variations; v++) {
-        const key = `terrain_${assetId}_${v}`
-        const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${v}.png`)
-        this.load.image(key, url)
+        for (const mip of mipSuffixes) {
+          const suffix = getMipSuffix(mip)
+          const key = `terrain_${assetId}_${v}${suffix ? `_${mip}` : ""}`
+          const fileName = `tile_${v}${suffix}.png`
+          const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
+          this.load.image(key, url)
+        }
       }
 
-      // Load all 8 transition images (always from tile_0)
+      // Load all 8 transition images (always from tile_0) with mipmaps
       ALL_DIRECTIONS.forEach(dir => {
-        const key = `transition_${assetId}_${dir}`
-        const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_0_transition_${dir}.png`)
-        this.load.image(key, url)
+        for (const mip of mipSuffixes) {
+          const suffix = getMipSuffix(mip)
+          const key = `transition_${assetId}_${dir}${suffix ? `_${mip}` : ""}`
+          const fileName = `tile_0_transition_${dir}${suffix}.png`
+          const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
+          this.load.image(key, url)
+        }
       })
     })
 
-    // Load path tiles: all 15 variations (0-14) for each
+    // Load path tiles: all 15 variations (0-14) for each, with mipmaps
     pathAssetIds.forEach(assetId => {
       const asset = this.assetMap.get(assetId)
       if (!asset) return
 
       for (let v = 0; v < 15; v++) {
-        const key = `path_${assetId}_${v}`
-        const url = getAssetFileUrl(asset.storageKeyPrefix, `tile_${v}.png`)
-        this.load.image(key, url)
+        for (const mip of mipSuffixes) {
+          const suffix = getMipSuffix(mip)
+          const key = `path_${assetId}_${v}${suffix ? `_${mip}` : ""}`
+          const fileName = `tile_${v}${suffix}.png`
+          const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
+          this.load.image(key, url)
+        }
       }
     })
 
-    // Load character/object sprites - idle and walk frames for animation
+    // Load character/object sprites - idle and walk frames for animation, with mipmaps
     characterAssetIds.forEach(assetId => {
       const asset = this.assetMap.get(assetId)
       if (!asset) return
@@ -278,25 +308,31 @@ class GameScene extends Phaser.Scene {
       const def = this.entityDefinitions.get(assetId)
       const visualStatePrefix = def?.visualStates?.[0] ? `${def.visualStates[0]}_` : ""
 
-      // Load all idle frames
+      // Load all idle frames with mipmaps
       const idleFrameCount = def?.states?.idle?.frames ?? 1
       for (let i = 0; i < idleFrameCount; i++) {
-        const key = `char_${assetId}_idle_${i}`
-        const fileName = `${visualStatePrefix}idle_${i}.png`
-        const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
-        this.load.image(key, url)
+        for (const mip of mipSuffixes) {
+          const suffix = getMipSuffix(mip)
+          const key = `char_${assetId}_idle_${i}${suffix ? `_${mip}` : ""}`
+          const fileName = `${visualStatePrefix}idle_${i}${suffix}.png`
+          const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
+          this.load.image(key, url)
+        }
       }
 
-      // Load walk frames for all directions
+      // Load walk frames for all directions with mipmaps
       const walkDirections = ["down", "up", "left", "right"] as const
       for (const dir of walkDirections) {
         const walkState = `walk_${dir}`
         const walkFrameCount = def?.states?.[walkState]?.frames ?? 0
         for (let i = 0; i < walkFrameCount; i++) {
-          const key = `char_${assetId}_${walkState}_${i}`
-          const fileName = `${visualStatePrefix}${walkState}_${i}.png`
-          const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
-          this.load.image(key, url)
+          for (const mip of mipSuffixes) {
+            const suffix = getMipSuffix(mip)
+            const key = `char_${assetId}_${walkState}_${i}${suffix ? `_${mip}` : ""}`
+            const fileName = `${visualStatePrefix}${walkState}_${i}${suffix}.png`
+            const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
+            this.load.image(key, url)
+          }
         }
       }
     })
@@ -307,6 +343,10 @@ class GameScene extends Phaser.Scene {
 
     const { width, height, layers } = this.mapData
 
+    // Determine initial mip level based on starting zoom (0.5)
+    this.currentMipLevel = getMipLevel(0.5)
+    const mipSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
+
     // PASS 1: Draw base terrain tiles
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -316,19 +356,21 @@ class GameScene extends Phaser.Scene {
         const props = this.tileProperties.get(tile.tileAssetId)
         const variations = props?.variations ?? 1
         const variation = getVariationFromSeed(tile.seed, variations)
-        const key = `terrain_${tile.tileAssetId}_${variation}`
+        const key = `terrain_${tile.tileAssetId}_${variation}${mipSuffix}`
 
         if (this.textures.exists(key)) {
-          this.add.image(
+          const image = this.add.image(
             x * TILE_SIZE + TILE_SIZE / 2,
             y * TILE_SIZE + TILE_SIZE / 2,
             key
           )
+          // Track terrain image for mip level switching
+          this.terrainImages.set(`${x},${y}`, { image, assetId: tile.tileAssetId, variation })
         }
       }
     }
 
-    // PASS 2: Draw transitions (Stacking Algorithm)
+    // PASS 2: Draw transitions (Stacking Algorithm) - these don't need tracking
     // Uses shared getTransitionDirections() to determine where to project transitions
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -341,7 +383,7 @@ class GameScene extends Phaser.Scene {
         // Draw transition for each direction
         for (const dir of directions) {
           const { nx, ny } = getNeighborPosition(x, y, dir)
-          const key = `transition_${tile.tileAssetId}_${dir}`
+          const key = `transition_${tile.tileAssetId}_${dir}${mipSuffix}`
 
           if (this.textures.exists(key)) {
             this.add.image(
@@ -355,7 +397,7 @@ class GameScene extends Phaser.Scene {
     }
 
     // PASS 3: Draw paths (waterPaths first, then groundPaths for bridges)
-    const drawPathLayer = (pathLayer: (MapPath | null)[][] | undefined) => {
+    const drawPathLayer = (pathLayer: (MapPath | null)[][] | undefined, layerPrefix: string) => {
       if (!pathLayer) return
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
@@ -365,23 +407,25 @@ class GameScene extends Phaser.Scene {
           const variation = calculatePathVariation(
             x, y, width, height, pathLayer, path.pathAssetId
           )
-          const key = `path_${path.pathAssetId}_${variation}`
+          const key = `path_${path.pathAssetId}_${variation}${mipSuffix}`
 
           if (this.textures.exists(key)) {
-            this.add.image(
+            const image = this.add.image(
               x * TILE_SIZE + TILE_SIZE / 2,
               y * TILE_SIZE + TILE_SIZE / 2,
               key
             )
+            // Track path image for mip level switching
+            this.pathImages.set(`${layerPrefix}_${x},${y}`, { image, assetId: path.pathAssetId, variation })
           }
         }
       }
     }
 
     // Draw water paths first (rivers, moats, lava)
-    drawPathLayer(layers.waterPaths)
+    drawPathLayer(layers.waterPaths, "water")
     // Draw ground paths on top (roads, bridges)
-    drawPathLayer(layers.groundPaths)
+    drawPathLayer(layers.groundPaths, "ground")
 
     // Create selection indicator (glowing disc under controlled character)
     this.selectionIndicator = this.add.graphics()
@@ -389,45 +433,28 @@ class GameScene extends Phaser.Scene {
     this.drawSelectionIndicator()
 
     // PASS 4: Draw characters with animations
+    // Create animations for all mip levels
+    const mipLevels: MipLevel[] = ["full", "mip64", "mip32"]
+
     this.characters.forEach(char => {
       const def = this.entityDefinitions.get(char.assetId)
       const idleFrameCount = def?.states?.idle?.frames ?? 1
-      const firstFrameKey = `char_${char.assetId}_idle_0`
+      const firstFrameKey = `char_${char.assetId}_idle_0${mipSuffix}`
 
-      if (!this.textures.exists(firstFrameKey)) return
+      // Check if at least the full-size texture exists
+      if (!this.textures.exists(`char_${char.assetId}_idle_0`)) return
 
-      // Create idle animation if it doesn't exist and has multiple frames
-      const idleAnimKey = `anim_${char.assetId}_idle`
-      if (idleFrameCount > 1 && !this.anims.exists(idleAnimKey)) {
-        const frames: Phaser.Types.Animations.AnimationFrame[] = []
-        for (let i = 0; i < idleFrameCount; i++) {
-          const frameKey = `char_${char.assetId}_idle_${i}`
-          if (this.textures.exists(frameKey)) {
-            frames.push({ key: frameKey })
-          }
-        }
+      // Create idle and walk animations for each mip level
+      for (const mipLevel of mipLevels) {
+        const mipAnimSuffix = mipLevel === "full" ? "" : `_${mipLevel}`
+        const mipTexSuffix = mipLevel === "full" ? "" : `_${mipLevel}`
 
-        if (frames.length > 0) {
-          this.anims.create({
-            key: idleAnimKey,
-            frames: frames,
-            frameRate: 4, // 4 FPS for idle animation
-            repeat: -1 // Loop forever
-          })
-        }
-      }
-
-      // Create walk animations for all directions
-      const walkDirections = ["down", "up", "left", "right"] as const
-      for (const dir of walkDirections) {
-        const walkState = `walk_${dir}`
-        const walkFrameCount = def?.states?.[walkState]?.frames ?? 0
-        const walkAnimKey = `anim_${char.assetId}_${walkState}`
-
-        if (walkFrameCount > 0 && !this.anims.exists(walkAnimKey)) {
+        // Create idle animation if it doesn't exist and has multiple frames
+        const idleAnimKey = `anim_${char.assetId}_idle${mipAnimSuffix}`
+        if (idleFrameCount > 1 && !this.anims.exists(idleAnimKey)) {
           const frames: Phaser.Types.Animations.AnimationFrame[] = []
-          for (let i = 0; i < walkFrameCount; i++) {
-            const frameKey = `char_${char.assetId}_${walkState}_${i}`
+          for (let i = 0; i < idleFrameCount; i++) {
+            const frameKey = `char_${char.assetId}_idle_${i}${mipTexSuffix}`
             if (this.textures.exists(frameKey)) {
               frames.push({ key: frameKey })
             }
@@ -435,16 +462,43 @@ class GameScene extends Phaser.Scene {
 
           if (frames.length > 0) {
             this.anims.create({
-              key: walkAnimKey,
+              key: idleAnimKey,
               frames: frames,
-              frameRate: 8, // 8 FPS for walk animation (faster than idle)
-              repeat: -1 // Loop while walking
+              frameRate: 4, // 4 FPS for idle animation
+              repeat: -1 // Loop forever
             })
+          }
+        }
+
+        // Create walk animations for all directions
+        const walkDirections = ["down", "up", "left", "right"] as const
+        for (const dir of walkDirections) {
+          const walkState = `walk_${dir}`
+          const walkFrameCount = def?.states?.[walkState]?.frames ?? 0
+          const walkAnimKey = `anim_${char.assetId}_${walkState}${mipAnimSuffix}`
+
+          if (walkFrameCount > 0 && !this.anims.exists(walkAnimKey)) {
+            const frames: Phaser.Types.Animations.AnimationFrame[] = []
+            for (let i = 0; i < walkFrameCount; i++) {
+              const frameKey = `char_${char.assetId}_${walkState}_${i}${mipTexSuffix}`
+              if (this.textures.exists(frameKey)) {
+                frames.push({ key: frameKey })
+              }
+            }
+
+            if (frames.length > 0) {
+              this.anims.create({
+                key: walkAnimKey,
+                frames: frames,
+                frameRate: 8, // 8 FPS for walk animation (faster than idle)
+                repeat: -1 // Loop while walking
+              })
+            }
           }
         }
       }
 
-      // Create sprite with first frame
+      // Create sprite with first frame using current mip level
       const sprite = this.add.sprite(
         char.x * TILE_SIZE + TILE_SIZE / 2,
         char.y * TILE_SIZE + TILE_SIZE / 2,
@@ -458,9 +512,11 @@ class GameScene extends Phaser.Scene {
         }
       })
 
-      // Play idle animation if it exists
-      if (this.anims.exists(idleAnimKey)) {
-        sprite.play(idleAnimKey)
+      // Play idle animation if it exists (using current mip level)
+      const currentMipAnimSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
+      const currentIdleAnimKey = `anim_${char.assetId}_idle${currentMipAnimSuffix}`
+      if (this.anims.exists(currentIdleAnimKey)) {
+        sprite.play(currentIdleAnimKey)
       }
 
       this.characterSprites.set(char.id, sprite)
@@ -501,6 +557,10 @@ class GameScene extends Phaser.Scene {
       } else {
         cam.zoom = Math.max(0.1, cam.zoom / zoomFactor)
       }
+
+      // Switch mip level based on new zoom
+      const newMipLevel = getMipLevel(cam.zoom)
+      this.switchMipLevel(newMipLevel)
     })
 
     // Background click handler (for clicking on empty tiles)
@@ -583,6 +643,56 @@ class GameScene extends Phaser.Scene {
       this.selectionIndicator.setPosition(x, y)
       this.selectionIndicator.setVisible(true)
     }
+  }
+
+  // Switch texture mip levels based on zoom
+  private switchMipLevel(newLevel: MipLevel) {
+    if (newLevel === this.currentMipLevel) return
+
+    const oldSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
+    const newSuffix = newLevel === "full" ? "" : `_${newLevel}`
+
+    // Update terrain images
+    this.terrainImages.forEach(({ image, assetId, variation }) => {
+      const newKey = `terrain_${assetId}_${variation}${newSuffix}`
+      if (this.textures.exists(newKey)) {
+        image.setTexture(newKey)
+      }
+    })
+
+    // Update path images
+    this.pathImages.forEach(({ image, assetId, variation }) => {
+      const newKey = `path_${assetId}_${variation}${newSuffix}`
+      if (this.textures.exists(newKey)) {
+        image.setTexture(newKey)
+      }
+    })
+
+    // Update character sprites (animations need special handling)
+    this.characters.forEach(char => {
+      const sprite = this.characterSprites.get(char.id)
+      if (!sprite) return
+
+      // Get current animation key
+      const currentAnimKey = sprite.anims.currentAnim?.key
+      if (currentAnimKey) {
+        // Parse the animation key to find the base (e.g., "anim_assetId_idle")
+        // And switch to the mip version
+        const newAnimKey = currentAnimKey.replace(oldSuffix, newSuffix)
+        if (this.anims.exists(newAnimKey)) {
+          sprite.play(newAnimKey)
+        }
+      } else {
+        // No animation playing - just update texture
+        const currentTexture = sprite.texture.key
+        const newTexture = currentTexture.replace(oldSuffix, newSuffix)
+        if (this.textures.exists(newTexture)) {
+          sprite.setTexture(newTexture)
+        }
+      }
+    })
+
+    this.currentMipLevel = newLevel
   }
 
   // Update character glow based on control status
@@ -746,6 +856,7 @@ class GameScene extends Phaser.Scene {
     const targetY = newY * TILE_SIZE + TILE_SIZE / 2
 
     // Play walk animation if it exists, otherwise keep showing idle
+    const mipAnimSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
     if (direction) {
       const directionMap: Record<string, string> = {
         "n": "walk_up",
@@ -758,7 +869,7 @@ class GameScene extends Phaser.Scene {
         "left": "walk_left",
       }
       const walkState = directionMap[direction.toLowerCase()] || "walk_down"
-      const walkAnimKey = `anim_${char.assetId}_${walkState}`
+      const walkAnimKey = `anim_${char.assetId}_${walkState}${mipAnimSuffix}`
 
       // Only play walk animation if it exists (otherwise keep current frame)
       if (this.anims.exists(walkAnimKey)) {
@@ -782,13 +893,14 @@ class GameScene extends Phaser.Scene {
         char.y = newY
 
         // Return to idle: try animation first, fall back to static texture
-        const idleAnimKey = `anim_${char.assetId}_idle`
+        const currentMipSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
+        const idleAnimKey = `anim_${char.assetId}_idle${currentMipSuffix}`
         if (this.anims.exists(idleAnimKey)) {
           sprite.play(idleAnimKey)
         } else {
           // No idle animation (single frame) - stop any animation and show static idle frame
           sprite.stop()
-          const idleTextureKey = `char_${char.assetId}_idle_0`
+          const idleTextureKey = `char_${char.assetId}_idle_0${currentMipSuffix}`
           if (this.textures.exists(idleTextureKey)) {
             sprite.setTexture(idleTextureKey)
           }

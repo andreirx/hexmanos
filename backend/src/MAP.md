@@ -23,7 +23,7 @@ Framework-specific code with Spring annotations.
 
 | Directory | Purpose |
 |-----------|---------|
-| `config/core/` | Bean definitions for Core services |
+| `config/core/` | Bean definitions for Core services (Asset, Transition, Mipmap, User) |
 | `config/security/` | Security configuration |
 | `controllers/` | REST API endpoints |
 | `dtos/` | Data transfer objects |
@@ -34,6 +34,7 @@ Framework-specific code with Spring annotations.
 |------|---------|
 | `AssetConfig.java` | Wires `AssetService` bean |
 | `FileStorageConfig.java` | Wires file storage service bean |
+| `MipmapConfig.java` | Wires `MipmapGeneratorService` bean |
 | `TransitionConfig.java` | Wires `TransitionGeneratorService` bean |
 | `UserConfig.java` | Wires `UserService` bean |
 
@@ -63,6 +64,7 @@ Framework-specific code with Spring annotations.
 #### schedulers/
 | File | Purpose |
 |------|---------|
+| `MipmapGeneratorScheduler.java` | Periodic mipmap generation for tiles and characters |
 | `TransitionGeneratorScheduler.java` | Periodic tile transition generation |
 | `TransitionRegenerationStartup.java` | Regenerate transitions on startup |
 
@@ -74,6 +76,7 @@ Pure Java business logic. No Spring annotations.
 |-----------|---------|
 | `asset/` | Asset domain model and logic |
 | `files/` | File storage abstraction |
+| `mipmap/` | Mipmap generation for zoom quality |
 | `transition/` | Tile transition generation |
 | `user/` | User domain model and logic |
 
@@ -103,6 +106,15 @@ Pure Java business logic. No Spring annotations.
 |------|---------|
 | `FileStorageService.java` | Port interface for file operations |
 | `PresignedUploadUrl.java` | Value object for presigned URL data |
+
+#### mipmap/
+| File | Purpose |
+|------|---------|
+| `MipmapGeneratorService.java` | Generates smaller resolution variants (64x64, 32x32) from 128x128 PNGs |
+
+**Mipmap sizes**: `-mip64.png` (64x64) and `-mip32.png` (32x32)
+**Algorithm**: High-quality bicubic interpolation for smooth downscaling
+**Scope**: TILE and CHARACTER assets (all PNG files except transitions and existing mipmaps)
 
 #### transition/
 | File | Purpose |

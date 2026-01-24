@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hexmanos.engine.core.asset.Asset;
 import com.hexmanos.engine.core.asset.AssetRepository;
 import com.hexmanos.engine.core.files.FileStorageService;
+import com.hexmanos.engine.core.map.MapMigrationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,7 @@ class GameServiceTest {
     @Mock private FileStorageService storageService;
     @Mock private GameRoomManager roomManager;
     @Mock private SnapshotService snapshotService;
+    @Mock private MapMigrationService mapMigrationService;
 
     private GameService gameService;
     private ObjectMapper objectMapper;
@@ -45,7 +47,8 @@ class GameServiceTest {
                 roomManager,
                 snapshotService,
                 objectMapper,
-                passwordEncoder
+                passwordEncoder,
+                mapMigrationService
         );
     }
 
