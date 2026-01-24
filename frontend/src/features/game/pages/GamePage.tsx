@@ -171,7 +171,9 @@ class GameScene extends Phaser.Scene {
   private selectionIndicator: Phaser.GameObjects.Graphics | null = null
   private moveDebounceTime = 200 // ms between move inputs
   private lastMoveTime = 0
-  private moveDuration = 150 // ms for movement animation
+  // Standard animation duration (matches backend BASE_MOVE_DELAY_MS)
+  // Used to calculate animation timeScale: timeScale = STANDARD_ANIM_DURATION / actualDuration
+  private static readonly STANDARD_ANIM_DURATION = 200 // ms
   private zoomDuration = 300 // ms for zoom transitions
 
   // Store guaranteed-valid idle texture for each character (fallback)
@@ -1008,50 +1010,9 @@ class GameScene extends Phaser.Scene {
     sprite.setVisible(true)
   }
 
-  /**
-   * Get the movement cost for a tile at the given position.
-   * Checks terrain and paths, returns the highest movement cost found.
-   * Default is 1 if no specific cost is set.
-   */
-  private getMovementCostAt(x: number, y: number): number {
-    if (!this.mapData) return 1
-
-    let cost = 1
-
-    // Check terrain tile
-    const terrainTile = this.mapData.layers.terrain[y]?.[x]
-    if (terrainTile?.tileAssetId) {
-      const props = this.tileProperties.get(terrainTile.tileAssetId)
-      if (props?.movementCost !== undefined) {
-        cost = Math.max(cost, props.movementCost)
-      }
-    }
-
-    // Check ground path (roads, bridges) - may override terrain cost
-    const groundPath = this.mapData.layers.groundPaths?.[y]?.[x]
-    if (groundPath?.pathAssetId) {
-      const props = this.tileProperties.get(groundPath.pathAssetId)
-      if (props?.movementCost !== undefined) {
-        // Paths can make movement easier (lower cost) or harder
-        cost = props.movementCost
-      }
-    }
-
-    // Check water path (rivers, lava)
-    const waterPath = this.mapData.layers.waterPaths?.[y]?.[x]
-    if (waterPath?.pathAssetId) {
-      const props = this.tileProperties.get(waterPath.pathAssetId)
-      if (props?.movementCost !== undefined) {
-        cost = Math.max(cost, props.movementCost)
-      }
-    }
-
-    return cost
-  }
-
   // Animate character movement with tween (called when receiving WebSocket event)
-  // The `state` parameter comes directly from the backend and determines what animation to play
-  animateCharacterMove(characterId: string, newX: number, newY: number, state: string) {
+  // The `state` and `duration` parameters come directly from the backend (Single Source of Truth)
+  animateCharacterMove(characterId: string, newX: number, newY: number, state: string, duration: number) {
     const sprite = this.characterSprites.get(characterId)
     if (!sprite) return
 
@@ -1076,29 +1037,24 @@ class GameScene extends Phaser.Scene {
     const targetX = newX * TILE_SIZE + TILE_SIZE / 2
     const targetY = newY * TILE_SIZE + TILE_SIZE / 2
 
-    // Get movement cost for the destination tile
-    // Higher cost = slower movement and animation
-    const movementCost = this.getMovementCostAt(newX, newY)
-    const adjustedDuration = this.moveDuration * movementCost
-
     // Play the animation state from backend (walk_up, walk_down, etc.)
     // The backend tells us exactly what animation to play - visual fallback happens in setCharacterState
     this.setCharacterState(characterId, state)
 
-    // Slow down animation frame rate proportionally to movement cost
-    // Higher cost = slower animation frames (timeScale < 1)
-    if (movementCost > 1 && sprite.anims?.isPlaying) {
-      sprite.anims.timeScale = 1 / movementCost
-    } else if (sprite.anims) {
-      sprite.anims.timeScale = 1
+    // Calculate animation timeScale based on backend-provided duration
+    // timeScale = STANDARD / actual -> slower terrain = lower timeScale = slower animation
+    // E.g., duration=600ms (cost 3) -> timeScale = 200/600 = 0.33
+    const timeScale = GameScene.STANDARD_ANIM_DURATION / duration
+    if (sprite.anims) {
+      sprite.anims.timeScale = timeScale
     }
 
-    // Animate the movement using a tween
+    // Animate the movement using backend-provided duration
     this.tweens.add({
       targets: sprite,
       x: targetX,
       y: targetY,
-      duration: adjustedDuration,
+      duration: duration,
       ease: "Linear",
       onComplete: () => {
         // Mark character as done moving
@@ -1135,26 +1091,24 @@ class GameScene extends Phaser.Scene {
     })
 
     // Also move selection indicator if this is the controlled character
-    // Use adjusted duration to match sprite movement speed
     if (characterId === this.controlledCharacterId && this.selectionIndicator) {
       this.tweens.add({
         targets: this.selectionIndicator,
         x: targetX,
         y: targetY,
-        duration: adjustedDuration,
+        duration: duration,
         ease: "Linear"
       })
     }
 
     // Move glow along with character
-    // Use adjusted duration to match sprite movement speed
     const glow = this.characterGlows.get(characterId)
     if (glow && glow.visible) {
       this.tweens.add({
         targets: glow,
         x: targetX,
         y: targetY,
-        duration: adjustedDuration,
+        duration: duration,
         ease: "Linear"
       })
     }
@@ -1278,12 +1232,12 @@ export function GamePage() {
     }
   }, [])
 
-  // Handle WebSocket character move events - uses backend-driven animation state
+  // Handle WebSocket character move events - uses backend-driven animation state and duration
   const handleCharacterMove = useCallback((event: CharacterMoveEvent) => {
     const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
     if (scene) {
-      // Pass the backend's animation state directly to the scene
-      scene.animateCharacterMove(event.characterId, event.x, event.y, event.state)
+      // Pass backend's animation state and duration directly (backend is Single Source of Truth)
+      scene.animateCharacterMove(event.characterId, event.x, event.y, event.state, event.duration)
 
       // Update path visualization if this is a path step
       if (currentPathRef.current && currentPathRef.current.length > 0) {

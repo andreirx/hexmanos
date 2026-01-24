@@ -30,7 +30,6 @@ public class GameScheduler {
     private final SimpMessagingTemplate messagingTemplate;
 
     private static final Duration EXPIRY_DURATION = Duration.ofDays(2);
-    private static final long BASE_MOVE_DELAY_MS = 200; // Base delay for movement cost 1
 
     /**
      * Save snapshots for all active games.
@@ -150,8 +149,8 @@ public class GameScheduler {
                 movementCost = Math.max(1, terrain.getCost(nextStep.x(), nextStep.y()));
             }
 
-            // Calculate required delay based on movement cost
-            long requiredDelay = BASE_MOVE_DELAY_MS * movementCost;
+            // Calculate required delay based on movement cost (using GameService constant)
+            long requiredDelay = GameService.BASE_MOVE_DELAY_MS * movementCost;
             long timeSinceLastMove = now - character.getLastMoveTime();
 
             // Skip if not enough time has passed
@@ -165,13 +164,14 @@ public class GameScheduler {
                     // Record move time for movement cost timing
                     character.recordMove();
 
-                    // Broadcast the move to all players (with animation state from backend)
+                    // Broadcast the move to all players (with animation state and duration from backend)
                     CharacterMoveEvent event = new CharacterMoveEvent(
                             result.characterId().toString(),
                             result.x(),
                             result.y(),
                             result.direction(),
-                            result.state()
+                            result.state(),
+                            result.duration()
                     );
                     messagingTemplate.convertAndSend("/topic/game/" + gameId, event);
 
@@ -210,13 +210,15 @@ public class GameScheduler {
      * @param y New Y position
      * @param direction Direction of movement (n, s, e, w)
      * @param state Animation state to render (walk_up, walk_down, walk_left, walk_right, idle)
+     * @param duration Duration in milliseconds for this move animation (based on terrain cost)
      */
     public record CharacterMoveEvent(
             String characterId,
             int x,
             int y,
             String direction,
-            String state
+            String state,
+            long duration
     ) {}
 
     /**

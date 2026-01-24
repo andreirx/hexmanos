@@ -47,13 +47,14 @@ public class GameWebSocketController {
         try {
             GameService.MoveResult result = gameService.moveCharacter(gameId, playerId, request.direction());
 
-            // Broadcast the move to all players in the game
+            // Broadcast the move to all players in the game (with backend-dictated duration)
             CharacterMoveEvent event = new CharacterMoveEvent(
                     result.characterId().toString(),
                     result.x(),
                     result.y(),
                     result.direction(),
-                    result.state()
+                    result.state(),
+                    result.duration()
             );
 
             messagingTemplate.convertAndSend("/topic/game/" + gameId, event);
@@ -187,13 +188,15 @@ public class GameWebSocketController {
      * @param y New Y position
      * @param direction Direction of movement (n, s, e, w)
      * @param state Animation state to render (walk_up, walk_down, walk_left, walk_right, idle)
+     * @param duration Duration in milliseconds for this move animation (based on terrain cost)
      */
     public record CharacterMoveEvent(
             String characterId,
             int x,
             int y,
             String direction,
-            String state
+            String state,
+            long duration
     ) {}
 
     /**

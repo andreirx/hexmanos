@@ -395,17 +395,31 @@ public class GameService {
             throw new IllegalArgumentException("Move failed");
         }
 
-        // Get the updated character
-        GameCharacter character = roomManager.getState(gameId)
-                .findCharacter(characterId)
+        // Get the updated character and game state
+        GameState state = roomManager.getState(gameId);
+        GameCharacter character = state.findCharacter(characterId)
                 .orElseThrow(() -> new IllegalStateException("Character not found after move"));
+
+        // Calculate duration based on terrain cost at destination
+        int movementCost = 1;
+        TerrainGrid terrain = state.getTerrainGrid();
+        if (terrain != null) {
+            movementCost = Math.max(1, terrain.getCost(character.getX(), character.getY()));
+        }
+        long duration = BASE_MOVE_DELAY_MS * movementCost;
 
         game.touch();
         gameRepository.save(game);
 
-        // Return with the character's animation state (set by move())
-        return new MoveResult(characterId, character.getX(), character.getY(), direction, character.getCurrentState());
+        // Return with the character's animation state and duration
+        return new MoveResult(characterId, character.getX(), character.getY(), direction, character.getCurrentState(), duration);
     }
+
+    /**
+     * Base move delay in milliseconds for movement cost 1.
+     * Higher movement costs multiply this value.
+     */
+    public static final long BASE_MOVE_DELAY_MS = 200;
 
     /**
      * Result of a character move operation.
@@ -414,8 +428,9 @@ public class GameService {
      * @param y New Y position
      * @param direction The direction of movement (n, s, e, w)
      * @param state The animation state (walk_up, walk_down, etc. or idle)
+     * @param duration The duration in milliseconds for this move (based on terrain cost)
      */
-    public record MoveResult(UUID characterId, int x, int y, String direction, String state) {}
+    public record MoveResult(UUID characterId, int x, int y, String direction, String state, long duration) {}
 
     /**
      * Result of a path request operation.
@@ -502,7 +517,15 @@ public class GameService {
             default -> "s";
         };
 
-        return new MoveResult(characterId, newPos.x(), newPos.y(), direction, character.getCurrentState());
+        // Calculate duration based on terrain cost at destination
+        int movementCost = 1;
+        TerrainGrid terrain = state.getTerrainGrid();
+        if (terrain != null) {
+            movementCost = Math.max(1, terrain.getCost(newPos.x(), newPos.y()));
+        }
+        long duration = BASE_MOVE_DELAY_MS * movementCost;
+
+        return new MoveResult(characterId, newPos.x(), newPos.y(), direction, character.getCurrentState(), duration);
     }
 
     /**

@@ -12,6 +12,7 @@ export interface CharacterMoveEvent {
   y: number
   direction: string
   state: string  // Animation state from backend (walk_up, walk_down, walk_left, walk_right, idle)
+  duration: number  // Duration in milliseconds for this move animation (backend-dictated based on terrain cost)
 }
 
 export interface CharacterIdleEvent {
