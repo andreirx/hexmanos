@@ -2,6 +2,15 @@
 
 Spring Boot 3.4.1 REST API following Clean Architecture (Hexagonal). Java 17 with Gradle build system.
 
+## Architecture Principle: Backend is Single Source of Truth
+
+**For game state, the backend is AUTHORITATIVE.** The frontend is a renderer.
+
+- Backend owns: character positions, animation states, health, paths, control, game status
+- Frontend owns: mipmap/zoom selection, visual effects, UI state (display concerns only)
+- WebSocket events include animation state - frontend renders what backend says
+- This prevents desync bugs during frontend-only operations like zoom changes
+
 ## Directory Structure
 
 | Item | Type | Purpose |

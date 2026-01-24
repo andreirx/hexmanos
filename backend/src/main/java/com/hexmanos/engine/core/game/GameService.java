@@ -403,13 +403,19 @@ public class GameService {
         game.touch();
         gameRepository.save(game);
 
-        return new MoveResult(characterId, character.getX(), character.getY(), direction);
+        // Return with the character's animation state (set by move())
+        return new MoveResult(characterId, character.getX(), character.getY(), direction, character.getCurrentState());
     }
 
     /**
      * Result of a character move operation.
+     * @param characterId The character that moved
+     * @param x New X position
+     * @param y New Y position
+     * @param direction The direction of movement (n, s, e, w)
+     * @param state The animation state (walk_up, walk_down, etc. or idle)
      */
-    public record MoveResult(UUID characterId, int x, int y, String direction) {}
+    public record MoveResult(UUID characterId, int x, int y, String direction, String state) {}
 
     /**
      * Result of a path request operation.
@@ -496,7 +502,7 @@ public class GameService {
             default -> "s";
         };
 
-        return new MoveResult(characterId, newPos.x(), newPos.y(), direction);
+        return new MoveResult(characterId, newPos.x(), newPos.y(), direction, character.getCurrentState());
     }
 
     /**

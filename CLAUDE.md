@@ -19,6 +19,51 @@
 - **No Blobs in DB:** Never store JSON payloads or Images in Postgres columns.
 - **Reference:** Entities store a `s3Key` string, not the file content.
 
+## 1.5. Game State Architecture: Backend as Single Source of Truth
+
+**The backend is the AUTHORITATIVE source for all game state.** The frontend is a RENDERER that reflects backend state.
+
+### What Backend Owns (Authoritative)
+- **Character positions** (x, y coordinates)
+- **Character states** (idle, walk_up, walk_down, walk_left, walk_right)
+- **Character health, control assignments, paths**
+- **Game status** (WAITING, RUNNING, PAUSED, FINISHED)
+- **All gameplay logic** (movement validation, collision, pathfinding)
+
+### What Frontend Owns (Display Concerns Only)
+- **Mipmap selection** (which texture resolution based on zoom level)
+- **Zoom level** (camera zoom 0.1x - 2x)
+- **Animation rendering** (Phaser plays animations, but backend says WHICH animation)
+- **Visual effects** (glows, selection indicators, particles)
+- **UI state** (which panel is open, scroll position)
+
+### The Contract
+1. **Backend sends state changes via WebSocket events** (CharacterMoveEvent, CharacterIdleEvent)
+2. **Events include the animation state** (`state: "walk_up"`) - frontend doesn't decide this
+3. **Frontend renders exactly what backend tells it** - no local state management for game logic
+4. **Frontend can cache/interpolate for smoothness** but must sync frequently to reset assumptions
+
+### Why This Matters
+- **Prevents desync bugs**: Frontend can't get out of sync if it doesn't manage state
+- **Multiplayer-ready**: All clients see the same state because backend is authoritative
+- **Zoom-safe**: Changing mip levels doesn't affect game state, only rendering
+- **Debuggable**: Backend state is the truth, frontend is just a view
+
+### Implementation Rules
+```
+Backend:
+- CharacterMoveEvent includes { characterId, x, y, direction, state }
+- CharacterIdleEvent sent when character should stop walking
+- Game loop broadcasts all state changes
+
+Frontend:
+- setCharacterState(id, state) - renders what backend says
+- animateCharacterMove(id, x, y, state) - tween + animation from backend
+- For manual moves (WASD): auto-idle after animation (no path active)
+- For path moves: wait for CharacterIdleEvent from backend
+- Always ensure sprite visibility after any state change
+```
+
 ## 2. Backend Architecture (Spring Boot + Java 17 + gradle)
 We follow a strict **Clean Architecture** separating `App` (Driver), `Core` (Domain), and `External` (Driven).
 

@@ -11,6 +11,12 @@ export interface CharacterMoveEvent {
   x: number
   y: number
   direction: string
+  state: string  // Animation state from backend (walk_up, walk_down, walk_left, walk_right, idle)
+}
+
+export interface CharacterIdleEvent {
+  characterId: string
+  state: string  // Always "idle"
 }
 
 export interface PathStartEvent {
@@ -25,6 +31,7 @@ export interface PathCancelEvent {
 export interface GameWebSocketOptions {
   gameId: string
   onCharacterMove?: (event: CharacterMoveEvent) => void
+  onCharacterIdle?: (event: CharacterIdleEvent) => void
   onPathStart?: (event: PathStartEvent) => void
   onPathCancel?: (event: PathCancelEvent) => void
   onError?: (message: string) => void
@@ -33,7 +40,7 @@ export interface GameWebSocketOptions {
 }
 
 export function useGameWebSocket(options: GameWebSocketOptions) {
-  const { gameId, onCharacterMove, onPathStart, onPathCancel, onError, onConnected, onDisconnected } = options
+  const { gameId, onCharacterMove, onCharacterIdle, onPathStart, onPathCancel, onError, onConnected, onDisconnected } = options
 
   const clientRef = useRef<Client | null>(null)
   const subscriptionRef = useRef<StompSubscription | null>(null)
@@ -42,8 +49,8 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
   const currentGameIdRef = useRef<string | null>(null)
 
   // Store callbacks in refs to avoid dependency changes
-  const callbacksRef = useRef({ onCharacterMove, onPathStart, onPathCancel, onError, onConnected, onDisconnected })
-  callbacksRef.current = { onCharacterMove, onPathStart, onPathCancel, onError, onConnected, onDisconnected }
+  const callbacksRef = useRef({ onCharacterMove, onCharacterIdle, onPathStart, onPathCancel, onError, onConnected, onDisconnected })
+  callbacksRef.current = { onCharacterMove, onCharacterIdle, onPathStart, onPathCancel, onError, onConnected, onDisconnected }
 
   // Send move command - stable reference
   const sendMove = useCallback((direction: "n" | "s" | "e" | "w") => {
@@ -179,10 +186,14 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
                 // PathStartEvent has a 'path' array
                 console.log("[WebSocket] Received path start event:", event)
                 callbacksRef.current.onPathStart?.(event as PathStartEvent)
-              } else if ("direction" in event) {
-                // CharacterMoveEvent has 'direction'
+              } else if ("direction" in event && "x" in event && "y" in event) {
+                // CharacterMoveEvent has 'direction', 'x', 'y', and 'state'
                 console.log("[WebSocket] Received move event:", event)
                 callbacksRef.current.onCharacterMove?.(event as CharacterMoveEvent)
+              } else if ("state" in event && event.state === "idle" && !("x" in event)) {
+                // CharacterIdleEvent has 'characterId' and 'state' (idle) but no position
+                console.log("[WebSocket] Received idle event:", event)
+                callbacksRef.current.onCharacterIdle?.(event as CharacterIdleEvent)
               } else if ("characterId" in event && Object.keys(event).length === 1) {
                 // PathCancelEvent only has 'characterId'
                 console.log("[WebSocket] Received path cancel event:", event)

@@ -52,7 +52,8 @@ public class GameWebSocketController {
                     result.characterId().toString(),
                     result.x(),
                     result.y(),
-                    result.direction()
+                    result.direction(),
+                    result.state()
             );
 
             messagingTemplate.convertAndSend("/topic/game/" + gameId, event);
@@ -181,12 +182,18 @@ public class GameWebSocketController {
 
     /**
      * Event broadcast when a character moves.
+     * @param characterId The character ID
+     * @param x New X position
+     * @param y New Y position
+     * @param direction Direction of movement (n, s, e, w)
+     * @param state Animation state to render (walk_up, walk_down, walk_left, walk_right, idle)
      */
     public record CharacterMoveEvent(
             String characterId,
             int x,
             int y,
-            String direction
+            String direction,
+            String state
     ) {}
 
     /**

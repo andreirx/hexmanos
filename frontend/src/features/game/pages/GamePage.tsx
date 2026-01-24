@@ -8,7 +8,7 @@ import { useAuth } from "@/context/AuthContext"
 import { getGame, takeOverCharacter, relinquishCharacter, pauseGame, stopGame } from "@/api/games"
 import { getAssetFile, getAssetById, getAssetFileUrl } from "@/api/assets"
 import { useGameWebSocket } from "@/hooks/useGameWebSocket"
-import type { CharacterMoveEvent, PathStartEvent } from "@/hooks/useGameWebSocket"
+import type { CharacterMoveEvent, CharacterIdleEvent, PathStartEvent } from "@/hooks/useGameWebSocket"
 import { ArrowLeft, Pause, Square, User, Heart, Wifi, WifiOff } from "lucide-react"
 import type { GameDTO, GameCharacterDTO } from "@/api/types"
 import {
@@ -151,6 +151,8 @@ class GameScene extends Phaser.Scene {
 
   // Path visualization
   private pathGraphics: Phaser.GameObjects.Graphics | null = null
+  // Track which characters have active paths (for deciding whether to auto-idle)
+  private charactersWithActivePath: Set<string> = new Set()
 
   // Asset data
   private assetMap: Map<string, { storageKeyPrefix: string }> = new Map()
@@ -171,6 +173,9 @@ class GameScene extends Phaser.Scene {
   private lastMoveTime = 0
   private moveDuration = 150 // ms for movement animation
   private zoomDuration = 300 // ms for zoom transitions
+
+  // Store guaranteed-valid idle texture for each character (fallback)
+  private characterIdleTextures: Map<string, string> = new Map()
 
   // Keyboard controls (initialized in create())
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | null = null
@@ -512,13 +517,23 @@ class GameScene extends Phaser.Scene {
         }
       }
 
-      // Create sprite with first frame using current mip level
+      // Find a guaranteed-valid idle texture (try mip level first, fall back to full)
+      let validIdleTexture = `char_${char.assetId}_idle_0`
+      if (this.textures.exists(firstFrameKey)) {
+        validIdleTexture = firstFrameKey
+      } else if (this.textures.exists(`char_${char.assetId}_idle_0`)) {
+        validIdleTexture = `char_${char.assetId}_idle_0`
+      }
+      this.characterIdleTextures.set(char.id, validIdleTexture)
+
+      // Create sprite with valid idle texture
       const sprite = this.add.sprite(
         char.x * TILE_SIZE + TILE_SIZE / 2,
         char.y * TILE_SIZE + TILE_SIZE / 2,
-        firstFrameKey
+        validIdleTexture
       )
       sprite.setScale(mipScale)
+      sprite.setVisible(true) // Ensure visible
 
       sprite.setInteractive({ useHandCursor: true })
       sprite.on("pointerdown", () => {
@@ -711,16 +726,34 @@ class GameScene extends Phaser.Scene {
         const newAnimKey = newLevel === "full" ? baseAnimKey : `${baseAnimKey}_${newLevel}`
         if (this.anims.exists(newAnimKey)) {
           sprite.play(newAnimKey)
+        } else {
+          // Animation doesn't exist for this mip level - fall back to idle
+          const idleAnimKey = newLevel === "full"
+            ? `anim_${char.assetId}_idle`
+            : `anim_${char.assetId}_idle_${newLevel}`
+          if (this.anims.exists(idleAnimKey)) {
+            sprite.play(idleAnimKey)
+          } else {
+            // No idle animation either - use static idle texture
+            sprite.stop()
+            this.setCharacterIdleTexture(char.id)
+          }
         }
       } else {
-        // No animation playing - just update texture
+        // No animation playing - just update texture to new mip level
         const currentTexture = sprite.texture.key
         const baseTexture = currentTexture.replace(/_mip64$/, "").replace(/_mip32$/, "")
         const newTexture = newLevel === "full" ? baseTexture : `${baseTexture}_${newLevel}`
         if (this.textures.exists(newTexture)) {
           sprite.setTexture(newTexture)
+        } else {
+          // Texture doesn't exist - fall back to idle
+          this.setCharacterIdleTexture(char.id)
         }
       }
+
+      // CRITICAL: Always ensure sprite is visible after mip level switch
+      sprite.setVisible(true)
     })
 
     this.currentMipLevel = newLevel
@@ -885,8 +918,76 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Set character to a specific animation state (called from backend events).
+   * This is the AUTHORITATIVE way to change character animation - uses backend state.
+   */
+  setCharacterState(characterId: string, state: string) {
+    const sprite = this.characterSprites.get(characterId)
+    if (!sprite) return
+
+    const char = this.characters.find(c => c.id === characterId)
+    if (!char) return
+
+    const mipSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
+    const scale = getMipScale(this.currentMipLevel)
+
+    // Ensure correct scale
+    sprite.setScale(scale)
+
+    // Try to play the animation for this state
+    const animKey = `anim_${char.assetId}_${state}${mipSuffix}`
+    if (this.anims.exists(animKey)) {
+      sprite.play(animKey)
+    } else {
+      // Animation doesn't exist - fall back to idle
+      const idleAnimKey = `anim_${char.assetId}_idle${mipSuffix}`
+      if (this.anims.exists(idleAnimKey)) {
+        sprite.play(idleAnimKey)
+      } else {
+        // No idle animation - use static texture
+        sprite.stop()
+        this.setCharacterIdleTexture(characterId)
+      }
+    }
+
+    // Ensure sprite is always visible
+    sprite.setVisible(true)
+  }
+
+  /**
+   * Set character to idle texture (guaranteed fallback).
+   * Tries current mip level first, falls back to full size.
+   */
+  private setCharacterIdleTexture(characterId: string) {
+    const sprite = this.characterSprites.get(characterId)
+    if (!sprite) return
+
+    const char = this.characters.find(c => c.id === characterId)
+    if (!char) return
+
+    const mipSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
+
+    // Try mip-level idle texture
+    const idleTextureKey = `char_${char.assetId}_idle_0${mipSuffix}`
+    if (this.textures.exists(idleTextureKey)) {
+      sprite.setTexture(idleTextureKey)
+      sprite.setScale(getMipScale(this.currentMipLevel))
+    } else {
+      // Fall back to full-size idle
+      const fullIdleKey = `char_${char.assetId}_idle_0`
+      if (this.textures.exists(fullIdleKey)) {
+        sprite.setTexture(fullIdleKey)
+        sprite.setScale(1)
+      }
+    }
+
+    sprite.setVisible(true)
+  }
+
   // Animate character movement with tween (called when receiving WebSocket event)
-  animateCharacterMove(characterId: string, newX: number, newY: number, direction?: string) {
+  // The `state` parameter comes directly from the backend and determines what animation to play
+  animateCharacterMove(characterId: string, newX: number, newY: number, state: string) {
     const sprite = this.characterSprites.get(characterId)
     if (!sprite) return
 
@@ -901,27 +1002,9 @@ class GameScene extends Phaser.Scene {
     const targetX = newX * TILE_SIZE + TILE_SIZE / 2
     const targetY = newY * TILE_SIZE + TILE_SIZE / 2
 
-    // Play walk animation if it exists, otherwise keep showing idle
-    const mipAnimSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
-    if (direction) {
-      const directionMap: Record<string, string> = {
-        "n": "walk_up",
-        "s": "walk_down",
-        "e": "walk_right",
-        "w": "walk_left",
-        "up": "walk_up",
-        "down": "walk_down",
-        "right": "walk_right",
-        "left": "walk_left",
-      }
-      const walkState = directionMap[direction.toLowerCase()] || "walk_down"
-      const walkAnimKey = `anim_${char.assetId}_${walkState}${mipAnimSuffix}`
-
-      // Only play walk animation if it exists (otherwise keep current frame)
-      if (this.anims.exists(walkAnimKey)) {
-        sprite.play(walkAnimKey)
-      }
-    }
+    // Play the animation state from backend (walk_up, walk_down, etc.)
+    // The backend tells us exactly what animation to play - no local state management
+    this.setCharacterState(characterId, state)
 
     // Animate the movement using a tween
     this.tweens.add({
@@ -938,19 +1021,19 @@ class GameScene extends Phaser.Scene {
         char.x = newX
         char.y = newY
 
-        // Return to idle: try animation first, fall back to static texture
-        const currentMipSuffix = this.currentMipLevel === "full" ? "" : `_${this.currentMipLevel}`
-        const idleAnimKey = `anim_${char.assetId}_idle${currentMipSuffix}`
-        if (this.anims.exists(idleAnimKey)) {
-          sprite.play(idleAnimKey)
-        } else {
-          // No idle animation (single frame) - stop any animation and show static idle frame
-          sprite.stop()
-          const idleTextureKey = `char_${char.assetId}_idle_0${currentMipSuffix}`
-          if (this.textures.exists(idleTextureKey)) {
-            sprite.setTexture(idleTextureKey)
-          }
+        // Ensure correct scale (may have changed during movement)
+        const currentScale = getMipScale(this.currentMipLevel)
+        sprite.setScale(currentScale)
+
+        // For MANUAL moves (no active path), switch to idle after animation completes.
+        // For PATH moves, wait for CharacterIdleEvent from backend (sent when path completes).
+        // This prevents walk animation from playing forever after a single WASD move.
+        if (!this.charactersWithActivePath.has(characterId)) {
+          this.setCharacterState(characterId, "idle")
         }
+
+        // Ensure sprite is always visible
+        sprite.setVisible(true)
       }
     })
 
@@ -1007,6 +1090,21 @@ class GameScene extends Phaser.Scene {
     })
   }
 
+  // Mark a character as having an active path (called when PathStartEvent received)
+  setCharacterHasPath(characterId: string) {
+    this.charactersWithActivePath.add(characterId)
+  }
+
+  // Mark a character as no longer having a path (called when path completes/cancels)
+  clearCharacterPath(characterId: string) {
+    this.charactersWithActivePath.delete(characterId)
+  }
+
+  // Check if a character has an active path
+  characterHasPath(characterId: string): boolean {
+    return this.charactersWithActivePath.has(characterId)
+  }
+
   // Draw path visualization (disabled for now - will be used for squad movement later)
   drawPath(_path: [number, number][]) {
     // TODO: Re-enable when implementing path re-computation and squad movement
@@ -1042,9 +1140,11 @@ export function GamePage() {
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null)
   const [controlledCharacterId, setControlledCharacterId] = useState<string | null>(null)
 
-  // Refs for cleanup (to avoid stale closures)
+  // Refs for cleanup and avoiding stale closures
   const gameIdRef = useRef<string | null>(null)
   const controlledCharacterIdRef = useRef<string | null>(null)
+  const sendMoveRef = useRef<((direction: "n" | "s" | "e" | "w") => boolean) | null>(null)
+  const sendPathRef = useRef<((targetX: number, targetY: number) => boolean) | null>(null)
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -1069,11 +1169,12 @@ export function GamePage() {
     }
   }, [])
 
-  // Handle WebSocket character move events
+  // Handle WebSocket character move events - uses backend-driven animation state
   const handleCharacterMove = useCallback((event: CharacterMoveEvent) => {
     const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
     if (scene) {
-      scene.animateCharacterMove(event.characterId, event.x, event.y, event.direction)
+      // Pass the backend's animation state directly to the scene
+      scene.animateCharacterMove(event.characterId, event.x, event.y, event.state)
 
       // Update path visualization if this is a path step
       if (currentPathRef.current && currentPathRef.current.length > 0) {
@@ -1088,10 +1189,21 @@ export function GamePage() {
         if (currentPathRef.current.length > 0) {
           scene.drawPath(currentPathRef.current)
         } else {
+          // Path completed - clear visualization (idle event will clear path tracking)
           scene.clearPath()
           currentPathRef.current = null
         }
       }
+    }
+  }, [])
+
+  // Handle WebSocket character idle events - backend tells us when to go idle
+  const handleCharacterIdle = useCallback((event: CharacterIdleEvent) => {
+    const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+    if (scene) {
+      // Clear path tracking (path completed or cancelled)
+      scene.clearCharacterPath(event.characterId)
+      scene.setCharacterState(event.characterId, event.state)
     }
   }, [])
 
@@ -1107,16 +1219,19 @@ export function GamePage() {
 
     const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
     if (scene) {
+      // Mark character as having an active path (so we don't auto-idle after each step)
+      scene.setCharacterHasPath(event.characterId)
       scene.drawPath(event.path)
     }
   }, [])
 
   // Handle path cancel/complete - clear visualization
-  const handlePathCancel = useCallback(() => {
+  const handlePathCancel = useCallback((event: { characterId: string }) => {
     currentPathRef.current = null
 
     const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
     if (scene) {
+      scene.clearCharacterPath(event.characterId)
       scene.clearPath()
     }
   }, [])
@@ -1125,12 +1240,22 @@ export function GamePage() {
   const { isConnected, sendMove, sendPath } = useGameWebSocket({
     gameId: gameId || "",
     onCharacterMove: handleCharacterMove,
+    onCharacterIdle: handleCharacterIdle,
     onPathStart: handlePathStart,
     onPathCancel: handlePathCancel,
     onError: handleWebSocketError,
     onConnected: () => console.log("Game WebSocket connected"),
     onDisconnected: () => console.log("Game WebSocket disconnected"),
   })
+
+  // Keep WebSocket function refs up to date (to avoid stale closures in Phaser callbacks)
+  useEffect(() => {
+    sendMoveRef.current = sendMove
+  }, [sendMove])
+
+  useEffect(() => {
+    sendPathRef.current = sendPath
+  }, [sendPath])
 
   // Load game data
   useEffect(() => {
@@ -1171,8 +1296,9 @@ export function GamePage() {
     // Wait for both mapData and gameDataRef to be ready
     if (!mapData || !gameDataRef.current || !gameContainerRef.current) return
 
-    // Prevent double initialization - this ref is NEVER reset
-    if (hasEverInitializedRef.current) return
+    // Prevent double initialization - check if Phaser already exists
+    // Also use hasEverInitializedRef for React Strict Mode (where phaserGameRef is destroyed then re-checked)
+    if (phaserGameRef.current || hasEverInitializedRef.current) return
     hasEverInitializedRef.current = true
 
     // Capture game data at init time from ref
@@ -1296,12 +1422,12 @@ export function GamePage() {
             const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
             scene?.clearPath()
           }
-          // Send move command via WebSocket
-          sendMove(direction)
+          // Send move command via WebSocket (use ref to avoid stale closure)
+          sendMoveRef.current?.(direction)
         },
         onPathRequest: (targetX: number, targetY: number) => {
-          // Send path request via WebSocket (right-click)
-          sendPath(targetX, targetY)
+          // Send path request via WebSocket (use ref to avoid stale closure)
+          sendPathRef.current?.(targetX, targetY)
         }
       })
     }

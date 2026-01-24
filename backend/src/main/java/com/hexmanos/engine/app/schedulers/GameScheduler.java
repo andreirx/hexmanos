@@ -133,34 +133,65 @@ public class GameScheduler {
             try {
                 GameService.MoveResult result = gameService.executePathStep(gameId, character.getId());
                 if (result != null) {
-                    // Broadcast the move to all players
+                    // Broadcast the move to all players (with animation state from backend)
                     CharacterMoveEvent event = new CharacterMoveEvent(
                             result.characterId().toString(),
                             result.x(),
                             result.y(),
-                            result.direction()
+                            result.direction(),
+                            result.state()
                     );
                     messagingTemplate.convertAndSend("/topic/game/" + gameId, event);
 
                     log.debug("Path step: Character {} moved to ({}, {}) in game {}",
                             result.characterId(), result.x(), result.y(), gameId);
+
+                    // Check if path completed (character no longer has path after this step)
+                    if (!character.hasPath()) {
+                        // Set character to idle state
+                        character.idle();
+                        // Broadcast idle event so frontend knows to switch to idle animation
+                        CharacterIdleEvent idleEvent = new CharacterIdleEvent(
+                                character.getId().toString(),
+                                "idle"
+                        );
+                        messagingTemplate.convertAndSend("/topic/game/" + gameId, idleEvent);
+                        log.debug("Path completed: Character {} is now idle in game {}",
+                                character.getId(), gameId);
+                    }
                 }
             } catch (Exception e) {
                 log.warn("Path step failed for character {} in game {}: {}",
                         character.getId(), gameId, e.getMessage());
                 // Clear the path on error to prevent infinite retries
                 character.clearPath();
+                // Set to idle on error too
+                character.idle();
             }
         }
     }
 
     /**
      * Event broadcast when a character moves.
+     * @param characterId The character ID
+     * @param x New X position
+     * @param y New Y position
+     * @param direction Direction of movement (n, s, e, w)
+     * @param state Animation state to render (walk_up, walk_down, walk_left, walk_right, idle)
      */
     public record CharacterMoveEvent(
             String characterId,
             int x,
             int y,
-            String direction
+            String direction,
+            String state
+    ) {}
+
+    /**
+     * Event broadcast when a character returns to idle state.
+     */
+    public record CharacterIdleEvent(
+            String characterId,
+            String state
     ) {}
 }

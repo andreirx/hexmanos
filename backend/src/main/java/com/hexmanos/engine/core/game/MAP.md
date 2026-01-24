@@ -2,6 +2,18 @@
 
 Pure Java game engine domain layer. No Spring dependencies.
 
+## Architecture Principle: Backend is Single Source of Truth
+
+**This package is the AUTHORITATIVE source for all game state.**
+
+The frontend is a renderer that reflects what this package says. When in doubt:
+- Backend decides character positions, states, paths, health
+- Backend broadcasts state changes via WebSocket events
+- Events include animation state (`state: "walk_up"`) - frontend doesn't decide this
+- Frontend renders exactly what backend tells it
+
+This prevents desync bugs, especially during frontend-only operations like zoom/mipmap changes.
+
 ## Files
 
 | File | Purpose |
@@ -12,7 +24,7 @@ Pure Java game engine domain layer. No Spring dependencies.
 | `GameState.java` | Complete runtime game state with serialization for snapshots, **terrainGrid** for pathfinding |
 | `GameRepository.java` | Port interface for Game persistence |
 | `GamePlayerRepository.java` | Port interface for GamePlayer persistence |
-| `GameService.java` | Main orchestrator - game lifecycle, player management, character control, **pathfinding** |
+| `GameService.java` | Main orchestrator - game lifecycle, player management, character control, **pathfinding**, **MoveResult with animation state** |
 | `GameRoomManager.java` | In-memory state manager - loads/unloads games, handles ticks and character control, **path execution** |
 | `SnapshotService.java` | Persists GameState to FileStorageService (S3/local) |
 | `Point.java` | Simple coordinate record for pathfinding with manhattanDistance |
@@ -100,8 +112,33 @@ Pure Java game engine domain layer. No Spring dependencies.
 - Runs every 200ms via `@Scheduled(fixedDelay = 200)`
 - Iterates all active games and characters with paths
 - Calls `GameService.executePathStep()` for each
-- Broadcasts `CharacterMoveEvent` via WebSocket
+- Broadcasts `CharacterMoveEvent` via WebSocket (includes animation `state` from character)
+- On path completion: broadcasts `CharacterIdleEvent` so frontend switches to idle animation
 - Clears path on collision or terrain change
+
+## WebSocket Events (Backend-Driven Animation State)
+
+The backend is AUTHORITATIVE for character animation state. Frontend renders exactly what backend tells it.
+
+### CharacterMoveEvent
+```java
+record CharacterMoveEvent(
+    String characterId,
+    int x, int y,
+    String direction,  // n, s, e, w
+    String state       // walk_up, walk_down, walk_left, walk_right (from GameCharacter.currentState)
+)
+```
+
+### CharacterIdleEvent
+```java
+record CharacterIdleEvent(
+    String characterId,
+    String state       // Always "idle" - sent when path completes
+)
+```
+
+This architecture prevents animation state getting out of sync during zoom level changes on the frontend.
 
 ## Tile Properties Loading
 
