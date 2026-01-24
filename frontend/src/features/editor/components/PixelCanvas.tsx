@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from "react"
-import { RotateCw, RotateCcw, FlipHorizontal2 } from "lucide-react"
+import { RotateCw, RotateCcw, FlipHorizontal2, Maximize2 } from "lucide-react"
 
 export type CanvasTool = "pencil" | "eraser" | "select" | "line"
 
@@ -52,8 +52,8 @@ export function PixelCanvas({
   const isDirty = useRef(false)
 
   // Calculate initial zoom and pan to fill and center the canvas
-  const CANVAS_WIDTH = 800
-  const CANVAS_HEIGHT = 700
+  const CANVAS_WIDTH = 720
+  const CANVAS_HEIGHT = 720
   const calculateInitialView = () => {
     // Calculate zoom to fill canvas with some padding
     const padding = 40
@@ -74,6 +74,15 @@ export function PixelCanvas({
   const initialView = calculateInitialView()
   const [zoom, setZoom] = useState(initialView.zoom)
   const [pan, setPan] = useState(initialView.pan)
+
+  // Reset view to initial zoom and pan
+  const handleResetView = useCallback(() => {
+    const initial = calculateInitialView()
+    setZoom(initial.zoom)
+    setPan(initial.pan)
+    zoomRef.current = initial.zoom
+    panRef.current = initial.pan
+  }, [width, height, minZoom, maxZoom])
 
   // Refs to track latest values for wheel handler (avoids stale closures)
   const zoomRef = useRef(zoom)
@@ -972,21 +981,30 @@ export function PixelCanvas({
 
   return (
     <div className={className}>
-      <div
-        ref={containerRef}
-        style={{ overflow: "hidden", cursor }}
-      >
-        <canvas
-          ref={canvasRef}
-          width={canvasWidth}
-          height={canvasHeight}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseLeave}
-          onContextMenu={(e) => e.preventDefault()}
-          style={{ display: "block" }}
-        />
+      <div className="relative">
+        <div
+          ref={containerRef}
+          style={{ overflow: "hidden", cursor }}
+        >
+          <canvas
+            ref={canvasRef}
+            width={canvasWidth}
+            height={canvasHeight}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseLeave}
+            onContextMenu={(e) => e.preventDefault()}
+            style={{ display: "block" }}
+          />
+        </div>
+        <button
+          onClick={handleResetView}
+          className="absolute top-2 right-2 p-1.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors"
+          title="Reset View (Fit to Canvas)"
+        >
+          <Maximize2 className="w-4 h-4" />
+        </button>
       </div>
       <div className="flex items-center justify-center gap-2 mt-2">
         <button
