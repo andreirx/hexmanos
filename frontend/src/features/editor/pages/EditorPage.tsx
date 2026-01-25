@@ -7,20 +7,22 @@ import { Header } from "@/components/layout"
 import { getPresignedUrl, uploadToPresignedUrl, registerAsset, getAssetFile, loadAssetImage } from "@/api/assets"
 import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
-import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, Pencil, Eraser, Square, Undo2, Redo2, MoveLeft, MoveRight, Minus, User, Package, ArrowRightLeft, CopyPlus, Wand2 } from "lucide-react"
-import type { UserDTO, AssetDTO } from "@/api/types"
+import { Save, Trash2, Image, Plus, Copy, ChevronLeft, ChevronRight, Play, Pause, FolderOpen, Pencil, Eraser, Square, Undo2, Redo2, MoveLeft, MoveRight, Minus, User, Package, ArrowRightLeft, CopyPlus, Wand2, Swords, Target, X } from "lucide-react"
+import type { UserDTO, AssetDTO, AttackDefinition, AttackType } from "@/api/types"
+import { getAllAssets } from "@/api/assets"
 import { generateStickmanAnimations } from "../utils/stickmanGenerator"
 
 // Entity type for the editor
 type EntityType = "CHARACTER" | "OBJECT"
 
-// Character definition structure from JSON (extended with visual states)
+// Character definition structure from JSON (extended with visual states and attacks)
 interface CharacterDefinition {
   name: string
   spriteSize: number
   entityType?: EntityType
   visualStates?: string[]
   states: Record<string, { frames: number; loop: boolean }>
+  attacks?: AttackDefinition[]
 }
 
 const CANVAS_SIZE = 128
@@ -153,6 +155,11 @@ export function EditorPage() {
   const [showCopyFromDialog, setShowCopyFromDialog] = useState(false)
   const [pendingVisualState, setPendingVisualState] = useState<string | null>(null)
 
+  // Attacks configuration (only for characters)
+  const [attacks, setAttacks] = useState<AttackDefinition[]>([])
+  const [availableObjects, setAvailableObjects] = useState<AssetDTO[]>([])
+  const [showAttackPanel, setShowAttackPanel] = useState(false)
+
   // Get the appropriate animation states based on entity type
   const animationStates = useMemo(() =>
     entityType === "CHARACTER" ? CHARACTER_ANIMATION_STATES : OBJECT_ANIMATION_STATES,
@@ -178,6 +185,20 @@ export function EditorPage() {
         .catch((err) => console.error("Failed to sync user:", err))
     }
   }, [isAuthenticated, authUser])
+
+  // Load available object assets for projectile selection
+  useEffect(() => {
+    async function loadObjects() {
+      try {
+        const allAssets = await getAllAssets()
+        const objects = allAssets.filter((a: AssetDTO) => a.type === "OBJECT")
+        setAvailableObjects(objects)
+      } catch (err) {
+        console.error("Failed to load object assets:", err)
+      }
+    }
+    loadObjects()
+  }, [])
 
   // Handle character selection from gallery
   const handleCharacterSelect = async (asset: AssetDTO, mode: "edit" | "copy") => {
@@ -250,6 +271,13 @@ export function EditorPage() {
       setCurrentFrameIndex(0)
       clearAllHistory() // Clear undo/redo when loading new character
 
+      // Load attacks if present
+      if (definition.attacks && definition.attacks.length > 0) {
+        setAttacks(definition.attacks)
+      } else {
+        setAttacks([])
+      }
+
       if (mode === "edit") {
         // Editing own character
         setLoadedAsset(asset)
@@ -282,6 +310,7 @@ export function EditorPage() {
     setCurrentAnimState("idle")
     setCurrentFrameIndex(0)
     setStatusMessage(null)
+    setAttacks([])
     clearAllHistory()
   }
 
@@ -296,6 +325,7 @@ export function EditorPage() {
     setCurrentAnimState("idle")
     setCurrentFrameIndex(0)
     setStatusMessage(null)
+    setAttacks([]) // Objects don't have attacks
     clearAllHistory()
   }
 
@@ -372,6 +402,7 @@ export function EditorPage() {
     setCurrentFrameIndex(0)
     // Clear loadedAsset so it saves as a new asset in the objects folder
     setLoadedAsset(null)
+    setAttacks([]) // Objects don't have attacks
     clearAllHistory()
     setStatusMessage({ type: "success", text: "Converted to Object. Only Idle frames were kept. Save to create new object." })
   }
@@ -921,13 +952,20 @@ export function EditorPage() {
       }
     }
 
-    return {
+    const definition: CharacterDefinition = {
       name: characterName,
       spriteSize: CANVAS_SIZE,
       entityType: entityType,
       visualStates: activeVisualStates,
       states,
     }
+
+    // Include attacks for characters if any are defined
+    if (entityType === "CHARACTER" && attacks.length > 0) {
+      definition.attacks = attacks
+    }
+
+    return definition
   }
 
   const handleSave = async () => {
@@ -953,7 +991,7 @@ export function EditorPage() {
 
       // Generate definition JSON
       const definition = generateDefinitionJson()
-      const activeVisualStates = definition.visualStates
+      const activeVisualStates = definition.visualStates ?? []
 
       // Collect all file names for registration
       const fileNames: string[] = ["definition.json"]
@@ -1051,6 +1089,40 @@ export function EditorPage() {
     } finally {
       setIsSaving(false)
     }
+  }
+
+  // Attack management functions
+  const handleAddAttack = () => {
+    const newAttack: AttackDefinition = {
+      id: `attack_${Date.now()}`,
+      name: "New Attack",
+      type: "MELEE" as AttackType,
+      range: 1,
+      damage: 10,
+      cooldownMs: 1000,
+    }
+    setAttacks(prev => [...prev, newAttack])
+  }
+
+  const handleUpdateAttack = (index: number, updates: Partial<AttackDefinition>) => {
+    setAttacks(prev => {
+      const newAttacks = [...prev]
+      newAttacks[index] = { ...newAttacks[index], ...updates }
+      // Clear projectile fields if switching to MELEE
+      if (updates.type === "MELEE") {
+        delete newAttacks[index].projectileAssetId
+        delete newAttacks[index].projectileSpeed
+      }
+      // Set default projectile speed if switching to RANGED
+      if (updates.type === "RANGED" && !newAttacks[index].projectileSpeed) {
+        newAttacks[index].projectileSpeed = 5
+      }
+      return newAttacks
+    })
+  }
+
+  const handleRemoveAttack = (index: number) => {
+    setAttacks(prev => prev.filter((_, i) => i !== index))
   }
 
   const colorPresets = [
@@ -1557,6 +1629,155 @@ export function EditorPage() {
             }</p>
           </CardContent>
         </Card>
+
+        {/* Attacks Configuration (Characters only) */}
+        {entityType === "CHARACTER" && (
+          <Card className="bg-zinc-800 border-zinc-700">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-zinc-300 flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <Swords className="w-4 h-4" />
+                  Attacks ({attacks.length})
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-zinc-400 hover:text-zinc-100"
+                  onClick={() => setShowAttackPanel(!showAttackPanel)}
+                >
+                  {showAttackPanel ? "Hide" : "Show"}
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            {showAttackPanel && (
+              <CardContent className="space-y-3">
+                {attacks.length === 0 ? (
+                  <p className="text-xs text-zinc-500">No attacks configured. Add attacks to enable combat.</p>
+                ) : (
+                  <div className="space-y-3 max-h-64 overflow-y-auto">
+                    {attacks.map((attack, index) => (
+                      <div key={attack.id} className="bg-zinc-900 rounded p-2 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <input
+                            type="text"
+                            value={attack.name}
+                            onChange={(e) => handleUpdateAttack(index, { name: e.target.value })}
+                            className="flex-1 px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100"
+                            placeholder="Attack name"
+                          />
+                          <button
+                            onClick={() => handleRemoveAttack(index)}
+                            className="ml-2 p-1 text-zinc-500 hover:text-red-400"
+                            title="Remove attack"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleUpdateAttack(index, { type: "MELEE" })}
+                            className={`flex-1 py-1 px-2 rounded text-xs flex items-center justify-center gap-1 ${
+                              attack.type === "MELEE"
+                                ? "bg-blue-600 text-white"
+                                : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                            }`}
+                          >
+                            <Swords className="w-3 h-3" />
+                            Melee
+                          </button>
+                          <button
+                            onClick={() => handleUpdateAttack(index, { type: "RANGED" })}
+                            className={`flex-1 py-1 px-2 rounded text-xs flex items-center justify-center gap-1 ${
+                              attack.type === "RANGED"
+                                ? "bg-orange-600 text-white"
+                                : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                            }`}
+                          >
+                            <Target className="w-3 h-3" />
+                            Ranged
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                          <div>
+                            <label className="text-zinc-500 block">Range</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="20"
+                              value={attack.range}
+                              onChange={(e) => handleUpdateAttack(index, { range: parseInt(e.target.value) || 1 })}
+                              className="w-full px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-zinc-100"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-zinc-500 block">Damage</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="999"
+                              value={attack.damage}
+                              onChange={(e) => handleUpdateAttack(index, { damage: parseInt(e.target.value) || 1 })}
+                              className="w-full px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-zinc-100"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-zinc-500 block">CD (ms)</label>
+                            <input
+                              type="number"
+                              min="100"
+                              max="10000"
+                              step="100"
+                              value={attack.cooldownMs}
+                              onChange={(e) => handleUpdateAttack(index, { cooldownMs: parseInt(e.target.value) || 1000 })}
+                              className="w-full px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-zinc-100"
+                            />
+                          </div>
+                        </div>
+                        {attack.type === "RANGED" && (
+                          <div className="space-y-2">
+                            <div>
+                              <label className="text-zinc-500 text-xs block">Projectile Object</label>
+                              <select
+                                value={attack.projectileAssetId || ""}
+                                onChange={(e) => handleUpdateAttack(index, { projectileAssetId: e.target.value || undefined })}
+                                className="w-full px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100"
+                              >
+                                <option value="">Select object...</option>
+                                {availableObjects.map(obj => (
+                                  <option key={obj.id} value={obj.id}>{obj.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-zinc-500 text-xs block">Speed (tiles/sec)</label>
+                              <input
+                                type="number"
+                                min="1"
+                                max="20"
+                                value={attack.projectileSpeed || 5}
+                                onChange={(e) => handleUpdateAttack(index, { projectileSpeed: parseInt(e.target.value) || 5 })}
+                                className="w-full px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600"
+                  onClick={handleAddAttack}
+                >
+                  <Plus className="w-3 h-3 mr-1" />
+                  Add Attack
+                </Button>
+              </CardContent>
+            )}
+          </Card>
+        )}
 
         <div className="mt-auto space-y-2">
           <Button
