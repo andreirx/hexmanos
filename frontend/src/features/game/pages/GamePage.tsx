@@ -1225,9 +1225,12 @@ class GameScene extends Phaser.Scene {
 
   // Spawn a projectile (called from ProjectileSpawnEvent)
   spawnProjectile(event: ProjectileSpawnEvent) {
+    console.log("[Projectile] SPAWN event received:", event.projectileId, "assetId:", event.projectileAssetId)
+
     const textureKey = `projectile_${event.projectileAssetId}_idle_0`
     const hasTexture = this.loadedProjectileTextures.has(event.projectileAssetId) &&
                        this.textures.exists(textureKey)
+    console.log("[Projectile] hasTexture:", hasTexture)
 
     // Create sprite at start position
     const startX = event.startX * TILE_SIZE + TILE_SIZE / 2
@@ -1370,6 +1373,7 @@ class GameScene extends Phaser.Scene {
         // Update the sprite if it still exists in our map (removed on hit)
         // This check is sufficient because we delete from projectileSprites immediately on hit
         const sprite = this.projectileSprites.get(projectileId)
+        console.log("[Projectile] Load complete for:", projectileId, "sprite in map?", !!sprite)
         if (sprite) {
           const firstFrameKey = idleFrameKeys[0]
           if (this.textures.exists(firstFrameKey)) {
@@ -1377,6 +1381,7 @@ class GameScene extends Phaser.Scene {
             sprite.setScale(TILE_SIZE / 128)
             // Play the idle animation
             if (this.anims.exists(idleAnimKey)) {
+              console.log("[Projectile] Playing IDLE animation for:", projectileId)
               sprite.play(idleAnimKey)
             }
           }
@@ -1390,8 +1395,12 @@ class GameScene extends Phaser.Scene {
 
   // Handle projectile hit (called from ProjectileHitEvent)
   handleProjectileHit(event: ProjectileHitEvent) {
+    console.log("[Projectile] HIT event received:", event.projectileId)
+
     const sprite = this.projectileSprites.get(event.projectileId)
     const assetId = this.projectileAssetIds.get(event.projectileId)
+
+    console.log("[Projectile] Found sprite?", !!sprite, "assetId:", assetId)
 
     // Mark as hit AND remove from maps immediately to prevent any further updates
     this.projectilesHit.add(event.projectileId)
@@ -1407,6 +1416,8 @@ class GameScene extends Phaser.Scene {
       const landedAnimKey = assetId ? `projectile_${assetId}_landed_anim` : null
       const hasLandedAnim = landedAnimKey && this.anims.exists(landedAnimKey)
 
+      console.log("[Projectile] landedAnimKey:", landedAnimKey, "exists?", hasLandedAnim)
+
       if (hasLandedAnim) {
         // Play landed animation, then destroy
         sprite.setRotation(0) // Reset rotation for impact
@@ -1417,22 +1428,32 @@ class GameScene extends Phaser.Scene {
         const frameRate = landedAnim?.frameRate ?? 10
         const animDuration = (frameCount / frameRate) * 1000 + 100 // Add 100ms buffer
 
-        sprite.play(landedAnimKey)
+        console.log("[Projectile] Playing landed animation, frameCount:", frameCount, "duration:", animDuration)
 
         // Use both animationcomplete AND a timer fallback
         let destroyed = false
         const destroySprite = () => {
           if (!destroyed) {
             destroyed = true
+            console.log("[Projectile] DESTROYING sprite for:", event.projectileId)
             sprite.destroy()
             this.projectilesHit.delete(event.projectileId)
           }
         }
 
-        sprite.once("animationcomplete", destroySprite)
+        // Attach listener BEFORE playing animation
+        sprite.once("animationcomplete", () => {
+          console.log("[Projectile] animationcomplete fired for:", event.projectileId)
+          destroySprite()
+        })
+
+        sprite.play(landedAnimKey)
 
         // Fallback timer in case animationcomplete doesn't fire
-        this.time.delayedCall(animDuration, destroySprite)
+        this.time.delayedCall(animDuration, () => {
+          console.log("[Projectile] Timer fallback fired for:", event.projectileId)
+          destroySprite()
+        })
       } else {
         // No landed animation - show flash effect and destroy immediately
         const flash = this.add.circle(
