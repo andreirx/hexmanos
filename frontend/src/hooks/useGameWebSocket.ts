@@ -3,6 +3,24 @@ import { Client } from "@stomp/stompjs"
 import type { IMessage, StompSubscription } from "@stomp/stompjs"
 import SockJS from "sockjs-client"
 import { fetchAuthSession } from "aws-amplify/auth"
+import type {
+  AttackStartEvent,
+  ProjectileSpawnEvent,
+  ProjectileUpdateEvent,
+  ProjectileHitEvent,
+  DamageEvent,
+  CharacterDeathEvent,
+} from "@/api/types"
+
+// Re-export types for convenience
+export type {
+  AttackStartEvent,
+  ProjectileSpawnEvent,
+  ProjectileUpdateEvent,
+  ProjectileHitEvent,
+  DamageEvent,
+  CharacterDeathEvent,
+}
 
 const WS_URL = import.meta.env.VITE_WS_URL || "http://localhost:8080/ws/game"
 
@@ -35,13 +53,35 @@ export interface GameWebSocketOptions {
   onCharacterIdle?: (event: CharacterIdleEvent) => void
   onPathStart?: (event: PathStartEvent) => void
   onPathCancel?: (event: PathCancelEvent) => void
+  // Attack/projectile events
+  onAttackStart?: (event: AttackStartEvent) => void
+  onProjectileSpawn?: (event: ProjectileSpawnEvent) => void
+  onProjectileUpdate?: (event: ProjectileUpdateEvent) => void
+  onProjectileHit?: (event: ProjectileHitEvent) => void
+  onDamage?: (event: DamageEvent) => void
+  onCharacterDeath?: (event: CharacterDeathEvent) => void
   onError?: (message: string) => void
   onConnected?: () => void
   onDisconnected?: () => void
 }
 
 export function useGameWebSocket(options: GameWebSocketOptions) {
-  const { gameId, onCharacterMove, onCharacterIdle, onPathStart, onPathCancel, onError, onConnected, onDisconnected } = options
+  const {
+    gameId,
+    onCharacterMove,
+    onCharacterIdle,
+    onPathStart,
+    onPathCancel,
+    onAttackStart,
+    onProjectileSpawn,
+    onProjectileUpdate,
+    onProjectileHit,
+    onDamage,
+    onCharacterDeath,
+    onError,
+    onConnected,
+    onDisconnected,
+  } = options
 
   const clientRef = useRef<Client | null>(null)
   const subscriptionRef = useRef<StompSubscription | null>(null)
@@ -50,8 +90,36 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
   const currentGameIdRef = useRef<string | null>(null)
 
   // Store callbacks in refs to avoid dependency changes
-  const callbacksRef = useRef({ onCharacterMove, onCharacterIdle, onPathStart, onPathCancel, onError, onConnected, onDisconnected })
-  callbacksRef.current = { onCharacterMove, onCharacterIdle, onPathStart, onPathCancel, onError, onConnected, onDisconnected }
+  const callbacksRef = useRef({
+    onCharacterMove,
+    onCharacterIdle,
+    onPathStart,
+    onPathCancel,
+    onAttackStart,
+    onProjectileSpawn,
+    onProjectileUpdate,
+    onProjectileHit,
+    onDamage,
+    onCharacterDeath,
+    onError,
+    onConnected,
+    onDisconnected,
+  })
+  callbacksRef.current = {
+    onCharacterMove,
+    onCharacterIdle,
+    onPathStart,
+    onPathCancel,
+    onAttackStart,
+    onProjectileSpawn,
+    onProjectileUpdate,
+    onProjectileHit,
+    onDamage,
+    onCharacterDeath,
+    onError,
+    onConnected,
+    onDisconnected,
+  }
 
   // Send move command - stable reference
   const sendMove = useCallback((direction: "n" | "s" | "e" | "w") => {
@@ -105,6 +173,21 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
     clientRef.current.publish({
       destination: `/app/game/${currentGameIdRef.current}/cancelPath`,
       body: "{}",
+    })
+    return true
+  }, [])
+
+  // Send attack command - stable reference
+  const sendAttack = useCallback((attackId: string, targetX: number, targetY: number) => {
+    if (!clientRef.current?.active || !currentGameIdRef.current) {
+      console.warn("Cannot send attack: WebSocket not connected")
+      return false
+    }
+
+    console.log("[WebSocket] Publishing attack:", attackId, "to target:", targetX, targetY)
+    clientRef.current.publish({
+      destination: `/app/game/${currentGameIdRef.current}/attack`,
+      body: JSON.stringify({ attackId, targetX, targetY }),
     })
     return true
   }, [])
@@ -187,12 +270,35 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
                 // PathStartEvent has a 'path' array
                 console.log("[WebSocket] Received path start event:", event)
                 callbacksRef.current.onPathStart?.(event as PathStartEvent)
+              } else if ("attackId" in event && "animationDuration" in event) {
+                // AttackStartEvent has 'attackId' and 'animationDuration'
+                console.log("[WebSocket] Received attack start event:", event)
+                callbacksRef.current.onAttackStart?.(event as AttackStartEvent)
+              } else if ("projectileId" in event && "projectileAssetId" in event) {
+                // ProjectileSpawnEvent has 'projectileId' and 'projectileAssetId'
+                console.log("[WebSocket] Received projectile spawn event:", event)
+                callbacksRef.current.onProjectileSpawn?.(event as ProjectileSpawnEvent)
+              } else if ("projectileId" in event && "preciseX" in event) {
+                // ProjectileUpdateEvent has 'projectileId' and 'preciseX'
+                callbacksRef.current.onProjectileUpdate?.(event as ProjectileUpdateEvent)
+              } else if ("projectileId" in event && "damage" in event) {
+                // ProjectileHitEvent has 'projectileId' and 'damage'
+                console.log("[WebSocket] Received projectile hit event:", event)
+                callbacksRef.current.onProjectileHit?.(event as ProjectileHitEvent)
+              } else if ("newHealth" in event && "damage" in event) {
+                // DamageEvent has 'newHealth' and 'damage'
+                console.log("[WebSocket] Received damage event:", event)
+                callbacksRef.current.onDamage?.(event as DamageEvent)
+              } else if ("killedByCharacterId" in event) {
+                // CharacterDeathEvent has 'killedByCharacterId'
+                console.log("[WebSocket] Received character death event:", event)
+                callbacksRef.current.onCharacterDeath?.(event as CharacterDeathEvent)
               } else if ("direction" in event && "x" in event && "y" in event) {
                 // CharacterMoveEvent has 'direction', 'x', 'y', and 'state'
                 console.log("[WebSocket] Received move event:", event)
                 callbacksRef.current.onCharacterMove?.(event as CharacterMoveEvent)
-              } else if ("state" in event && event.state === "idle" && !("x" in event)) {
-                // CharacterIdleEvent has 'characterId' and 'state' (idle) but no position
+              } else if ("state" in event && !("x" in event) && !("damage" in event)) {
+                // CharacterIdleEvent has 'characterId' and 'state' but no position or damage
                 console.log("[WebSocket] Received idle event:", event)
                 callbacksRef.current.onCharacterIdle?.(event as CharacterIdleEvent)
               } else if ("characterId" in event && Object.keys(event).length === 1) {
@@ -274,5 +380,6 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
     sendIdle,
     sendPath,
     sendCancelPath,
+    sendAttack,
   }
 }

@@ -27,6 +27,7 @@ public class GameState implements Serializable {
 
     // Transient fields - not serialized to snapshots
     private transient TerrainGrid terrainGrid;
+    private transient List<GameProjectile> activeProjectiles;
 
     /**
      * Create a new game state for the given game.
@@ -155,6 +156,48 @@ public class GameState implements Serializable {
         return characters.stream()
                 .filter(c -> !c.getId().equals(excludeCharacterId))
                 .anyMatch(c -> c.getX() == x && c.getY() == y);
+    }
+
+    // ============================================
+    // Projectile management
+    // ============================================
+
+    /**
+     * Add a projectile to the active projectiles list.
+     */
+    public void addProjectile(GameProjectile projectile) {
+        if (activeProjectiles == null) {
+            activeProjectiles = new ArrayList<>();
+        }
+        activeProjectiles.add(projectile);
+    }
+
+    /**
+     * Remove a projectile by ID.
+     */
+    public void removeProjectile(UUID projectileId) {
+        if (activeProjectiles != null) {
+            activeProjectiles.removeIf(p -> p.getId().equals(projectileId));
+        }
+    }
+
+    /**
+     * Get all active projectiles.
+     */
+    public List<GameProjectile> getActiveProjectiles() {
+        if (activeProjectiles == null) {
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(activeProjectiles);
+    }
+
+    /**
+     * Find a character at a specific position.
+     */
+    public Optional<GameCharacter> findCharacterAt(int x, int y) {
+        return characters.stream()
+                .filter(c -> c.getX() == x && c.getY() == y)
+                .findFirst();
     }
 
     /**

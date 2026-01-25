@@ -528,6 +528,249 @@ public class GameService {
         return new MoveResult(characterId, newPos.x(), newPos.y(), direction, character.getCurrentState(), duration);
     }
 
+    // ============================================
+    // Attack methods
+    // ============================================
+
+    /**
+     * Result of an attack operation.
+     */
+    public record AttackResult(
+            UUID characterId,
+            String attackId,
+            int targetX,
+            int targetY,
+            String direction,
+            String state,
+            long animationDuration,
+            UUID projectileId,         // Null for melee
+            UUID projectileAssetId,    // Null for melee
+            int projectileSpeed        // 0 for melee
+    ) {}
+
+    /**
+     * Execute an attack from a player's controlled character.
+     */
+    public AttackResult attack(UUID gameId, UUID playerId, String attackId, int targetX, int targetY) {
+        Game game = getGame(gameId);
+
+        if (game.getStatus() != Game.GameStatus.RUNNING) {
+            throw new IllegalArgumentException("Game is not running");
+        }
+
+        // Get controlled character
+        UUID characterId = roomManager.getControlledCharacter(gameId, playerId)
+                .orElseThrow(() -> new IllegalArgumentException("Player does not control any character"));
+
+        GameState state = roomManager.getState(gameId);
+        GameCharacter character = state.findCharacter(characterId)
+                .orElseThrow(() -> new IllegalStateException("Character not found"));
+
+        // Load attack definition from character asset
+        AttackDefinition attack = loadAttackDefinition(character.getAssetId(), attackId);
+        if (attack == null) {
+            throw new IllegalArgumentException("Attack not found: " + attackId);
+        }
+
+        // Validate cooldown
+        if (!character.canAttack(attackId, attack.cooldownMs())) {
+            throw new IllegalArgumentException("Attack on cooldown");
+        }
+
+        // Validate range (Chebyshev distance - allows diagonal)
+        int dx = Math.abs(targetX - character.getX());
+        int dy = Math.abs(targetY - character.getY());
+        int distance = Math.max(dx, dy);
+        if (distance > attack.range()) {
+            throw new IllegalArgumentException("Target out of range");
+        }
+
+        // Determine facing direction based on target
+        String direction = calculateDirection(character.getX(), character.getY(), targetX, targetY);
+        character.setFacing(direction);
+
+        // Start attack animation
+        long animDuration = attack.getAnimationDurationMs();
+        character.startAttack(attackId, animDuration, attack.cooldownMs());
+
+        // Handle projectile for ranged attacks
+        UUID projectileId = null;
+        if (attack.isRanged()) {
+            GameProjectile projectile = GameProjectile.create(
+                    gameId, character, playerId, attack, targetX, targetY
+            );
+            state.addProjectile(projectile);
+            projectileId = projectile.getId();
+        }
+        // Note: Melee damage is handled by the scheduler after animation completes
+
+        game.touch();
+        gameRepository.save(game);
+
+        return new AttackResult(
+                characterId,
+                attackId,
+                targetX,
+                targetY,
+                direction,
+                character.getCurrentState(),
+                animDuration,
+                projectileId,
+                attack.projectileAssetId(),
+                attack.projectileSpeed()
+        );
+    }
+
+    /**
+     * Apply melee damage to a target at a position.
+     * Called by the scheduler after melee attack animation completes.
+     */
+    public GameCharacter applyMeleeDamage(UUID gameId, UUID attackerCharacterId, String attackId, int targetX, int targetY) {
+        GameState state = roomManager.getState(gameId);
+        if (state == null) {
+            return null;
+        }
+
+        GameCharacter attacker = state.findCharacter(attackerCharacterId).orElse(null);
+        if (attacker == null) {
+            return null;
+        }
+
+        // Load attack definition
+        AttackDefinition attack = loadAttackDefinition(attacker.getAssetId(), attackId);
+        if (attack == null || !attack.isMelee()) {
+            return null;
+        }
+
+        // Find character at target position
+        Optional<GameCharacter> targetChar = state.findCharacterAt(targetX, targetY);
+        if (targetChar.isEmpty()) {
+            return null; // No target at that position
+        }
+
+        GameCharacter target = targetChar.get();
+        if (target.getId().equals(attackerCharacterId)) {
+            return null; // Can't hit self
+        }
+
+        // Apply damage
+        target.takeDamage(attack.damage());
+        return target;
+    }
+
+    /**
+     * Load attack definition from a character asset's definition.json.
+     */
+    public AttackDefinition loadAttackDefinition(UUID assetId, String attackId) {
+        Asset asset = assetRepository.findById(assetId).orElse(null);
+        if (asset == null) {
+            return null;
+        }
+
+        String defKey = asset.getStorageKeyPrefix() + "/definition.json";
+        byte[] data = storageService.readBytes(defKey);
+        if (data == null) {
+            return null;
+        }
+
+        try {
+            JsonNode root = objectMapper.readTree(data);
+            JsonNode attacks = root.get("attacks");
+            if (attacks == null || !attacks.isArray()) {
+                return null;
+            }
+
+            for (JsonNode atk : attacks) {
+                if (attackId.equals(atk.get("id").asText())) {
+                    return new AttackDefinition(
+                            atk.get("id").asText(),
+                            atk.has("name") ? atk.get("name").asText() : attackId,
+                            AttackDefinition.AttackType.valueOf(atk.get("type").asText()),
+                            atk.get("range").asInt(),
+                            atk.get("damage").asInt(),
+                            atk.get("cooldownMs").asLong(),
+                            atk.has("projectileAssetId") && !atk.get("projectileAssetId").isNull()
+                                    ? UUID.fromString(atk.get("projectileAssetId").asText())
+                                    : null,
+                            atk.has("projectileSpeed") ? atk.get("projectileSpeed").asInt() : 0
+                    );
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to load attack definition from {}: {}", defKey, e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Load all attack definitions for a character asset.
+     */
+    public List<AttackDefinition> loadAllAttackDefinitions(UUID assetId) {
+        List<AttackDefinition> attacks = new ArrayList<>();
+        Asset asset = assetRepository.findById(assetId).orElse(null);
+        if (asset == null) {
+            return attacks;
+        }
+
+        String defKey = asset.getStorageKeyPrefix() + "/definition.json";
+        byte[] data = storageService.readBytes(defKey);
+        if (data == null) {
+            return attacks;
+        }
+
+        try {
+            JsonNode root = objectMapper.readTree(data);
+            JsonNode attacksNode = root.get("attacks");
+            if (attacksNode == null || !attacksNode.isArray()) {
+                return attacks;
+            }
+
+            for (JsonNode atk : attacksNode) {
+                try {
+                    attacks.add(new AttackDefinition(
+                            atk.get("id").asText(),
+                            atk.has("name") ? atk.get("name").asText() : atk.get("id").asText(),
+                            AttackDefinition.AttackType.valueOf(atk.get("type").asText()),
+                            atk.get("range").asInt(),
+                            atk.get("damage").asInt(),
+                            atk.get("cooldownMs").asLong(),
+                            atk.has("projectileAssetId") && !atk.get("projectileAssetId").isNull()
+                                    ? UUID.fromString(atk.get("projectileAssetId").asText())
+                                    : null,
+                            atk.has("projectileSpeed") ? atk.get("projectileSpeed").asInt() : 0
+                    ));
+                } catch (Exception e) {
+                    log.warn("Failed to parse attack: {}", e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to load attack definitions from {}: {}", defKey, e.getMessage());
+        }
+        return attacks;
+    }
+
+    /**
+     * Get the room manager for scheduler access.
+     */
+    public GameRoomManager getRoomManager() {
+        return roomManager;
+    }
+
+    /**
+     * Calculate direction from source to target.
+     */
+    private String calculateDirection(int fromX, int fromY, int toX, int toY) {
+        int dx = toX - fromX;
+        int dy = toY - fromY;
+
+        // Prefer horizontal/vertical over diagonal
+        if (Math.abs(dx) > Math.abs(dy)) {
+            return dx > 0 ? "right" : "left";
+        } else {
+            return dy > 0 ? "down" : "up";
+        }
+    }
+
     /**
      * Clean up expired games.
      */

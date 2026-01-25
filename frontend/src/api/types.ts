@@ -171,3 +171,69 @@ export interface JoinGameRequest {
   code: string
   password?: string
 }
+
+// Attack types
+export type AttackType = "MELEE" | "RANGED"
+
+export interface AttackDefinition {
+  id: string
+  name: string
+  type: AttackType
+  range: number
+  damage: number
+  cooldownMs: number
+  projectileAssetId?: string  // Only for RANGED attacks
+  projectileSpeed?: number    // Only for RANGED attacks (tiles per second)
+}
+
+// WebSocket event types for attacks and projectiles
+export interface AttackStartEvent {
+  characterId: string
+  attackId: string
+  targetX: number
+  targetY: number
+  direction: string
+  state: string
+  animationDuration: number
+}
+
+export interface ProjectileSpawnEvent {
+  projectileId: string
+  projectileAssetId: string
+  sourceCharacterId: string
+  startX: number
+  startY: number
+  targetX: number
+  targetY: number
+  speed: number  // tiles per second
+}
+
+export interface ProjectileUpdateEvent {
+  projectileId: string
+  x: number          // Current tile X (rounded)
+  y: number          // Current tile Y (rounded)
+  preciseX: number   // Floating point for smooth animation
+  preciseY: number
+}
+
+export interface ProjectileHitEvent {
+  projectileId: string
+  x: number
+  y: number
+  hitCharacterId?: string  // null if hit terrain
+  damage: number
+}
+
+export interface DamageEvent {
+  characterId: string
+  damage: number
+  newHealth: number
+  newVisualState: string
+  sourceCharacterId?: string
+  attackId?: string
+}
+
+export interface CharacterDeathEvent {
+  characterId: string
+  killedByCharacterId?: string
+}

@@ -6,7 +6,9 @@ import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -35,6 +37,11 @@ public class GameCharacter implements Serializable {
     private transient List<Point> currentPath;  // transient = not serialized to snapshots
     private transient int pathIndex;
     private transient long lastMoveTime;        // For movement cost-based timing
+
+    // Attack state (transient - not serialized to snapshots)
+    private transient Map<String, Long> attackCooldowns;  // attackId -> last used timestamp
+    private transient String activeAttackId;              // Currently executing attack
+    private transient long attackAnimationEndTime;        // When attack animation ends
 
     /**
      * Create a new game character from a map placement.
@@ -138,6 +145,94 @@ public class GameCharacter implements Serializable {
      */
     public void attack() {
         this.currentState = "attack_" + (this.facing != null ? this.facing : "down");
+    }
+
+    // ============================================
+    // Attack methods
+    // ============================================
+
+    /**
+     * Check if character can perform an attack (not on cooldown, not attacking).
+     */
+    public boolean canAttack(String attackId, long cooldownMs) {
+        // Can't attack while currently attacking
+        if (isAttacking()) {
+            return false;
+        }
+
+        // Check cooldown
+        if (attackCooldowns == null) {
+            attackCooldowns = new HashMap<>();
+        }
+        Long lastUsed = attackCooldowns.get(attackId);
+        return lastUsed == null || System.currentTimeMillis() - lastUsed >= cooldownMs;
+    }
+
+    /**
+     * Start an attack. Sets the animation state and records cooldown.
+     *
+     * @param attackId The attack being performed
+     * @param animationDurationMs How long the attack animation lasts
+     * @param cooldownMs The attack's cooldown period
+     */
+    public void startAttack(String attackId, long animationDurationMs, long cooldownMs) {
+        if (attackCooldowns == null) {
+            attackCooldowns = new HashMap<>();
+        }
+
+        this.activeAttackId = attackId;
+        this.attackAnimationEndTime = System.currentTimeMillis() + animationDurationMs;
+        this.attackCooldowns.put(attackId, System.currentTimeMillis());
+
+        // Set animation state based on facing direction
+        this.currentState = "attack_" + (this.facing != null ? this.facing : "down");
+    }
+
+    /**
+     * End the current attack and return to idle.
+     */
+    public void endAttack() {
+        this.activeAttackId = null;
+        idle();
+    }
+
+    /**
+     * Check if character is currently executing an attack.
+     */
+    public boolean isAttacking() {
+        return activeAttackId != null && System.currentTimeMillis() < attackAnimationEndTime;
+    }
+
+    /**
+     * Get the currently active attack ID, or null if not attacking.
+     */
+    public String getActiveAttackId() {
+        return activeAttackId;
+    }
+
+    /**
+     * Get the time remaining on attack animation in milliseconds.
+     */
+    public long getAttackAnimationTimeRemaining() {
+        if (!isAttacking()) {
+            return 0;
+        }
+        return Math.max(0, attackAnimationEndTime - System.currentTimeMillis());
+    }
+
+    /**
+     * Get the cooldown remaining for a specific attack in milliseconds.
+     */
+    public long getAttackCooldownRemaining(String attackId, long cooldownMs) {
+        if (attackCooldowns == null) {
+            return 0;
+        }
+        Long lastUsed = attackCooldowns.get(attackId);
+        if (lastUsed == null) {
+            return 0;
+        }
+        long elapsed = System.currentTimeMillis() - lastUsed;
+        return Math.max(0, cooldownMs - elapsed);
     }
 
     // ============================================

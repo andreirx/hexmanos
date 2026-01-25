@@ -9,7 +9,9 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -203,6 +205,186 @@ public class GameScheduler {
         }
     }
 
+    // ============================================
+    // Projectile tick (20 FPS for smooth movement)
+    // ============================================
+
+    private static final long PROJECTILE_TICK_MS = 50;  // 20 FPS for projectiles
+
+    /**
+     * Tick all active projectiles.
+     * Runs every 50ms for smooth projectile movement.
+     */
+    @Scheduled(fixedDelay = 50)
+    public void tickProjectiles() {
+        Set<UUID> activeGameIds = roomManager.getActiveGameIds();
+        if (activeGameIds.isEmpty()) {
+            return;
+        }
+
+        for (UUID gameId : activeGameIds) {
+            try {
+                tickProjectilesForGame(gameId);
+            } catch (Exception e) {
+                log.error("Failed to tick projectiles for game {}: {}", gameId, e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Process all projectiles for a game.
+     */
+    private void tickProjectilesForGame(UUID gameId) {
+        GameState state = roomManager.getState(gameId);
+        if (state == null) {
+            return;
+        }
+
+        List<GameProjectile> projectiles = state.getActiveProjectiles();
+        if (projectiles.isEmpty()) {
+            return;
+        }
+
+        List<GameProjectile> toRemove = new ArrayList<>();
+
+        for (GameProjectile projectile : projectiles) {
+            // Update position
+            boolean reached = projectile.tick(PROJECTILE_TICK_MS);
+
+            // Broadcast position update for smooth animation
+            ProjectileUpdateEvent updateEvent = new ProjectileUpdateEvent(
+                    projectile.getId().toString(),
+                    projectile.getCurrentTileX(),
+                    projectile.getCurrentTileY(),
+                    projectile.getCurrentX(),
+                    projectile.getCurrentY()
+            );
+            messagingTemplate.convertAndSend("/topic/game/" + gameId, updateEvent);
+
+            if (reached) {
+                // Handle impact
+                handleProjectileImpact(gameId, state, projectile);
+                toRemove.add(projectile);
+            }
+        }
+
+        // Remove completed projectiles
+        for (GameProjectile p : toRemove) {
+            state.removeProjectile(p.getId());
+        }
+    }
+
+    /**
+     * Handle projectile impact - check for hits and apply damage.
+     */
+    private void handleProjectileImpact(UUID gameId, GameState state, GameProjectile projectile) {
+        int hitX = projectile.getCurrentTileX();
+        int hitY = projectile.getCurrentTileY();
+
+        // Check for character at impact location (excluding the attacker)
+        Optional<GameCharacter> hitCharacter = state.getCharacters().stream()
+                .filter(c -> c.getX() == hitX && c.getY() == hitY)
+                .filter(c -> !c.getId().equals(projectile.getSourceCharacterId()))
+                .findFirst();
+
+        String hitCharacterId = null;
+        if (hitCharacter.isPresent()) {
+            GameCharacter target = hitCharacter.get();
+            hitCharacterId = target.getId().toString();
+
+            // Apply damage
+            target.takeDamage(projectile.getDamage());
+
+            // Broadcast damage event
+            DamageEvent damageEvent = new DamageEvent(
+                    target.getId().toString(),
+                    projectile.getDamage(),
+                    target.getHealth(),
+                    target.getVisualState(),
+                    projectile.getSourceCharacterId().toString(),
+                    projectile.getAttackId()
+            );
+            messagingTemplate.convertAndSend("/topic/game/" + gameId, damageEvent);
+
+            log.debug("Projectile hit: {} took {} damage from {} in game {}",
+                    target.getName(), projectile.getDamage(), projectile.getSourceCharacterId(), gameId);
+
+            // Check for death
+            if (!target.isAlive()) {
+                CharacterDeathEvent deathEvent = new CharacterDeathEvent(
+                        target.getId().toString(),
+                        projectile.getSourceCharacterId().toString()
+                );
+                messagingTemplate.convertAndSend("/topic/game/" + gameId, deathEvent);
+                log.info("Character {} was killed by {} in game {}",
+                        target.getName(), projectile.getSourceCharacterId(), gameId);
+            }
+        }
+
+        // Broadcast hit event (for impact animation)
+        ProjectileHitEvent hitEvent = new ProjectileHitEvent(
+                projectile.getId().toString(),
+                hitX,
+                hitY,
+                hitCharacterId,
+                projectile.getDamage()
+        );
+        messagingTemplate.convertAndSend("/topic/game/" + gameId, hitEvent);
+    }
+
+    // ============================================
+    // Attack animation completion tracking
+    // ============================================
+
+    /**
+     * Check for completed attack animations and apply melee damage.
+     * Runs every 100ms.
+     */
+    @Scheduled(fixedDelay = 100)
+    public void checkAttackAnimations() {
+        Set<UUID> activeGameIds = roomManager.getActiveGameIds();
+        if (activeGameIds.isEmpty()) {
+            return;
+        }
+
+        for (UUID gameId : activeGameIds) {
+            try {
+                checkAttackAnimationsForGame(gameId);
+            } catch (Exception e) {
+                log.error("Failed to check attack animations for game {}: {}", gameId, e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Check attack animations for a game and return characters to idle.
+     */
+    private void checkAttackAnimationsForGame(UUID gameId) {
+        GameState state = roomManager.getState(gameId);
+        if (state == null) {
+            return;
+        }
+
+        for (GameCharacter character : state.getCharacters()) {
+            // Check if attack animation just completed
+            if (character.getActiveAttackId() != null && !character.isAttacking()) {
+                // Return to idle
+                character.endAttack();
+
+                // Broadcast idle event
+                CharacterIdleEvent idleEvent = new CharacterIdleEvent(
+                        character.getId().toString(),
+                        character.getCurrentState()
+                );
+                messagingTemplate.convertAndSend("/topic/game/" + gameId, idleEvent);
+            }
+        }
+    }
+
+    // ============================================
+    // Event records
+    // ============================================
+
     /**
      * Event broadcast when a character moves.
      * @param characterId The character ID
@@ -227,5 +409,74 @@ public class GameScheduler {
     public record CharacterIdleEvent(
             String characterId,
             String state
+    ) {}
+
+    /**
+     * Event broadcast when a character starts an attack.
+     */
+    public record AttackStartEvent(
+            String characterId,
+            String attackId,
+            int targetX,
+            int targetY,
+            String direction,
+            String state,
+            long animationDuration
+    ) {}
+
+    /**
+     * Event broadcast when a projectile is spawned.
+     */
+    public record ProjectileSpawnEvent(
+            String projectileId,
+            String projectileAssetId,
+            String sourceCharacterId,
+            int startX,
+            int startY,
+            int targetX,
+            int targetY,
+            int speed
+    ) {}
+
+    /**
+     * Event broadcast with projectile position updates (for smooth animation).
+     */
+    public record ProjectileUpdateEvent(
+            String projectileId,
+            int x,
+            int y,
+            double preciseX,
+            double preciseY
+    ) {}
+
+    /**
+     * Event broadcast when a projectile hits something.
+     */
+    public record ProjectileHitEvent(
+            String projectileId,
+            int x,
+            int y,
+            String hitCharacterId,  // null if hit terrain
+            int damage
+    ) {}
+
+    /**
+     * Event broadcast when a character takes damage.
+     */
+    public record DamageEvent(
+            String characterId,
+            int damage,
+            int newHealth,
+            String newVisualState,
+            String sourceCharacterId,
+            String attackId
+    ) {}
+
+    /**
+     * Event broadcast when a character dies.
+     */
+    public record CharacterDeathEvent(
+            String characterId,
+            String killedByCharacterId
     ) {}
 }

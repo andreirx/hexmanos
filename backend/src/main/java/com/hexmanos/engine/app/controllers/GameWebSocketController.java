@@ -1,7 +1,9 @@
 package com.hexmanos.engine.app.controllers;
 
 import com.hexmanos.engine.app.config.websocket.JwtChannelInterceptor.WebSocketPrincipal;
+import com.hexmanos.engine.core.game.GameCharacter;
 import com.hexmanos.engine.core.game.GameService;
+import com.hexmanos.engine.core.game.GameState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
@@ -147,6 +149,70 @@ public class GameWebSocketController {
     }
 
     /**
+     * Handle attack requests.
+     * Client sends: /app/game/{gameId}/attack
+     * Server broadcasts: /topic/game/{gameId} (AttackStartEvent, and ProjectileSpawnEvent for ranged)
+     */
+    @MessageMapping("/game/{gameId}/attack")
+    public void attack(
+            @DestinationVariable UUID gameId,
+            @Payload AttackRequest request,
+            Principal principal) {
+
+        UUID playerId = extractPlayerId(principal);
+        if (playerId == null) {
+            log.warn("Attack request with no authenticated user");
+            return;
+        }
+
+        try {
+            GameService.AttackResult result = gameService.attack(
+                    gameId, playerId, request.attackId(), request.targetX(), request.targetY()
+            );
+
+            // Broadcast attack start
+            AttackStartEvent attackEvent = new AttackStartEvent(
+                    result.characterId().toString(),
+                    result.attackId(),
+                    result.targetX(),
+                    result.targetY(),
+                    result.direction(),
+                    result.state(),
+                    result.animationDuration()
+            );
+            messagingTemplate.convertAndSend("/topic/game/" + gameId, attackEvent);
+
+            // If ranged attack, also broadcast projectile spawn
+            if (result.projectileId() != null) {
+                // Get character position for projectile start
+                GameState state = gameService.getRoomManager().getState(gameId);
+                GameCharacter character = state.findCharacter(result.characterId()).orElse(null);
+
+                if (character != null) {
+                    ProjectileSpawnEvent spawnEvent = new ProjectileSpawnEvent(
+                            result.projectileId().toString(),
+                            result.projectileAssetId().toString(),
+                            result.characterId().toString(),
+                            character.getX(),
+                            character.getY(),
+                            result.targetX(),
+                            result.targetY(),
+                            result.projectileSpeed()
+                    );
+                    messagingTemplate.convertAndSend("/topic/game/" + gameId, spawnEvent);
+                }
+            }
+
+            log.debug("Attack {} by character {} at ({}, {}) in game {}",
+                    result.attackId(), result.characterId(), result.targetX(), result.targetY(), gameId);
+
+        } catch (IllegalArgumentException e) {
+            log.warn("Attack failed for player {} in game {}: {}", playerId, gameId, e.getMessage());
+            sendErrorToUser(principal, "Attack failed: " + e.getMessage());
+        }
+    }
+
+    /**
      * Extract the internal player UUID from the Principal.
      */
     private UUID extractPlayerId(Principal principal) {
@@ -180,6 +246,11 @@ public class GameWebSocketController {
      * Request payload for path commands.
      */
     public record PathRequest(int targetX, int targetY) {}
+
+    /**
+     * Request payload for attack commands.
+     */
+    public record AttackRequest(String attackId, int targetX, int targetY) {}
 
     /**
      * Event broadcast when a character moves.
@@ -216,4 +287,31 @@ public class GameWebSocketController {
      * Event sent to user for errors.
      */
     public record ErrorEvent(String message) {}
+
+    /**
+     * Event broadcast when a character starts an attack.
+     */
+    public record AttackStartEvent(
+            String characterId,
+            String attackId,
+            int targetX,
+            int targetY,
+            String direction,
+            String state,
+            long animationDuration
+    ) {}
+
+    /**
+     * Event broadcast when a projectile is spawned (ranged attacks).
+     */
+    public record ProjectileSpawnEvent(
+            String projectileId,
+            String projectileAssetId,
+            String sourceCharacterId,
+            int startX,
+            int startY,
+            int targetX,
+            int targetY,
+            int speed
+    ) {}
 }

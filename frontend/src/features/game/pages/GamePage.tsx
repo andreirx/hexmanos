@@ -8,9 +8,18 @@ import { useAuth } from "@/context/AuthContext"
 import { getGame, takeOverCharacter, relinquishCharacter, pauseGame, stopGame } from "@/api/games"
 import { getAssetFile, getAssetById, getAssetFileUrl } from "@/api/assets"
 import { useGameWebSocket } from "@/hooks/useGameWebSocket"
-import type { CharacterMoveEvent, CharacterIdleEvent, PathStartEvent } from "@/hooks/useGameWebSocket"
-import { ArrowLeft, Pause, Square, User, Heart, Wifi, WifiOff } from "lucide-react"
-import type { GameDTO, GameCharacterDTO } from "@/api/types"
+import type {
+  CharacterMoveEvent,
+  CharacterIdleEvent,
+  PathStartEvent,
+  AttackStartEvent,
+  ProjectileSpawnEvent,
+  ProjectileHitEvent,
+  DamageEvent,
+  CharacterDeathEvent,
+} from "@/hooks/useGameWebSocket"
+import { ArrowLeft, Pause, Square, User, Heart, Wifi, WifiOff, Swords, Target } from "lucide-react"
+import type { GameDTO, GameCharacterDTO, AttackDefinition } from "@/api/types"
 import {
   getVariationFromSeed,
   getTransitionDirections,
@@ -1200,6 +1209,157 @@ class GameScene extends Phaser.Scene {
       this.pathGraphics.clear()
     }
   }
+
+  // ============================================
+  // Attack and Projectile Handling
+  // ============================================
+
+  // Projectile sprites
+  private projectileSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+
+  // Spawn a projectile (called from ProjectileSpawnEvent)
+  spawnProjectile(event: ProjectileSpawnEvent) {
+    // Create a simple circle as a projectile placeholder
+    // In the future, this should load the projectile asset's sprites
+    const graphics = this.add.graphics()
+    graphics.fillStyle(0xff6600, 1)
+    graphics.fillCircle(0, 0, 8)
+    graphics.generateTexture("projectile_placeholder", 16, 16)
+    graphics.destroy()
+
+    const sprite = this.add.sprite(
+      event.startX * TILE_SIZE + TILE_SIZE / 2,
+      event.startY * TILE_SIZE + TILE_SIZE / 2,
+      "projectile_placeholder"
+    )
+    sprite.setDepth(500) // Above characters
+
+    // Calculate angle to target and rotate sprite
+    const angle = Math.atan2(
+      event.targetY - event.startY,
+      event.targetX - event.startX
+    )
+    sprite.setRotation(angle)
+
+    this.projectileSprites.set(event.projectileId, sprite)
+
+    // Calculate tween duration based on distance and speed
+    const distance = Math.sqrt(
+      Math.pow(event.targetX - event.startX, 2) +
+      Math.pow(event.targetY - event.startY, 2)
+    )
+    const durationMs = (distance / event.speed) * 1000
+
+    // Animate projectile flight
+    this.tweens.add({
+      targets: sprite,
+      x: event.targetX * TILE_SIZE + TILE_SIZE / 2,
+      y: event.targetY * TILE_SIZE + TILE_SIZE / 2,
+      duration: durationMs,
+      ease: "Linear"
+    })
+  }
+
+  // Handle projectile hit (called from ProjectileHitEvent)
+  handleProjectileHit(event: ProjectileHitEvent) {
+    const sprite = this.projectileSprites.get(event.projectileId)
+    if (sprite) {
+      // Simple flash effect at impact point
+      const flash = this.add.circle(
+        event.x * TILE_SIZE + TILE_SIZE / 2,
+        event.y * TILE_SIZE + TILE_SIZE / 2,
+        20,
+        0xffff00,
+        0.8
+      )
+      flash.setDepth(600)
+
+      this.tweens.add({
+        targets: flash,
+        alpha: 0,
+        scale: 2,
+        duration: 200,
+        onComplete: () => flash.destroy()
+      })
+
+      // Remove projectile sprite
+      sprite.destroy()
+      this.projectileSprites.delete(event.projectileId)
+    }
+  }
+
+  // Handle damage event (called from DamageEvent)
+  handleDamage(event: DamageEvent) {
+    const char = this.characters.find(c => c.id === event.characterId)
+    if (!char) return
+
+    // Update character's local state
+    char.health = event.newHealth
+    char.visualState = event.newVisualState
+
+    const sprite = this.characterSprites.get(event.characterId)
+    if (sprite) {
+      // Flash character red
+      sprite.setTint(0xff0000)
+      this.time.delayedCall(200, () => {
+        sprite.clearTint()
+      })
+    }
+
+    // Show floating damage number
+    const worldX = char.x * TILE_SIZE + TILE_SIZE / 2
+    const worldY = char.y * TILE_SIZE
+
+    const text = this.add.text(worldX, worldY, `-${event.damage}`, {
+      fontSize: "24px",
+      color: "#ff4444",
+      fontStyle: "bold",
+      stroke: "#000000",
+      strokeThickness: 4
+    })
+    text.setOrigin(0.5, 0.5)
+    text.setDepth(1000)
+
+    // Float up and fade out
+    this.tweens.add({
+      targets: text,
+      y: worldY - 50,
+      alpha: 0,
+      duration: 1000,
+      ease: "Cubic.easeOut",
+      onComplete: () => text.destroy()
+    })
+  }
+
+  // Handle character death (called from CharacterDeathEvent)
+  handleCharacterDeath(event: CharacterDeathEvent) {
+    const sprite = this.characterSprites.get(event.characterId)
+    if (sprite) {
+      // Fade out death animation
+      this.tweens.add({
+        targets: sprite,
+        alpha: 0,
+        scale: 0.5,
+        duration: 500,
+        onComplete: () => {
+          sprite.setVisible(false)
+        }
+      })
+    }
+
+    // Remove from characters list (they're "dead")
+    const index = this.characters.findIndex(c => c.id === event.characterId)
+    if (index >= 0) {
+      this.characters.splice(index, 1)
+    }
+
+    // Clear glow if present
+    const glow = this.characterGlows.get(event.characterId)
+    if (glow) {
+      glow.destroy()
+      this.characterGlows.delete(event.characterId)
+    }
+  }
 }
 
 // ============================================
@@ -1222,12 +1382,16 @@ export function GamePage() {
   const [error, setError] = useState<string | null>(null)
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null)
   const [controlledCharacterId, setControlledCharacterId] = useState<string | null>(null)
+  const [attackModeId, setAttackModeId] = useState<string | null>(null) // Currently selected attack ID
+  const [characterAttacks, setCharacterAttacks] = useState<AttackDefinition[]>([]) // Attacks for controlled character
 
   // Refs for cleanup and avoiding stale closures
   const gameIdRef = useRef<string | null>(null)
   const controlledCharacterIdRef = useRef<string | null>(null)
   const sendMoveRef = useRef<((direction: "n" | "s" | "e" | "w") => boolean) | null>(null)
   const sendPathRef = useRef<((targetX: number, targetY: number) => boolean) | null>(null)
+  const sendAttackRef = useRef<((attackId: string, targetX: number, targetY: number) => boolean) | null>(null)
+  const attackModeIdRef = useRef<string | null>(null)
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -1237,6 +1401,10 @@ export function GamePage() {
   useEffect(() => {
     controlledCharacterIdRef.current = controlledCharacterId
   }, [controlledCharacterId])
+
+  useEffect(() => {
+    attackModeIdRef.current = attackModeId
+  }, [attackModeId])
 
   // Cleanup: release controlled character when leaving the game screen
   useEffect(() => {
@@ -1319,13 +1487,81 @@ export function GamePage() {
     }
   }, [])
 
+  // Handle attack start event
+  const handleAttackStart = useCallback((event: AttackStartEvent) => {
+    const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+    if (scene) {
+      // Play attack animation using backend-provided state
+      scene.setCharacterState(event.characterId, event.state)
+
+      // Schedule return to idle after animation
+      setTimeout(() => {
+        const s = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+        if (s) {
+          const idleState = "idle_" + event.direction
+          s.setCharacterState(event.characterId, idleState)
+        }
+      }, event.animationDuration)
+    }
+  }, [])
+
+  // Handle projectile spawn event
+  const handleProjectileSpawn = useCallback((event: ProjectileSpawnEvent) => {
+    const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+    if (scene) {
+      scene.spawnProjectile(event)
+    }
+  }, [])
+
+  // Handle projectile hit event
+  const handleProjectileHit = useCallback((event: ProjectileHitEvent) => {
+    const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+    if (scene) {
+      scene.handleProjectileHit(event)
+    }
+  }, [])
+
+  // Handle damage event
+  const handleDamage = useCallback((event: DamageEvent) => {
+    const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+    if (scene) {
+      scene.handleDamage(event)
+    }
+
+    // Update local game state
+    setGame(prev => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        characters: prev.characters.map(c =>
+          c.id === event.characterId
+            ? { ...c, health: event.newHealth, visualState: event.newVisualState }
+            : c
+        )
+      }
+    })
+  }, [])
+
+  // Handle character death event
+  const handleCharacterDeath = useCallback((event: CharacterDeathEvent) => {
+    const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+    if (scene) {
+      scene.handleCharacterDeath(event)
+    }
+  }, [])
+
   // WebSocket connection
-  const { isConnected, sendMove, sendPath } = useGameWebSocket({
+  const { isConnected, sendMove, sendPath, sendAttack } = useGameWebSocket({
     gameId: gameId || "",
     onCharacterMove: handleCharacterMove,
     onCharacterIdle: handleCharacterIdle,
     onPathStart: handlePathStart,
     onPathCancel: handlePathCancel,
+    onAttackStart: handleAttackStart,
+    onProjectileSpawn: handleProjectileSpawn,
+    onProjectileHit: handleProjectileHit,
+    onDamage: handleDamage,
+    onCharacterDeath: handleCharacterDeath,
     onError: handleWebSocketError,
     onConnected: () => console.log("Game WebSocket connected"),
     onDisconnected: () => console.log("Game WebSocket disconnected"),
@@ -1339,6 +1575,10 @@ export function GamePage() {
   useEffect(() => {
     sendPathRef.current = sendPath
   }, [sendPath])
+
+  useEffect(() => {
+    sendAttackRef.current = sendAttack
+  }, [sendAttack])
 
   // Load game data
   useEffect(() => {
@@ -1509,8 +1749,13 @@ export function GamePage() {
           sendMoveRef.current?.(direction)
         },
         onPathRequest: (targetX: number, targetY: number) => {
-          // Send path request via WebSocket (use ref to avoid stale closure)
-          sendPathRef.current?.(targetX, targetY)
+          // Check if in attack mode - if so, send attack instead of path
+          if (attackModeIdRef.current) {
+            sendAttackRef.current?.(attackModeIdRef.current, targetX, targetY)
+          } else {
+            // Send path request via WebSocket (use ref to avoid stale closure)
+            sendPathRef.current?.(targetX, targetY)
+          }
         }
       })
     }
@@ -1605,6 +1850,46 @@ export function GamePage() {
 
     autoReleaseControl()
   }, [selectedCharacter, gameId, controlledCharacterId])
+
+  // Load character attacks when controlled character changes
+  useEffect(() => {
+    if (!controlledCharacterId || !game) {
+      setCharacterAttacks([])
+      setAttackModeId(null)
+      return
+    }
+
+    // Find the controlled character
+    const char = game.characters.find(c => c.id === controlledCharacterId)
+    if (!char) {
+      setCharacterAttacks([])
+      setAttackModeId(null)
+      return
+    }
+
+    // Load the character's definition.json to get attacks
+    async function loadCharacterAttacks() {
+      try {
+        const asset = await getAssetById(char!.assetId)
+        const definition = await getAssetFile<{
+          name: string
+          attacks?: AttackDefinition[]
+        }>(asset.storageKeyPrefix, "definition.json")
+
+        if (definition.attacks && definition.attacks.length > 0) {
+          setCharacterAttacks(definition.attacks)
+        } else {
+          setCharacterAttacks([])
+        }
+      } catch (err) {
+        console.warn("Failed to load character attacks:", err)
+        setCharacterAttacks([])
+      }
+      setAttackModeId(null) // Clear attack mode when switching characters
+    }
+
+    loadCharacterAttacks()
+  }, [controlledCharacterId, game])
 
   async function handlePause() {
     if (!gameId) return
@@ -1751,6 +2036,49 @@ export function GamePage() {
                     </div>
                   ) : null
                 })()}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Attack mode panel - only show when controlling a character with attacks */}
+          {controlledCharacterId && characterAttacks.length > 0 && (
+            <Card className={`bg-zinc-800 border-zinc-700 ${attackModeId ? "border-red-500/50" : ""}`}>
+              <CardHeader className="py-2 px-3">
+                <CardTitle className="text-sm text-zinc-100 flex items-center gap-2">
+                  <Swords className="w-4 h-4" />
+                  Attacks
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="py-2 px-3 space-y-2">
+                {characterAttacks.map(attack => {
+                  const isSelected = attackModeId === attack.id
+                  return (
+                    <button
+                      key={attack.id}
+                      onClick={() => setAttackModeId(isSelected ? null : attack.id)}
+                      className={`w-full p-2 rounded text-left transition-colors ${
+                        isSelected
+                          ? "bg-red-600 text-white"
+                          : "bg-zinc-700 text-zinc-100 hover:bg-zinc-600"
+                      }`}
+                    >
+                      <div className="flex justify-between items-center">
+                        <span className="font-medium text-sm">{attack.name}</span>
+                        <span className="text-xs">
+                          {attack.type === "RANGED" ? <Target className="w-3 h-3" /> : <Swords className="w-3 h-3" />}
+                        </span>
+                      </div>
+                      <div className="text-xs text-zinc-400 mt-1">
+                        Range: {attack.range} | Dmg: {attack.damage}
+                      </div>
+                    </button>
+                  )
+                })}
+                {attackModeId && (
+                  <p className="text-xs text-red-400 mt-2">
+                    Attack mode active. Right-click to attack.
+                  </p>
+                )}
               </CardContent>
             </Card>
           )}
