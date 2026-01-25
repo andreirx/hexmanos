@@ -960,15 +960,22 @@ class GameScene extends Phaser.Scene {
     sprite.setScale(scale)
 
     // Try to play the animation for this state
+    // IMPORTANT: Only call play() if not already playing this animation
+    // Otherwise, play() restarts from frame 0 on each move event, breaking the loop
     const animKey = `anim_${char.assetId}_${state}${mipSuffix}`
     if (this.anims.exists(animKey)) {
-      sprite.play(animKey)
+      // Only start if not already playing this animation (prevents restart on each move event)
+      if (sprite.anims.currentAnim?.key !== animKey) {
+        sprite.play(animKey)
+      }
     } else {
       // Animation doesn't exist - VISUAL fallback to idle
       // NOTE: The Local Truth Mirror still knows the REAL state!
       const idleAnimKey = `anim_${char.assetId}_idle${mipSuffix}`
       if (this.anims.exists(idleAnimKey)) {
-        sprite.play(idleAnimKey)
+        if (sprite.anims.currentAnim?.key !== idleAnimKey) {
+          sprite.play(idleAnimKey)
+        }
       } else {
         // No idle animation - use static texture
         sprite.stop()
