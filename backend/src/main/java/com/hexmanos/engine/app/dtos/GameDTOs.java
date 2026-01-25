@@ -106,6 +106,7 @@ public class GameDTOs {
             int y,
             String currentState,
             String visualState,
+            String facing,       // Direction character is facing (up, down, left, right)
             int health,
             int maxHealth,
             boolean controlled,
@@ -124,6 +125,7 @@ public class GameDTOs {
                     character.getY(),
                     character.getCurrentState(),
                     character.getVisualState(),
+                    character.getFacing(),
                     character.getHealth(),
                     character.getMaxHealth(),
                     character.isControlled(),

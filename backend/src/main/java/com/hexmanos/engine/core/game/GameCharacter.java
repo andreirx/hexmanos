@@ -24,8 +24,9 @@ public class GameCharacter implements Serializable {
     private String name;
     private int x;                  // Grid position
     private int y;
-    private String currentState;    // idle, walk_down, etc.
+    private String currentState;    // idle, idle_down, walk_down, attack_down, etc.
     private String visualState;     // full, hurt_1, etc.
+    private String facing;          // up, down, left, right - direction character is facing
     private int health;
     private int maxHealth;
     private boolean controlled;     // Has active player control
@@ -47,6 +48,7 @@ public class GameCharacter implements Serializable {
         character.setY(y);
         character.setCurrentState("idle");
         character.setVisualState("full");
+        character.setFacing("down");  // Default facing direction
         character.setHealth(100);
         character.setMaxHealth(100);
         character.setControlled(false);
@@ -94,27 +96,48 @@ public class GameCharacter implements Serializable {
 
     /**
      * Move character by delta.
+     * Updates position, facing direction, and current state.
      */
     public void move(int dx, int dy) {
         this.x += dx;
         this.y += dy;
-        // Update state based on movement direction
+        // Update facing direction and state based on movement direction
         if (dx > 0) {
+            this.facing = "right";
             this.currentState = "walk_right";
         } else if (dx < 0) {
+            this.facing = "left";
             this.currentState = "walk_left";
         } else if (dy > 0) {
+            this.facing = "down";
             this.currentState = "walk_down";
         } else if (dy < 0) {
+            this.facing = "up";
             this.currentState = "walk_up";
         }
     }
 
     /**
-     * Set to idle state.
+     * Set to idle state in current facing direction.
+     * Uses directional idle (idle_up, idle_down, etc.) based on facing.
      */
     public void idle() {
+        // Use directional idle based on facing direction
+        this.currentState = "idle_" + (this.facing != null ? this.facing : "down");
+    }
+
+    /**
+     * Set to simple idle state (backwards compatible, no direction).
+     */
+    public void idleSimple() {
         this.currentState = "idle";
+    }
+
+    /**
+     * Set to attack state in current facing direction.
+     */
+    public void attack() {
+        this.currentState = "attack_" + (this.facing != null ? this.facing : "down");
     }
 
     // ============================================

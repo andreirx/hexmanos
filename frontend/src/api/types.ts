@@ -137,14 +137,24 @@ export interface GamePlayerDTO {
   lastSeenAt: string
 }
 
+// Character facing direction
+export type CharacterFacing = "up" | "down" | "left" | "right"
+
+// Character animation states
+export type CharacterState =
+  | "idle" | "idle_up" | "idle_down" | "idle_left" | "idle_right"  // Idle states
+  | "walk_up" | "walk_down" | "walk_left" | "walk_right"            // Walk states
+  | "attack_up" | "attack_down" | "attack_left" | "attack_right"    // Attack states
+
 export interface GameCharacterDTO {
   id: string
   assetId: string
   name: string
   x: number
   y: number
-  currentState: string
-  visualState: string
+  currentState: string      // Current animation state (idle, walk_down, attack_up, etc.)
+  visualState: string       // Health visual state (full, hurt_1, hurt_2, critical)
+  facing: CharacterFacing   // Direction character is facing
   health: number
   maxHealth: number
   controlled: boolean

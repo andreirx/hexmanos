@@ -338,7 +338,8 @@ class GameScene extends Phaser.Scene {
       }
     })
 
-    // Load character/object sprites - idle and walk frames for animation, with mipmaps
+    // Load character/object sprites - idle, walk, and attack frames for animation, with mipmaps
+    // Animation states: idle (simple), idle_up/down/left/right, walk_up/down/left/right, attack_up/down/left/right
     characterAssetIds.forEach(assetId => {
       const asset = this.assetMap.get(assetId)
       if (!asset) return
@@ -346,7 +347,7 @@ class GameScene extends Phaser.Scene {
       const def = this.entityDefinitions.get(assetId)
       const visualStatePrefix = def?.visualStates?.[0] ? `${def.visualStates[0]}_` : ""
 
-      // Load all idle frames with mipmaps
+      // Load simple idle frames (backwards compatible)
       const idleFrameCount = def?.states?.idle?.frames ?? 1
       for (let i = 0; i < idleFrameCount; i++) {
         for (const mip of mipSuffixes) {
@@ -358,18 +359,22 @@ class GameScene extends Phaser.Scene {
         }
       }
 
-      // Load walk frames for all directions with mipmaps
-      const walkDirections = ["down", "up", "left", "right"] as const
-      for (const dir of walkDirections) {
-        const walkState = `walk_${dir}`
-        const walkFrameCount = def?.states?.[walkState]?.frames ?? 0
-        for (let i = 0; i < walkFrameCount; i++) {
-          for (const mip of mipSuffixes) {
-            const suffix = getMipSuffix(mip)
-            const key = `char_${assetId}_${walkState}_${i}${suffix ? `_${mip}` : ""}`
-            const fileName = `${visualStatePrefix}${walkState}_${i}${suffix}.png`
-            const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
-            this.load.image(key, url)
+      // Direction-based states: idle_*, walk_*, attack_*
+      const directions = ["down", "up", "left", "right"] as const
+      const stateTypes = ["idle", "walk", "attack"] as const
+
+      for (const stateType of stateTypes) {
+        for (const dir of directions) {
+          const stateName = `${stateType}_${dir}`
+          const frameCount = def?.states?.[stateName]?.frames ?? 0
+          for (let i = 0; i < frameCount; i++) {
+            for (const mip of mipSuffixes) {
+              const suffix = getMipSuffix(mip)
+              const key = `char_${assetId}_${stateName}_${i}${suffix ? `_${mip}` : ""}`
+              const fileName = `${visualStatePrefix}${stateName}_${i}${suffix}.png`
+              const url = getAssetFileUrl(asset.storageKeyPrefix, fileName)
+              this.load.image(key, url)
+            }
           }
         }
       }
@@ -494,7 +499,7 @@ class GameScene extends Phaser.Scene {
         const mipAnimSuffix = mipLevel === "full" ? "" : `_${mipLevel}`
         const mipTexSuffix = mipLevel === "full" ? "" : `_${mipLevel}`
 
-        // Create idle animation if it doesn't exist and has multiple frames
+        // Create simple idle animation (backwards compatible)
         const idleAnimKey = `anim_${char.assetId}_idle${mipAnimSuffix}`
         if (idleFrameCount > 1 && !this.anims.exists(idleAnimKey)) {
           const frames: Phaser.Types.Animations.AnimationFrame[] = []
@@ -515,29 +520,37 @@ class GameScene extends Phaser.Scene {
           }
         }
 
-        // Create walk animations for all directions
-        const walkDirections = ["down", "up", "left", "right"] as const
-        for (const dir of walkDirections) {
-          const walkState = `walk_${dir}`
-          const walkFrameCount = def?.states?.[walkState]?.frames ?? 0
-          const walkAnimKey = `anim_${char.assetId}_${walkState}${mipAnimSuffix}`
+        // Create direction-based animations: idle_*, walk_*, attack_*
+        const directions = ["down", "up", "left", "right"] as const
+        const stateConfigs = [
+          { type: "idle", frameRate: 4 },    // Slow for idle
+          { type: "walk", frameRate: 8 },    // Medium for walk
+          { type: "attack", frameRate: 10 }  // Fast for attack
+        ] as const
 
-          if (walkFrameCount > 0 && !this.anims.exists(walkAnimKey)) {
-            const frames: Phaser.Types.Animations.AnimationFrame[] = []
-            for (let i = 0; i < walkFrameCount; i++) {
-              const frameKey = `char_${char.assetId}_${walkState}_${i}${mipTexSuffix}`
-              if (this.textures.exists(frameKey)) {
-                frames.push({ key: frameKey })
+        for (const { type, frameRate } of stateConfigs) {
+          for (const dir of directions) {
+            const stateName = `${type}_${dir}`
+            const stateFrameCount = def?.states?.[stateName]?.frames ?? 0
+            const stateAnimKey = `anim_${char.assetId}_${stateName}${mipAnimSuffix}`
+
+            if (stateFrameCount > 0 && !this.anims.exists(stateAnimKey)) {
+              const frames: Phaser.Types.Animations.AnimationFrame[] = []
+              for (let i = 0; i < stateFrameCount; i++) {
+                const frameKey = `char_${char.assetId}_${stateName}_${i}${mipTexSuffix}`
+                if (this.textures.exists(frameKey)) {
+                  frames.push({ key: frameKey })
+                }
               }
-            }
 
-            if (frames.length > 0) {
-              this.anims.create({
-                key: walkAnimKey,
-                frames: frames,
-                frameRate: 8, // 8 FPS for walk animation (faster than idle)
-                repeat: -1 // Loop while walking
-              })
+              if (frames.length > 0) {
+                this.anims.create({
+                  key: stateAnimKey,
+                  frames: frames,
+                  frameRate: frameRate,
+                  repeat: type === "attack" ? 0 : -1  // Attack plays once, others loop
+                })
+              }
             }
           }
         }
