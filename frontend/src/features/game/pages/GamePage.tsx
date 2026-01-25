@@ -1218,6 +1218,8 @@ class GameScene extends Phaser.Scene {
   private projectileSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
   // Track which asset ID each projectile uses (for landed animation lookup)
   private projectileAssetIds: Map<string, string> = new Map()
+  // Track which projectiles have already hit (to prevent late texture loads from overwriting landed animation)
+  private projectilesHit: Set<string> = new Set()
   // Cache for loaded projectile textures
   private loadedProjectileTextures: Set<string> = new Set()
 
@@ -1365,14 +1367,14 @@ class GameScene extends Phaser.Scene {
           }
         }
 
-        // Update the sprite if it still exists
+        // Update the sprite if it still exists AND hasn't already hit
         const sprite = this.projectileSprites.get(projectileId)
-        if (sprite) {
+        if (sprite && !this.projectilesHit.has(projectileId)) {
           const firstFrameKey = idleFrameKeys[0]
           if (this.textures.exists(firstFrameKey)) {
             sprite.setTexture(firstFrameKey)
             sprite.setScale(TILE_SIZE / 128)
-            // Play the idle animation
+            // Play the idle animation (only if not already hit)
             if (this.anims.exists(idleAnimKey)) {
               sprite.play(idleAnimKey)
             }
@@ -1389,6 +1391,9 @@ class GameScene extends Phaser.Scene {
   handleProjectileHit(event: ProjectileHitEvent) {
     const sprite = this.projectileSprites.get(event.projectileId)
     const assetId = this.projectileAssetIds.get(event.projectileId)
+
+    // Mark as hit to prevent late texture loads from overwriting landed animation
+    this.projectilesHit.add(event.projectileId)
 
     if (sprite) {
       // Stop any current animation/tween
@@ -1407,6 +1412,7 @@ class GameScene extends Phaser.Scene {
           sprite.destroy()
           this.projectileSprites.delete(event.projectileId)
           this.projectileAssetIds.delete(event.projectileId)
+          this.projectilesHit.delete(event.projectileId)
         })
       } else {
         // No landed animation - show flash effect and destroy immediately
@@ -1431,6 +1437,7 @@ class GameScene extends Phaser.Scene {
         sprite.destroy()
         this.projectileSprites.delete(event.projectileId)
         this.projectileAssetIds.delete(event.projectileId)
+        this.projectilesHit.delete(event.projectileId)
       }
     }
   }
