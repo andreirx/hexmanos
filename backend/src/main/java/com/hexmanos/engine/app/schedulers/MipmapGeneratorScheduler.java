@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * Background scheduler that generates mipmaps for TILE and CHARACTER assets
+ * Background scheduler that generates mipmaps for TILE, CHARACTER, and OBJECT assets
  * that don't have mipmaps yet.
  *
  * Generates 64x64 and 32x32 variants for all PNG files (excluding transitions
@@ -42,6 +42,10 @@ public class MipmapGeneratorScheduler {
         // Process CHARACTER assets
         List<Asset> characterAssets = assetRepository.findByType(Asset.AssetType.CHARACTER);
         totalGenerated += processAssets(characterAssets, "character");
+
+        // Process OBJECT assets (for projectiles and other objects)
+        List<Asset> objectAssets = assetRepository.findByType(Asset.AssetType.OBJECT);
+        totalGenerated += processAssets(objectAssets, "object");
 
         if (totalGenerated > 0) {
             log.info("Mipmap generator scheduler completed: generated mipmaps for {} file(s)", totalGenerated);
