@@ -1237,6 +1237,11 @@ class GameScene extends Phaser.Scene {
       // Use loaded projectile sprite
       sprite = this.add.sprite(startX, startY, textureKey)
       sprite.setScale(TILE_SIZE / 128) // Object sprites are 128px, scale to tile size
+      // Play the animation if it exists
+      const animKey = `projectile_${event.projectileAssetId}_anim`
+      if (this.anims.exists(animKey)) {
+        sprite.play(animKey)
+      }
     } else {
       // Create placeholder while loading
       if (!this.textures.exists("projectile_placeholder")) {
@@ -1277,32 +1282,71 @@ class GameScene extends Phaser.Scene {
     })
   }
 
-  // Dynamically load projectile texture
+  // Dynamically load projectile textures and create animation
   private async loadProjectileTexture(assetId: string, projectileId: string) {
     try {
-      // Get the asset info from our assetMap or fetch it
+      // Get the asset info from our assetMap or construct path
       let storageKeyPrefix = this.assetMap.get(assetId)?.storageKeyPrefix
-
       if (!storageKeyPrefix) {
-        // Asset not in map, construct the path (objects/assetId)
         storageKeyPrefix = `objects/${assetId}`
       }
 
-      // Load the first idle frame
-      const textureKey = `projectile_${assetId}_idle_0`
-      const fileName = "new_idle_0.png" // Objects use "new" visual state by default
-      const url = getAssetFileUrl(storageKeyPrefix, fileName)
+      // First, fetch the definition.json to know how many frames
+      const definitionUrl = getAssetFileUrl(storageKeyPrefix, "definition.json")
+      const response = await fetch(definitionUrl)
+      if (!response.ok) {
+        console.warn("Failed to fetch projectile definition:", response.status)
+        return
+      }
+      const definition = await response.json()
 
-      // Use Phaser's loader
-      this.load.image(textureKey, url)
+      // Get frame count from definition (objects have idle state)
+      const frameCount = definition.states?.idle?.frames ?? 1
+      const visualState = definition.visualStates?.[0] ?? "new"
+
+      // Load all frames
+      const frameKeys: string[] = []
+      for (let i = 0; i < frameCount; i++) {
+        const textureKey = `projectile_${assetId}_idle_${i}`
+        const fileName = `${visualState}_idle_${i}.png`
+        const url = getAssetFileUrl(storageKeyPrefix, fileName)
+        this.load.image(textureKey, url)
+        frameKeys.push(textureKey)
+      }
+
+      // When all frames loaded, create animation and update sprite
       this.load.once("complete", () => {
         this.loadedProjectileTextures.add(assetId)
 
+        // Create animation if it doesn't exist
+        const animKey = `projectile_${assetId}_anim`
+        if (!this.anims.exists(animKey)) {
+          const frames = frameKeys
+            .filter(key => this.textures.exists(key))
+            .map(key => ({ key }))
+
+          if (frames.length > 0) {
+            this.anims.create({
+              key: animKey,
+              frames: frames,
+              frameRate: 10, // 10 FPS for projectile animation
+              repeat: -1 // Loop forever
+            })
+          }
+        }
+
         // Update the sprite if it still exists
         const sprite = this.projectileSprites.get(projectileId)
-        if (sprite && this.textures.exists(textureKey)) {
-          sprite.setTexture(textureKey)
-          sprite.setScale(TILE_SIZE / 128)
+        if (sprite) {
+          const firstFrameKey = frameKeys[0]
+          if (this.textures.exists(firstFrameKey)) {
+            sprite.setTexture(firstFrameKey)
+            sprite.setScale(TILE_SIZE / 128)
+            // Play the animation
+            if (this.anims.exists(animKey)) {
+              sprite.play(animKey)
+            }
+          }
         }
       })
       this.load.start()
