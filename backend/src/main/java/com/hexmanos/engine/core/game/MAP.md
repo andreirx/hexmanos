@@ -55,12 +55,22 @@ This prevents desync bugs, especially during frontend-only operations like zoom/
 - **id**: UUID (generated at game start)
 - **assetId**: Reference to CHARACTER asset
 - **x, y**: Grid position
-- **currentState**: Animation state (idle, walk_down, etc.)
+- **currentState**: Animation state (see below)
 - **visualState**: Health state (full, hurt_1, hurt_2, critical)
+- **facing**: Direction character is facing (up, down, left, right)
 - **health/maxHealth**: HP tracking
 - **controlled**: Whether a player is controlling
 - **currentPath**: List of Points for auto-movement (transient)
 - **pathIndex**: Current position in path (transient)
+
+#### Animation States
+- **idle**: Simple idle (backwards compatible)
+- **idle_up, idle_down, idle_left, idle_right**: Directional idle
+- **walk_up, walk_down, walk_left, walk_right**: Walking
+- **attack_up, attack_down, attack_left, attack_right**: Attacking
+
+Movement updates both `facing` and `currentState` (e.g., moving right sets `facing="right"` and `currentState="walk_right"`).
+`idle()` uses directional idle based on facing (e.g., `idle_down` if facing is `down`).
 
 ### GameState (In-Memory)
 - **gameId**: Reference to game
