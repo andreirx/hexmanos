@@ -63,9 +63,12 @@ const CHARACTER_ANIMATION_STATES = [
   { id: "action_attack", label: "Attack (Legacy)", required: false, loop: false },
 ] as const
 
-// Animation state definitions for objects (simplified - only idle)
+// Animation state definitions for objects
+// - idle: shown while object is active/moving (e.g., projectile in flight)
+// - landed: shown when object stops/hits (e.g., projectile impact), plays once then disappears
 const OBJECT_ANIMATION_STATES = [
-  { id: "idle", label: "Idle", required: true, loop: true },
+  { id: "idle", label: "Idle (Flying)", required: true, loop: true },
+  { id: "landed", label: "Landed (Impact)", required: false, loop: false },
 ] as const
 
 interface AnimationFrame {

@@ -1216,6 +1216,8 @@ class GameScene extends Phaser.Scene {
 
   // Projectile sprites
   private projectileSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+  // Track which asset ID each projectile uses (for landed animation lookup)
+  private projectileAssetIds: Map<string, string> = new Map()
   // Cache for loaded projectile textures
   private loadedProjectileTextures: Set<string> = new Set()
 
@@ -1237,10 +1239,10 @@ class GameScene extends Phaser.Scene {
       // Use loaded projectile sprite
       sprite = this.add.sprite(startX, startY, textureKey)
       sprite.setScale(TILE_SIZE / 128) // Object sprites are 128px, scale to tile size
-      // Play the animation if it exists
-      const animKey = `projectile_${event.projectileAssetId}_anim`
-      if (this.anims.exists(animKey)) {
-        sprite.play(animKey)
+      // Play the idle animation (flying) if it exists
+      const idleAnimKey = `projectile_${event.projectileAssetId}_idle_anim`
+      if (this.anims.exists(idleAnimKey)) {
+        sprite.play(idleAnimKey)
       }
     } else {
       // Create placeholder while loading
@@ -1264,6 +1266,7 @@ class GameScene extends Phaser.Scene {
     sprite.setRotation(angle + Math.PI / 2) // +90 degrees because sprites typically face up
 
     this.projectileSprites.set(event.projectileId, sprite)
+    this.projectileAssetIds.set(event.projectileId, event.projectileAssetId)
 
     // Calculate tween duration based on distance and speed
     const distance = Math.sqrt(
@@ -1282,7 +1285,7 @@ class GameScene extends Phaser.Scene {
     })
   }
 
-  // Dynamically load projectile textures and create animation
+  // Dynamically load projectile textures and create animations (idle + landed)
   private async loadProjectileTexture(assetId: string, projectileId: string) {
     try {
       // Get the asset info from our assetMap or construct path
@@ -1300,37 +1303,64 @@ class GameScene extends Phaser.Scene {
       }
       const definition = await response.json()
 
-      // Get frame count from definition (objects have idle state)
-      const frameCount = definition.states?.idle?.frames ?? 1
       const visualState = definition.visualStates?.[0] ?? "new"
 
-      // Load all frames
-      const frameKeys: string[] = []
-      for (let i = 0; i < frameCount; i++) {
+      // Load idle frames (for flying)
+      const idleFrameCount = definition.states?.idle?.frames ?? 1
+      const idleFrameKeys: string[] = []
+      for (let i = 0; i < idleFrameCount; i++) {
         const textureKey = `projectile_${assetId}_idle_${i}`
         const fileName = `${visualState}_idle_${i}.png`
         const url = getAssetFileUrl(storageKeyPrefix, fileName)
         this.load.image(textureKey, url)
-        frameKeys.push(textureKey)
+        idleFrameKeys.push(textureKey)
       }
 
-      // When all frames loaded, create animation and update sprite
+      // Load landed frames (for impact) if they exist
+      const landedFrameCount = definition.states?.landed?.frames ?? 0
+      const landedFrameKeys: string[] = []
+      for (let i = 0; i < landedFrameCount; i++) {
+        const textureKey = `projectile_${assetId}_landed_${i}`
+        const fileName = `${visualState}_landed_${i}.png`
+        const url = getAssetFileUrl(storageKeyPrefix, fileName)
+        this.load.image(textureKey, url)
+        landedFrameKeys.push(textureKey)
+      }
+
+      // When all frames loaded, create animations and update sprite
       this.load.once("complete", () => {
         this.loadedProjectileTextures.add(assetId)
 
-        // Create animation if it doesn't exist
-        const animKey = `projectile_${assetId}_anim`
-        if (!this.anims.exists(animKey)) {
-          const frames = frameKeys
+        // Create idle animation (looping, for flight)
+        const idleAnimKey = `projectile_${assetId}_idle_anim`
+        if (!this.anims.exists(idleAnimKey)) {
+          const frames = idleFrameKeys
             .filter(key => this.textures.exists(key))
             .map(key => ({ key }))
 
           if (frames.length > 0) {
             this.anims.create({
-              key: animKey,
+              key: idleAnimKey,
               frames: frames,
-              frameRate: 10, // 10 FPS for projectile animation
-              repeat: -1 // Loop forever
+              frameRate: 10,
+              repeat: -1 // Loop forever while flying
+            })
+          }
+        }
+
+        // Create landed animation (plays once, for impact)
+        const landedAnimKey = `projectile_${assetId}_landed_anim`
+        if (landedFrameKeys.length > 0 && !this.anims.exists(landedAnimKey)) {
+          const frames = landedFrameKeys
+            .filter(key => this.textures.exists(key))
+            .map(key => ({ key }))
+
+          if (frames.length > 0) {
+            this.anims.create({
+              key: landedAnimKey,
+              frames: frames,
+              frameRate: 10,
+              repeat: 0 // Play once
             })
           }
         }
@@ -1338,13 +1368,13 @@ class GameScene extends Phaser.Scene {
         // Update the sprite if it still exists
         const sprite = this.projectileSprites.get(projectileId)
         if (sprite) {
-          const firstFrameKey = frameKeys[0]
+          const firstFrameKey = idleFrameKeys[0]
           if (this.textures.exists(firstFrameKey)) {
             sprite.setTexture(firstFrameKey)
             sprite.setScale(TILE_SIZE / 128)
-            // Play the animation
-            if (this.anims.exists(animKey)) {
-              sprite.play(animKey)
+            // Play the idle animation
+            if (this.anims.exists(idleAnimKey)) {
+              sprite.play(idleAnimKey)
             }
           }
         }
@@ -1358,28 +1388,50 @@ class GameScene extends Phaser.Scene {
   // Handle projectile hit (called from ProjectileHitEvent)
   handleProjectileHit(event: ProjectileHitEvent) {
     const sprite = this.projectileSprites.get(event.projectileId)
+    const assetId = this.projectileAssetIds.get(event.projectileId)
+
     if (sprite) {
-      // Simple flash effect at impact point
-      const flash = this.add.circle(
-        event.x * TILE_SIZE + TILE_SIZE / 2,
-        event.y * TILE_SIZE + TILE_SIZE / 2,
-        20,
-        0xffff00,
-        0.8
-      )
-      flash.setDepth(600)
+      // Stop any current animation/tween
+      sprite.stop()
+      this.tweens.killTweensOf(sprite)
 
-      this.tweens.add({
-        targets: flash,
-        alpha: 0,
-        scale: 2,
-        duration: 200,
-        onComplete: () => flash.destroy()
-      })
+      // Check if there's a "landed" animation for this projectile
+      const landedAnimKey = assetId ? `projectile_${assetId}_landed_anim` : null
+      const hasLandedAnim = landedAnimKey && this.anims.exists(landedAnimKey)
 
-      // Remove projectile sprite
-      sprite.destroy()
-      this.projectileSprites.delete(event.projectileId)
+      if (hasLandedAnim) {
+        // Play landed animation, then destroy
+        sprite.setRotation(0) // Reset rotation for impact
+        sprite.play(landedAnimKey)
+        sprite.once("animationcomplete", () => {
+          sprite.destroy()
+          this.projectileSprites.delete(event.projectileId)
+          this.projectileAssetIds.delete(event.projectileId)
+        })
+      } else {
+        // No landed animation - show flash effect and destroy immediately
+        const flash = this.add.circle(
+          event.x * TILE_SIZE + TILE_SIZE / 2,
+          event.y * TILE_SIZE + TILE_SIZE / 2,
+          20,
+          0xffff00,
+          0.8
+        )
+        flash.setDepth(600)
+
+        this.tweens.add({
+          targets: flash,
+          alpha: 0,
+          scale: 2,
+          duration: 200,
+          onComplete: () => flash.destroy()
+        })
+
+        // Remove projectile sprite immediately
+        sprite.destroy()
+        this.projectileSprites.delete(event.projectileId)
+        this.projectileAssetIds.delete(event.projectileId)
+      }
     }
   }
 

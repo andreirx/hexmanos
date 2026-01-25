@@ -120,8 +120,9 @@ Asset browser for loading characters and objects.
 6. `action_build` - Building action
 7. `action_attack` - Attack action
 
-### Object States (1)
-1. `idle` - Static appearance (required)
+### Object States (2)
+1. `idle` - Active/flying appearance (required) - looping animation while object is in motion (e.g., projectile flying)
+2. `landed` - Impact appearance (optional) - plays once when object stops/hits (e.g., projectile impact)
 
 Each state supports 1-8 frames.
 
@@ -144,12 +145,13 @@ Each state supports 1-8 frames.
 **definition.json (Object with visual states):**
 ```json
 {
-  "name": "Barrel",
+  "name": "Arrow",
   "spriteSize": 128,
   "entityType": "OBJECT",
   "visualStates": ["new", "worn", "damaged", "broken"],
   "states": {
-    "idle": { "frames": 1, "loop": true }
+    "idle": { "frames": 4, "loop": true },
+    "landed": { "frames": 3, "loop": false }
   }
 }
 ```
@@ -168,9 +170,11 @@ characters/{assetId}/
 objects/{assetId}/
 ├── definition.json
 ├── new_idle_0.png
+├── new_idle_1.png
+├── new_landed_0.png      # Optional impact frames
+├── new_landed_1.png
 ├── worn_idle_0.png
-├── damaged_idle_0.png
-└── broken_idle_0.png
+└── ...
 ```
 
 **Legacy format (without visual states):**
