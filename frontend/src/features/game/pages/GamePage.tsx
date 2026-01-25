@@ -1425,62 +1425,23 @@ class GameScene extends Phaser.Scene {
       console.log("[Projectile] landedAnimKey:", landedAnimKey, "exists?", hasLandedAnim)
 
       if (hasLandedAnim) {
-        // Play landed animation, then destroy
+        // Play landed animation and keep showing the last frame (projectile persists on map)
         sprite.setRotation(0) // Reset rotation for impact
 
-        // Get animation info to calculate duration for fallback timer
-        const landedAnim = this.anims.get(landedAnimKey)
-        const frameCount = landedAnim?.frames?.length ?? 1
-        const frameRate = landedAnim?.frameRate ?? 10
-        const animDuration = (frameCount / frameRate) * 1000 + 100 // Add 100ms buffer
+        console.log("[Projectile] Playing landed animation, keeping sprite visible")
 
-        console.log("[Projectile] Playing landed animation, frameCount:", frameCount, "duration:", animDuration)
-
-        // Use both animationcomplete AND a timer fallback
-        let destroyed = false
-        const destroySprite = () => {
-          if (!destroyed) {
-            destroyed = true
-            console.log("[Projectile] DESTROYING sprite for:", event.projectileId)
-            sprite.destroy()
-            this.projectilesHit.delete(event.projectileId)
-          }
-        }
-
-        // Attach listener BEFORE playing animation
-        sprite.once("animationcomplete", () => {
-          console.log("[Projectile] animationcomplete fired for:", event.projectileId)
-          destroySprite()
-        })
-
+        // Play landed animation - it will stop on the last frame (repeat: 0)
         sprite.play(landedAnimKey)
 
-        // Fallback timer in case animationcomplete doesn't fire
-        this.time.delayedCall(animDuration, () => {
-          console.log("[Projectile] Timer fallback fired for:", event.projectileId)
-          destroySprite()
-        })
+        // Clean up tracking but keep sprite in scene
+        this.projectilesHit.delete(event.projectileId)
       } else {
-        // No landed animation - show flash effect and destroy immediately
-        const flash = this.add.circle(
-          event.x * TILE_SIZE + TILE_SIZE / 2,
-          event.y * TILE_SIZE + TILE_SIZE / 2,
-          20,
-          0xffff00,
-          0.8
-        )
-        flash.setDepth(600)
+        // No landed animation - stop animation and keep sprite visible showing last frame
+        sprite.stop()
+        sprite.setRotation(0) // Reset rotation
+        console.log("[Projectile] No landed animation, keeping sprite on last idle frame")
 
-        this.tweens.add({
-          targets: flash,
-          alpha: 0,
-          scale: 2,
-          duration: 200,
-          onComplete: () => flash.destroy()
-        })
-
-        // Remove projectile sprite immediately
-        sprite.destroy()
+        // Clean up tracking but keep sprite in scene
         this.projectilesHit.delete(event.projectileId)
       }
     }
