@@ -1216,30 +1216,47 @@ class GameScene extends Phaser.Scene {
 
   // Projectile sprites
   private projectileSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+  // Cache for loaded projectile textures
+  private loadedProjectileTextures: Set<string> = new Set()
 
   // Spawn a projectile (called from ProjectileSpawnEvent)
   spawnProjectile(event: ProjectileSpawnEvent) {
-    // Create a simple circle as a projectile placeholder
-    // In the future, this should load the projectile asset's sprites
-    const graphics = this.add.graphics()
-    graphics.fillStyle(0xff6600, 1)
-    graphics.fillCircle(0, 0, 8)
-    graphics.generateTexture("projectile_placeholder", 16, 16)
-    graphics.destroy()
+    const textureKey = `projectile_${event.projectileAssetId}_idle_0`
+    const hasTexture = this.loadedProjectileTextures.has(event.projectileAssetId) &&
+                       this.textures.exists(textureKey)
 
-    const sprite = this.add.sprite(
-      event.startX * TILE_SIZE + TILE_SIZE / 2,
-      event.startY * TILE_SIZE + TILE_SIZE / 2,
-      "projectile_placeholder"
-    )
+    // Create sprite at start position
+    const startX = event.startX * TILE_SIZE + TILE_SIZE / 2
+    const startY = event.startY * TILE_SIZE + TILE_SIZE / 2
+    const targetX = event.targetX * TILE_SIZE + TILE_SIZE / 2
+    const targetY = event.targetY * TILE_SIZE + TILE_SIZE / 2
+
+    let sprite: Phaser.GameObjects.Sprite
+
+    if (hasTexture) {
+      // Use loaded projectile sprite
+      sprite = this.add.sprite(startX, startY, textureKey)
+      sprite.setScale(TILE_SIZE / 128) // Object sprites are 128px, scale to tile size
+    } else {
+      // Create placeholder while loading
+      if (!this.textures.exists("projectile_placeholder")) {
+        const graphics = this.add.graphics()
+        graphics.fillStyle(0xff6600, 1)
+        graphics.fillCircle(8, 8, 6)
+        graphics.generateTexture("projectile_placeholder", 16, 16)
+        graphics.destroy()
+      }
+      sprite = this.add.sprite(startX, startY, "projectile_placeholder")
+
+      // Start loading the actual texture
+      this.loadProjectileTexture(event.projectileAssetId, event.projectileId)
+    }
+
     sprite.setDepth(500) // Above characters
 
     // Calculate angle to target and rotate sprite
-    const angle = Math.atan2(
-      event.targetY - event.startY,
-      event.targetX - event.startX
-    )
-    sprite.setRotation(angle)
+    const angle = Math.atan2(event.targetY - event.startY, event.targetX - event.startX)
+    sprite.setRotation(angle + Math.PI / 2) // +90 degrees because sprites typically face up
 
     this.projectileSprites.set(event.projectileId, sprite)
 
@@ -1253,11 +1270,45 @@ class GameScene extends Phaser.Scene {
     // Animate projectile flight
     this.tweens.add({
       targets: sprite,
-      x: event.targetX * TILE_SIZE + TILE_SIZE / 2,
-      y: event.targetY * TILE_SIZE + TILE_SIZE / 2,
+      x: targetX,
+      y: targetY,
       duration: durationMs,
       ease: "Linear"
     })
+  }
+
+  // Dynamically load projectile texture
+  private async loadProjectileTexture(assetId: string, projectileId: string) {
+    try {
+      // Get the asset info from our assetMap or fetch it
+      let storageKeyPrefix = this.assetMap.get(assetId)?.storageKeyPrefix
+
+      if (!storageKeyPrefix) {
+        // Asset not in map, construct the path (objects/assetId)
+        storageKeyPrefix = `objects/${assetId}`
+      }
+
+      // Load the first idle frame
+      const textureKey = `projectile_${assetId}_idle_0`
+      const fileName = "new_idle_0.png" // Objects use "new" visual state by default
+      const url = getAssetFileUrl(storageKeyPrefix, fileName)
+
+      // Use Phaser's loader
+      this.load.image(textureKey, url)
+      this.load.once("complete", () => {
+        this.loadedProjectileTextures.add(assetId)
+
+        // Update the sprite if it still exists
+        const sprite = this.projectileSprites.get(projectileId)
+        if (sprite && this.textures.exists(textureKey)) {
+          sprite.setTexture(textureKey)
+          sprite.setScale(TILE_SIZE / 128)
+        }
+      })
+      this.load.start()
+    } catch (err) {
+      console.warn("Failed to load projectile texture:", err)
+    }
   }
 
   // Handle projectile hit (called from ProjectileHitEvent)
