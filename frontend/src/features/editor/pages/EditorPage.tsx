@@ -32,14 +32,33 @@ const CHARACTER_VISUAL_STATES = ["full", "hurt_1", "hurt_2", "critical"]
 const OBJECT_VISUAL_STATES = ["new", "worn", "damaged", "broken"]
 
 // Animation state definitions for characters
+// Required: idle (simple), walk directions
+// Optional: directional idle, directional attack, actions
 const CHARACTER_ANIMATION_STATES = [
+  // Simple idle (required - backwards compatible fallback)
   { id: "idle", label: "Idle", required: true, loop: true },
+
+  // Walk animations (required for movement)
   { id: "walk_down", label: "Walk Down", required: true, loop: true },
   { id: "walk_up", label: "Walk Up", required: true, loop: true },
   { id: "walk_left", label: "Walk Left", required: true, loop: true },
   { id: "walk_right", label: "Walk Right", required: true, loop: true },
+
+  // Directional idle (optional - for facing directions when stationary)
+  { id: "idle_down", label: "Idle Down", required: false, loop: true },
+  { id: "idle_up", label: "Idle Up", required: false, loop: true },
+  { id: "idle_left", label: "Idle Left", required: false, loop: true },
+  { id: "idle_right", label: "Idle Right", required: false, loop: true },
+
+  // Attack animations (optional - plays once per attack)
+  { id: "attack_down", label: "Attack Down", required: false, loop: false },
+  { id: "attack_up", label: "Attack Up", required: false, loop: false },
+  { id: "attack_left", label: "Attack Left", required: false, loop: false },
+  { id: "attack_right", label: "Attack Right", required: false, loop: false },
+
+  // Legacy/special actions (optional)
   { id: "action_build", label: "Build", required: false, loop: true },
-  { id: "action_attack", label: "Attack", required: false, loop: false },
+  { id: "action_attack", label: "Attack (Legacy)", required: false, loop: false },
 ] as const
 
 // Animation state definitions for objects (simplified - only idle)
