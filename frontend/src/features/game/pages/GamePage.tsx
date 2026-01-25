@@ -1227,6 +1227,12 @@ class GameScene extends Phaser.Scene {
   spawnProjectile(event: ProjectileSpawnEvent) {
     console.log("[Projectile] SPAWN event received:", event.projectileId, "assetId:", event.projectileAssetId)
 
+    // Prevent duplicate spawns (can happen with multiple WebSocket subscriptions)
+    if (this.projectileSprites.has(event.projectileId)) {
+      console.log("[Projectile] Already exists, skipping:", event.projectileId)
+      return
+    }
+
     const textureKey = `projectile_${event.projectileAssetId}_idle_0`
     const hasTexture = this.loadedProjectileTextures.has(event.projectileAssetId) &&
                        this.textures.exists(textureKey)
