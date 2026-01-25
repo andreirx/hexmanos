@@ -1367,14 +1367,15 @@ class GameScene extends Phaser.Scene {
           }
         }
 
-        // Update the sprite if it still exists AND hasn't already hit
+        // Update the sprite if it still exists in our map (removed on hit)
+        // This check is sufficient because we delete from projectileSprites immediately on hit
         const sprite = this.projectileSprites.get(projectileId)
-        if (sprite && !this.projectilesHit.has(projectileId)) {
+        if (sprite) {
           const firstFrameKey = idleFrameKeys[0]
           if (this.textures.exists(firstFrameKey)) {
             sprite.setTexture(firstFrameKey)
             sprite.setScale(TILE_SIZE / 128)
-            // Play the idle animation (only if not already hit)
+            // Play the idle animation
             if (this.anims.exists(idleAnimKey)) {
               sprite.play(idleAnimKey)
             }
@@ -1392,8 +1393,10 @@ class GameScene extends Phaser.Scene {
     const sprite = this.projectileSprites.get(event.projectileId)
     const assetId = this.projectileAssetIds.get(event.projectileId)
 
-    // Mark as hit to prevent late texture loads from overwriting landed animation
+    // Mark as hit AND remove from maps immediately to prevent any further updates
     this.projectilesHit.add(event.projectileId)
+    this.projectileSprites.delete(event.projectileId)
+    this.projectileAssetIds.delete(event.projectileId)
 
     if (sprite) {
       // Stop any current animation/tween
@@ -1407,13 +1410,29 @@ class GameScene extends Phaser.Scene {
       if (hasLandedAnim) {
         // Play landed animation, then destroy
         sprite.setRotation(0) // Reset rotation for impact
+
+        // Get animation info to calculate duration for fallback timer
+        const landedAnim = this.anims.get(landedAnimKey)
+        const frameCount = landedAnim?.frames?.length ?? 1
+        const frameRate = landedAnim?.frameRate ?? 10
+        const animDuration = (frameCount / frameRate) * 1000 + 100 // Add 100ms buffer
+
         sprite.play(landedAnimKey)
-        sprite.once("animationcomplete", () => {
-          sprite.destroy()
-          this.projectileSprites.delete(event.projectileId)
-          this.projectileAssetIds.delete(event.projectileId)
-          this.projectilesHit.delete(event.projectileId)
-        })
+
+        // Use both animationcomplete AND a timer fallback
+        let destroyed = false
+        const destroySprite = () => {
+          if (!destroyed) {
+            destroyed = true
+            sprite.destroy()
+            this.projectilesHit.delete(event.projectileId)
+          }
+        }
+
+        sprite.once("animationcomplete", destroySprite)
+
+        // Fallback timer in case animationcomplete doesn't fire
+        this.time.delayedCall(animDuration, destroySprite)
       } else {
         // No landed animation - show flash effect and destroy immediately
         const flash = this.add.circle(
@@ -1435,8 +1454,6 @@ class GameScene extends Phaser.Scene {
 
         // Remove projectile sprite immediately
         sprite.destroy()
-        this.projectileSprites.delete(event.projectileId)
-        this.projectileAssetIds.delete(event.projectileId)
         this.projectilesHit.delete(event.projectileId)
       }
     }
