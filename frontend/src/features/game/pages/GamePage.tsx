@@ -199,6 +199,10 @@ class GameScene extends Phaser.Scene {
   private boxSelectRect: Phaser.GameObjects.Graphics | null = null
   private boxSelectPreviewRects: Map<string, Phaser.GameObjects.Graphics> = new Map()
   private static readonly BOX_SELECT_THRESHOLD = 5 // pixels minimum to distinguish drag from click
+  // Right-click drag pan state
+  private rightDragStart: { x: number; y: number; scrollX: number; scrollY: number } | null = null
+  private rightDragPanning = false
+  private static readonly RIGHT_DRAG_THRESHOLD = 8 // pixels to distinguish click from drag
   private moveDebounceTime = 200 // ms between move inputs
   private lastMoveTime = 0
   // Standard animation duration (matches backend BASE_MOVE_DELAY_MS)
@@ -671,100 +675,130 @@ class GameScene extends Phaser.Scene {
       this.switchMipLevel(newMipLevel)
     })
 
-    // Background click handler — box select (left drag), tile click, path/batch-path (right)
+    // Background click handler — box select (left drag), tile click, right-click pan/path
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       if (pointer.button === 0) {
         // Start potential box select — store world coords
         this.boxSelectStart = { x: pointer.worldX, y: pointer.worldY }
       } else if (pointer.button === 2) {
-        // Right click — path or batch path
-        const tileX = Math.floor(pointer.worldX / TILE_SIZE)
-        const tileY = Math.floor(pointer.worldY / TILE_SIZE)
-        if (tileX < 0 || tileX >= width || tileY < 0 || tileY >= height) return
-
-        if (this.controlledCharacterIds.size > 1 && this.onBatchPathRequest) {
-          this.onBatchPathRequest(Array.from(this.controlledCharacterIds), tileX, tileY)
-        } else if (this.controlledCharacterIds.size === 1 && this.onPathRequest) {
-          this.onPathRequest(tileX, tileY)
+        // Start potential right-drag pan — store screen coords + camera position
+        const cam = this.cameras.main
+        this.rightDragStart = {
+          x: pointer.x, y: pointer.y,
+          scrollX: cam.scrollX, scrollY: cam.scrollY
         }
+        this.rightDragPanning = false
       }
     })
 
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
-      if (!this.boxSelectStart || !pointer.leftButtonDown()) return
+      // Left-drag: box select
+      if (this.boxSelectStart && pointer.leftButtonDown()) {
+        const dx = pointer.worldX - this.boxSelectStart.x
+        const dy = pointer.worldY - this.boxSelectStart.y
+        const dist = Math.sqrt(dx * dx + dy * dy)
 
-      const dx = pointer.worldX - this.boxSelectStart.x
-      const dy = pointer.worldY - this.boxSelectStart.y
-      const dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist < GameScene.BOX_SELECT_THRESHOLD) {
+          this.clearBoxSelectPreviews()
+          return
+        }
 
-      if (dist < GameScene.BOX_SELECT_THRESHOLD) {
-        // Clear preview rects if drag is too short
-        this.clearBoxSelectPreviews()
-        return
-      }
-
-      const rx = Math.min(this.boxSelectStart.x, pointer.worldX)
-      const ry = Math.min(this.boxSelectStart.y, pointer.worldY)
-      const rw = Math.abs(dx)
-      const rh = Math.abs(dy)
-
-      // Draw box select rectangle
-      if (this.boxSelectRect) {
-        this.boxSelectRect.clear()
-        this.boxSelectRect.lineStyle(2, 0x44ff44, 0.8)
-        this.boxSelectRect.fillStyle(0x44ff44, 0.15)
-        this.boxSelectRect.fillRect(rx, ry, rw, rh)
-        this.boxSelectRect.strokeRect(rx, ry, rw, rh)
-        this.boxSelectRect.setVisible(true)
-      }
-
-      // Show preview rectangles around characters within the box
-      this.updateBoxSelectPreviews(rx, ry, rw, rh)
-    })
-
-    this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
-      if (pointer.button !== 0 || !this.boxSelectStart) return
-
-      const dx = pointer.worldX - this.boxSelectStart.x
-      const dy = pointer.worldY - this.boxSelectStart.y
-      const dist = Math.sqrt(dx * dx + dy * dy)
-
-      // Clear box select graphics and preview rects
-      if (this.boxSelectRect) {
-        this.boxSelectRect.clear()
-        this.boxSelectRect.setVisible(false)
-      }
-      this.clearBoxSelectPreviews()
-
-      if (dist >= GameScene.BOX_SELECT_THRESHOLD) {
-        // Box select — find characters inside the rectangle
         const rx = Math.min(this.boxSelectStart.x, pointer.worldX)
         const ry = Math.min(this.boxSelectStart.y, pointer.worldY)
         const rw = Math.abs(dx)
         const rh = Math.abs(dy)
 
-        const selectedIds = this.getSelectableCharactersInRect(rx, ry, rw, rh)
-
-        if (selectedIds.length > 0 && this.onBoxSelect) {
-          this.onBoxSelect(selectedIds)
+        if (this.boxSelectRect) {
+          this.boxSelectRect.clear()
+          this.boxSelectRect.lineStyle(2, 0x44ff44, 0.8)
+          this.boxSelectRect.fillStyle(0x44ff44, 0.15)
+          this.boxSelectRect.fillRect(rx, ry, rw, rh)
+          this.boxSelectRect.strokeRect(rx, ry, rw, rh)
+          this.boxSelectRect.setVisible(true)
         }
-      } else {
-        // Simple click on empty tile
-        const tileX = Math.floor(pointer.worldX / TILE_SIZE)
-        const tileY = Math.floor(pointer.worldY / TILE_SIZE)
-        if (tileX < 0 || tileX >= width || tileY < 0 || tileY >= height) {
-          this.boxSelectStart = null
-          return
-        }
-
-        // Check if there's a character at this position (handled by sprite handler)
-        const charAtTile = this.characters.find(c => c.x === tileX && c.y === tileY)
-        if (!charAtTile && this.onTileClick) {
-          this.onTileClick(tileX, tileY)
-        }
+        this.updateBoxSelectPreviews(rx, ry, rw, rh)
+        return
       }
 
-      this.boxSelectStart = null
+      // Right-drag: pan camera
+      if (this.rightDragStart && pointer.rightButtonDown()) {
+        const dx = pointer.x - this.rightDragStart.x
+        const dy = pointer.y - this.rightDragStart.y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+
+        if (dist >= GameScene.RIGHT_DRAG_THRESHOLD) {
+          this.rightDragPanning = true
+          // Stop following any character while panning
+          this.cameras.main.stopFollow()
+          // Pan camera: move opposite to pointer drag, scaled by zoom
+          const cam = this.cameras.main
+          cam.scrollX = this.rightDragStart.scrollX - dx / cam.zoom
+          cam.scrollY = this.rightDragStart.scrollY - dy / cam.zoom
+        }
+      }
+    })
+
+    this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+      // Left button release — box select or tile click
+      if (pointer.button === 0 && this.boxSelectStart) {
+        const dx = pointer.worldX - this.boxSelectStart.x
+        const dy = pointer.worldY - this.boxSelectStart.y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+
+        // Clear box select graphics and preview rects
+        if (this.boxSelectRect) {
+          this.boxSelectRect.clear()
+          this.boxSelectRect.setVisible(false)
+        }
+        this.clearBoxSelectPreviews()
+
+        if (dist >= GameScene.BOX_SELECT_THRESHOLD) {
+          // Box select — find characters inside the rectangle
+          const rx = Math.min(this.boxSelectStart.x, pointer.worldX)
+          const ry = Math.min(this.boxSelectStart.y, pointer.worldY)
+          const rw = Math.abs(dx)
+          const rh = Math.abs(dy)
+
+          const selectedIds = this.getSelectableCharactersInRect(rx, ry, rw, rh)
+
+          if (selectedIds.length > 0 && this.onBoxSelect) {
+            this.onBoxSelect(selectedIds)
+          }
+        } else {
+          // Simple click on empty tile
+          const tileX = Math.floor(pointer.worldX / TILE_SIZE)
+          const tileY = Math.floor(pointer.worldY / TILE_SIZE)
+          if (tileX < 0 || tileX >= width || tileY < 0 || tileY >= height) {
+            this.boxSelectStart = null
+            return
+          }
+
+          const charAtTile = this.characters.find(c => c.x === tileX && c.y === tileY)
+          if (!charAtTile && this.onTileClick) {
+            this.onTileClick(tileX, tileY)
+          }
+        }
+
+        this.boxSelectStart = null
+      }
+
+      // Right button release — destination click (only if wasn't panning)
+      if (pointer.button === 2 && this.rightDragStart) {
+        if (!this.rightDragPanning) {
+          // Short right-click — send path/batch-path
+          const tileX = Math.floor(pointer.worldX / TILE_SIZE)
+          const tileY = Math.floor(pointer.worldY / TILE_SIZE)
+          if (tileX >= 0 && tileX < width && tileY >= 0 && tileY < height) {
+            if (this.controlledCharacterIds.size > 1 && this.onBatchPathRequest) {
+              this.onBatchPathRequest(Array.from(this.controlledCharacterIds), tileX, tileY)
+            } else if (this.controlledCharacterIds.size === 1 && this.onPathRequest) {
+              this.onPathRequest(tileX, tileY)
+            }
+          }
+        }
+        this.rightDragStart = null
+        this.rightDragPanning = false
+      }
     })
 
     // Disable context menu on right-click
@@ -2309,7 +2343,10 @@ export function GamePage() {
 
     if (succeeded.length === 0) return
 
-    // Update React state
+    // Update React state — set selectedCharacter to first succeeded ID
+    // to prevent the auto-release effect from firing (it triggers when selectedCharacter is null)
+    setSelectedCharacter(succeeded[0])
+
     const newSet = new Set(succeeded)
     setControlledCharacterIds(newSet)
 
