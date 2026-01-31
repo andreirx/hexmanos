@@ -149,6 +149,14 @@ function normalizeMapData(data: MapData): MapData {
 // ============================================
 
 class GameScene extends Phaser.Scene {
+  // Depth constants for consistent layer ordering
+  private static readonly DEPTH_GLOW = -1
+  private static readonly DEPTH_PATH = 1
+  private static readonly DEPTH_LANDED_OBJECT = 5
+  private static readonly DEPTH_CHARACTER = 10
+  private static readonly DEPTH_PROJECTILE = 500
+  private static readonly DEPTH_UI = 1000
+
   private mapData: MapData | null = null
   private characters: GameCharacterDTO[] = []
   private characterSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
@@ -474,6 +482,7 @@ class GameScene extends Phaser.Scene {
               key
             )
             image.setScale(mipScale)
+            image.setDepth(GameScene.DEPTH_PATH)
             // Track path image for mip level switching
             this.pathImages.set(`${layerPrefix}_${x},${y}`, { image, assetId: path.pathAssetId, variation })
           }
@@ -581,6 +590,7 @@ class GameScene extends Phaser.Scene {
         validIdleTexture
       )
       sprite.setScale(mipScale)
+      sprite.setDepth(GameScene.DEPTH_CHARACTER)
       sprite.setVisible(true) // Ensure visible
 
       sprite.setInteractive({ useHandCursor: true })
@@ -678,7 +688,7 @@ class GameScene extends Phaser.Scene {
 
     // Create path graphics for visualization (renders above everything)
     this.pathGraphics = this.add.graphics()
-    this.pathGraphics.setDepth(1000) // High depth to render above characters
+    this.pathGraphics.setDepth(GameScene.DEPTH_UI)
 
     // Set up initial controlled character if player was already controlling one
     if (this.initialControlledCharacterId) {
@@ -839,7 +849,7 @@ class GameScene extends Phaser.Scene {
   // Create glow graphics for a character
   private createCharacterGlow(characterId: string): Phaser.GameObjects.Graphics {
     const glow = this.add.graphics()
-    glow.setDepth(-1) // Render below characters
+    glow.setDepth(GameScene.DEPTH_GLOW)
     glow.setVisible(false)
     this.characterGlows.set(characterId, glow)
     return glow
@@ -1222,6 +1232,8 @@ class GameScene extends Phaser.Scene {
   private projectilesHit: Set<string> = new Set()
   // Cache for loaded projectile textures
   private loadedProjectileTextures: Set<string> = new Set()
+  // Landed objects (projectiles that have stopped) - tracked for cleanup
+  private landedObjects: Phaser.GameObjects.Sprite[] = []
 
   // Spawn a projectile (called from ProjectileSpawnEvent)
   spawnProjectile(event: ProjectileSpawnEvent) {
@@ -1266,7 +1278,7 @@ class GameScene extends Phaser.Scene {
       this.loadProjectileTexture(event.projectileAssetId, event.projectileId)
     }
 
-    sprite.setDepth(500) // Above characters
+    sprite.setDepth(GameScene.DEPTH_PROJECTILE)
 
     // Calculate angle to target and rotate sprite
     const angle = Math.atan2(event.targetY - event.startY, event.targetX - event.startX)
@@ -1407,27 +1419,23 @@ class GameScene extends Phaser.Scene {
       sprite.stop()
       this.tweens.killTweensOf(sprite)
 
+      // Move to landed object layer (below characters, above paths)
+      sprite.setDepth(GameScene.DEPTH_LANDED_OBJECT)
+      sprite.setRotation(0)
+
       // Check if there's a "landed" animation for this projectile
       const landedAnimKey = assetId ? `projectile_${assetId}_landed_anim` : null
       const hasLandedAnim = landedAnimKey && this.anims.exists(landedAnimKey)
 
       if (hasLandedAnim) {
-        // Play landed animation and keep showing the last frame (projectile persists on map)
-        sprite.setRotation(0)
-
-        // Play landed animation - it will stop on the last frame (repeat: 0)
+        // Play landed animation - stops on last frame (repeat: 0)
         sprite.play(landedAnimKey)
-
-        // Clean up tracking but keep sprite in scene
-        this.projectilesHit.delete(event.projectileId)
-      } else {
-        // No landed animation - stop and keep sprite visible on last idle frame
-        sprite.stop()
-        sprite.setRotation(0)
-
-        // Clean up tracking but keep sprite in scene
-        this.projectilesHit.delete(event.projectileId)
       }
+      // else: keep showing last idle frame as static object
+
+      // Track as landed object for cleanup, clear projectile tracking
+      this.landedObjects.push(sprite)
+      this.projectilesHit.delete(event.projectileId)
     }
   }
 
@@ -1461,7 +1469,7 @@ class GameScene extends Phaser.Scene {
       strokeThickness: 4
     })
     text.setOrigin(0.5, 0.5)
-    text.setDepth(1000)
+    text.setDepth(GameScene.DEPTH_UI)
 
     // Float up and fade out
     this.tweens.add({
