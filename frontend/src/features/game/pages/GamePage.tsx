@@ -17,6 +17,7 @@ import type {
   ProjectileHitEvent,
   DamageEvent,
   CharacterDeathEvent,
+  BatchPathStartEvent,
 } from "@/hooks/useGameWebSocket"
 import { ArrowLeft, Pause, Square, User, Heart, Wifi, WifiOff, Swords, Target } from "lucide-react"
 import type { GameDTO, GameCharacterDTO, AttackDefinition } from "@/api/types"
@@ -151,6 +152,7 @@ function normalizeMapData(data: MapData): MapData {
 class GameScene extends Phaser.Scene {
   // Depth constants for consistent layer ordering
   private static readonly DEPTH_GLOW = -1
+  private static readonly DEPTH_SELECTION = 9  // Between terrain and characters
   private static readonly DEPTH_PATH = 1
   private static readonly DEPTH_LANDED_OBJECT = 5
   private static readonly DEPTH_CHARACTER = 10
@@ -161,13 +163,17 @@ class GameScene extends Phaser.Scene {
   private characters: GameCharacterDTO[] = []
   private characterSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
   private movingCharacters: Set<string> = new Set() // Track characters currently animating
-  private onCharacterClick: ((characterId: string) => void) | null = null
+  private onCharacterClick: ((characterId: string, shiftKey: boolean) => void) | null = null
   private onTileClick: ((x: number, y: number) => void) | null = null
   private onMoveInput: ((direction: "n" | "s" | "e" | "w") => void) | null = null
   private onPathRequest: ((targetX: number, targetY: number) => void) | null = null
+  private onBatchPathRequest: ((characterIds: string[], targetX: number, targetY: number) => void) | null = null
 
-  // Path visualization
+  // Path visualization — per-character graphics for squad path display
   private pathGraphics: Phaser.GameObjects.Graphics | null = null
+  private characterPathGraphics: Map<string, Phaser.GameObjects.Graphics> = new Map()
+  // Track remaining path points per character (for progressive path visualization)
+  private characterPaths: Map<string, number[][]> = new Map()
   // Track which characters have active paths (for deciding whether to auto-idle)
   private charactersWithActivePath: Set<string> = new Set()
 
@@ -180,12 +186,17 @@ class GameScene extends Phaser.Scene {
   private playerColors: Map<string, number> = new Map()
   // Character glow graphics (characterId -> glow graphics)
   private characterGlows: Map<string, Phaser.GameObjects.Graphics> = new Map()
-  // Current player's color index (for selection indicator)
+  // Current player identity (for selection indicator + box select filtering)
+  private currentPlayerId: string = ""
   private currentPlayerColorIndex: number = 0
 
-  // Character control state
-  private controlledCharacterId: string | null = null
-  private selectionIndicator: Phaser.GameObjects.Graphics | null = null
+  // Character control state (multi-select)
+  private controlledCharacterIds: Set<string> = new Set()
+  private selectionIndicators: Map<string, Phaser.GameObjects.Graphics> = new Map()
+  // Box select state
+  private boxSelectStart: { x: number; y: number } | null = null
+  private boxSelectRect: Phaser.GameObjects.Graphics | null = null
+  private static readonly BOX_SELECT_THRESHOLD = 5 // pixels minimum to distinguish drag from click
   private moveDebounceTime = 200 // ms between move inputs
   private lastMoveTime = 0
   // Standard animation duration (matches backend BASE_MOVE_DELAY_MS)
@@ -222,22 +233,23 @@ class GameScene extends Phaser.Scene {
     super({ key: "GameScene" })
   }
 
-  // Store initial controlled character ID for setup in create()
-  private initialControlledCharacterId: string | null = null
+  // Store initial controlled character IDs for setup in create()
+  private initialControlledCharacterIds: string[] = []
 
   init(data: {
     mapData: MapData
     characters: GameCharacterDTO[]
     players: { playerId: string; colorIndex: number }[]
     currentPlayerId: string
-    initialControlledCharacterId: string | null
+    initialControlledCharacterIds: string[]
     assetMap: Map<string, { storageKeyPrefix: string }>
     tileProperties: Map<string, TileProperties>
     entityDefinitions: Map<string, EntityDefinition>
-    onCharacterClick: (characterId: string) => void
+    onCharacterClick: (characterId: string, shiftKey: boolean) => void
     onTileClick: (x: number, y: number) => void
     onMoveInput: (direction: "n" | "s" | "e" | "w") => void
     onPathRequest: (targetX: number, targetY: number) => void
+    onBatchPathRequest: (characterIds: string[], targetX: number, targetY: number) => void
   }) {
     this.mapData = data.mapData
     this.characters = data.characters
@@ -248,6 +260,7 @@ class GameScene extends Phaser.Scene {
     this.onTileClick = data.onTileClick
     this.onMoveInput = data.onMoveInput
     this.onPathRequest = data.onPathRequest
+    this.onBatchPathRequest = data.onBatchPathRequest
 
     // Build player colors map
     this.playerColors.clear()
@@ -255,11 +268,12 @@ class GameScene extends Phaser.Scene {
       this.playerColors.set(p.playerId, p.colorIndex)
     })
 
-    // Store current player's color index for selection indicator
+    // Store current player identity for selection indicator + box select filtering
+    this.currentPlayerId = data.currentPlayerId
     this.currentPlayerColorIndex = this.playerColors.get(data.currentPlayerId) ?? 0
 
-    // Store initial controlled character for setup in create()
-    this.initialControlledCharacterId = data.initialControlledCharacterId
+    // Store initial controlled characters for setup in create()
+    this.initialControlledCharacterIds = data.initialControlledCharacterIds
 
     // Initialize Local Truth Mirror from character DTOs
     // This is the authoritative state - what the backend told us
@@ -495,10 +509,10 @@ class GameScene extends Phaser.Scene {
     // Draw ground paths on top (roads, bridges)
     drawPathLayer(layers.groundPaths, "ground")
 
-    // Create selection indicator (glowing disc under controlled character)
-    this.selectionIndicator = this.add.graphics()
-    this.selectionIndicator.setVisible(false)
-    this.drawSelectionIndicator()
+    // Create box select rectangle graphics
+    this.boxSelectRect = this.add.graphics()
+    this.boxSelectRect.setDepth(GameScene.DEPTH_UI)
+    this.boxSelectRect.setVisible(false)
 
     // PASS 4: Draw characters with animations
     // Create animations for all mip levels
@@ -594,10 +608,12 @@ class GameScene extends Phaser.Scene {
       sprite.setVisible(true) // Ensure visible
 
       sprite.setInteractive({ useHandCursor: true })
-      sprite.on("pointerdown", () => {
-        if (this.onCharacterClick) {
-          this.onCharacterClick(char.id)
-        }
+      sprite.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+        if (!this.onCharacterClick) return
+        // Only allow selecting characters the current player can control
+        const freshChar = this.characters.find(c => c.id === char.id)
+        if (freshChar?.controlled && freshChar.controlledByPlayerId !== this.currentPlayerId) return
+        this.onCharacterClick(char.id, pointer.event.shiftKey)
       })
 
       // Play idle animation if it exists (using current mip level)
@@ -651,36 +667,103 @@ class GameScene extends Phaser.Scene {
       this.switchMipLevel(newMipLevel)
     })
 
-    // Background click handler (for clicking on empty tiles)
+    // Background click handler — box select (left drag), tile click, path/batch-path (right)
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-      // Calculate tile coordinates from world position
-      const tileX = Math.floor(pointer.worldX / TILE_SIZE)
-      const tileY = Math.floor(pointer.worldY / TILE_SIZE)
-
-      // Check if within map bounds
-      if (tileX < 0 || tileX >= width || tileY < 0 || tileY >= height) return
-
-      // Handle left click (button 0)
       if (pointer.button === 0) {
-        // Check if there's a character at this position
-        const charAtTile = this.characters.find(c => c.x === tileX && c.y === tileY)
-        if (charAtTile) {
-          // Character click is handled by sprite click handler - don't double handle
-          return
-        }
+        // Start potential box select — store world coords
+        this.boxSelectStart = { x: pointer.worldX, y: pointer.worldY }
+      } else if (pointer.button === 2) {
+        // Right click — path or batch path
+        const tileX = Math.floor(pointer.worldX / TILE_SIZE)
+        const tileY = Math.floor(pointer.worldY / TILE_SIZE)
+        if (tileX < 0 || tileX >= width || tileY < 0 || tileY >= height) return
 
-        // Empty tile clicked - notify React (releases control)
-        if (this.onTileClick) {
-          this.onTileClick(tileX, tileY)
-        }
-      }
-      // Handle right click (button 2) - path request
-      else if (pointer.button === 2) {
-        // Only request path if we have a controlled character
-        if (this.controlledCharacterId && this.onPathRequest) {
+        if (this.controlledCharacterIds.size > 1 && this.onBatchPathRequest) {
+          this.onBatchPathRequest(Array.from(this.controlledCharacterIds), tileX, tileY)
+        } else if (this.controlledCharacterIds.size === 1 && this.onPathRequest) {
           this.onPathRequest(tileX, tileY)
         }
       }
+    })
+
+    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
+      if (!this.boxSelectStart || !pointer.leftButtonDown()) return
+
+      const dx = pointer.worldX - this.boxSelectStart.x
+      const dy = pointer.worldY - this.boxSelectStart.y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+
+      if (dist < GameScene.BOX_SELECT_THRESHOLD) return
+
+      // Draw box select rectangle
+      if (this.boxSelectRect) {
+        this.boxSelectRect.clear()
+        this.boxSelectRect.lineStyle(2, 0x44ff44, 0.8)
+        this.boxSelectRect.fillStyle(0x44ff44, 0.15)
+        const rx = Math.min(this.boxSelectStart.x, pointer.worldX)
+        const ry = Math.min(this.boxSelectStart.y, pointer.worldY)
+        const rw = Math.abs(dx)
+        const rh = Math.abs(dy)
+        this.boxSelectRect.fillRect(rx, ry, rw, rh)
+        this.boxSelectRect.strokeRect(rx, ry, rw, rh)
+        this.boxSelectRect.setVisible(true)
+      }
+    })
+
+    this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+      if (pointer.button !== 0 || !this.boxSelectStart) return
+
+      const dx = pointer.worldX - this.boxSelectStart.x
+      const dy = pointer.worldY - this.boxSelectStart.y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+
+      // Clear box select graphics
+      if (this.boxSelectRect) {
+        this.boxSelectRect.clear()
+        this.boxSelectRect.setVisible(false)
+      }
+
+      if (dist >= GameScene.BOX_SELECT_THRESHOLD) {
+        // Box select — find characters inside the rectangle
+        const rx = Math.min(this.boxSelectStart.x, pointer.worldX)
+        const ry = Math.min(this.boxSelectStart.y, pointer.worldY)
+        const rw = Math.abs(dx)
+        const rh = Math.abs(dy)
+
+        const selectedIds: string[] = []
+        this.characterSprites.forEach((sprite, charId) => {
+          if (sprite.x >= rx && sprite.x <= rx + rw && sprite.y >= ry && sprite.y <= ry + rh) {
+            // Only select characters the current player can control:
+            // - already controlled by this player, OR
+            // - not controlled by anyone
+            const char = this.characters.find(c => c.id === charId)
+            if (!char) return
+            if (char.controlled && char.controlledByPlayerId !== this.currentPlayerId) return
+            selectedIds.push(charId)
+          }
+        })
+
+        if (selectedIds.length > 0 && this.onCharacterClick) {
+          // Multi-select: notify React with each character (shift=true to add)
+          selectedIds.forEach(id => this.onCharacterClick!(id, true))
+        }
+      } else {
+        // Simple click on empty tile
+        const tileX = Math.floor(pointer.worldX / TILE_SIZE)
+        const tileY = Math.floor(pointer.worldY / TILE_SIZE)
+        if (tileX < 0 || tileX >= width || tileY < 0 || tileY >= height) {
+          this.boxSelectStart = null
+          return
+        }
+
+        // Check if there's a character at this position (handled by sprite handler)
+        const charAtTile = this.characters.find(c => c.x === tileX && c.y === tileY)
+        if (!charAtTile && this.onTileClick) {
+          this.onTileClick(tileX, tileY)
+        }
+      }
+
+      this.boxSelectStart = null
     })
 
     // Disable context menu on right-click
@@ -690,27 +773,22 @@ class GameScene extends Phaser.Scene {
     this.pathGraphics = this.add.graphics()
     this.pathGraphics.setDepth(GameScene.DEPTH_UI)
 
-    // Set up initial controlled character if player was already controlling one
-    if (this.initialControlledCharacterId) {
-      // Use a small delay to ensure everything is fully initialized
+    // Set up initial controlled characters if player was already controlling some
+    if (this.initialControlledCharacterIds.length > 0) {
       this.time.delayedCall(100, () => {
-        if (this.initialControlledCharacterId) {
-          this.setControlledCharacter(this.initialControlledCharacterId)
-        }
+        this.initialControlledCharacterIds.forEach(id => {
+          this.addControlledCharacter(id)
+        })
       })
     }
   }
 
-  // Draw the selection indicator (soft glowing disc) using current player's color
-  private drawSelectionIndicator() {
-    if (!this.selectionIndicator) return
+  // Create a selection indicator for a specific character
+  private createSelectionIndicator(characterId: string): Phaser.GameObjects.Graphics {
+    const indicator = this.add.graphics()
+    indicator.setDepth(GameScene.DEPTH_SELECTION)
 
-    this.selectionIndicator.clear()
-
-    // Use current player's color
     const playerColor = PLAYER_COLORS[this.currentPlayerColorIndex]
-
-    // Draw multiple concentric circles for a soft glow effect
     const radius = TILE_SIZE * 0.6
     const layers = [
       { alpha: 0.1, r: radius * 1.4 },
@@ -718,19 +796,35 @@ class GameScene extends Phaser.Scene {
       { alpha: 0.2, r: radius },
       { alpha: 0.3, r: radius * 0.8 },
     ]
-
     layers.forEach(({ alpha, r }) => {
-      this.selectionIndicator!.fillStyle(playerColor, alpha)
-      this.selectionIndicator!.fillCircle(0, 0, r)
+      indicator.fillStyle(playerColor, alpha)
+      indicator.fillCircle(0, 0, r)
     })
+
+    // Position under the character sprite
+    const sprite = this.characterSprites.get(characterId)
+    if (sprite) {
+      indicator.setPosition(sprite.x, sprite.y)
+    }
+    indicator.setVisible(true)
+
+    this.selectionIndicators.set(characterId, indicator)
+    return indicator
   }
 
-  // Position the selection indicator under a character
-  private positionSelectionIndicator(x: number, y: number) {
-    if (this.selectionIndicator) {
-      this.selectionIndicator.setPosition(x, y)
-      this.selectionIndicator.setVisible(true)
+  // Remove a selection indicator for a character
+  private removeSelectionIndicator(characterId: string) {
+    const indicator = this.selectionIndicators.get(characterId)
+    if (indicator) {
+      indicator.destroy()
+      this.selectionIndicators.delete(characterId)
     }
+  }
+
+  // Remove all selection indicators
+  private clearAllSelectionIndicators() {
+    this.selectionIndicators.forEach(indicator => indicator.destroy())
+    this.selectionIndicators.clear()
   }
 
   // Switch texture mip levels based on zoom
@@ -855,64 +949,75 @@ class GameScene extends Phaser.Scene {
     return glow
   }
 
-  // Set controlled character - centers camera on character and zooms in with animation
-  setControlledCharacter(characterId: string) {
-    this.controlledCharacterId = characterId
+  // Add a character to the controlled set — shows selection indicator, zooms/follows first character
+  addControlledCharacter(characterId: string) {
+    const wasEmpty = this.controlledCharacterIds.size === 0
+    this.controlledCharacterIds.add(characterId)
 
-    // Find character and center camera on them
-    const char = this.characters.find(c => c.id === characterId)
-    if (char) {
-      const cam = this.cameras.main
-      const sprite = this.characterSprites.get(characterId)
+    // Create selection indicator for this character
+    this.createSelectionIndicator(characterId)
 
-      const targetX = char.x * TILE_SIZE + TILE_SIZE / 2
-      const targetY = char.y * TILE_SIZE + TILE_SIZE / 2
+    // If this is the first controlled character, zoom in and follow it
+    if (wasEmpty) {
+      const char = this.characters.find(c => c.id === characterId)
+      if (char) {
+        const cam = this.cameras.main
+        const sprite = this.characterSprites.get(characterId)
 
-      // Show selection indicator under character
-      this.positionSelectionIndicator(targetX, targetY)
+        const targetX = char.x * TILE_SIZE + TILE_SIZE / 2
+        const targetY = char.y * TILE_SIZE + TILE_SIZE / 2
 
-      // Animated zoom in and pan to character
-      this.tweens.add({
-        targets: cam,
-        zoom: 1,
-        scrollX: targetX - cam.width / 2,
-        scrollY: targetY - cam.height / 2,
-        duration: this.zoomDuration,
-        ease: "Cubic.easeOut",
-        onUpdate: () => {
-          // Switch mip level during zoom transition (only if level changed)
-          this.switchMipLevel(getMipLevel(cam.zoom))
-        },
-        onComplete: () => {
-          // Start following the character sprite after zoom completes
-          if (sprite) {
-            cam.startFollow(sprite, true, 0.1, 0.1)
+        this.tweens.add({
+          targets: cam,
+          zoom: 1,
+          scrollX: targetX - cam.width / 2,
+          scrollY: targetY - cam.height / 2,
+          duration: this.zoomDuration,
+          ease: "Cubic.easeOut",
+          onUpdate: () => {
+            this.switchMipLevel(getMipLevel(cam.zoom))
+          },
+          onComplete: () => {
+            if (sprite) {
+              cam.startFollow(sprite, true, 0.1, 0.1)
+            }
+            this.switchMipLevel(getMipLevel(1))
           }
-          // Ensure correct mip level at final zoom
-          this.switchMipLevel(getMipLevel(1))
-        }
-      })
+        })
+      }
+    } else if (this.controlledCharacterIds.size > 1) {
+      // Multiple characters — stop following any single one
+      this.cameras.main.stopFollow()
     }
   }
 
-  // Clear controlled character - zooms out to show whole map with animation
-  clearControlledCharacter() {
-    this.controlledCharacterId = null
+  // Remove a single character from the controlled set
+  removeControlledCharacter(characterId: string) {
+    this.controlledCharacterIds.delete(characterId)
+    this.removeSelectionIndicator(characterId)
 
-    // Hide selection indicator
-    if (this.selectionIndicator) {
-      this.selectionIndicator.setVisible(false)
+    // If only one remains, start following it
+    if (this.controlledCharacterIds.size === 1) {
+      const remainingId = Array.from(this.controlledCharacterIds)[0]
+      const sprite = this.characterSprites.get(remainingId)
+      if (sprite) {
+        this.cameras.main.startFollow(sprite, true, 0.1, 0.1)
+      }
     }
+  }
+
+  // Clear all controlled characters — zooms out to show whole map
+  clearAllControlledCharacters() {
+    this.controlledCharacterIds.clear()
+    this.clearAllSelectionIndicators()
 
     if (this.mapData) {
       const cam = this.cameras.main
       const mapWidth = this.mapData.width * TILE_SIZE
       const mapHeight = this.mapData.height * TILE_SIZE
 
-      // Stop following any sprite
       cam.stopFollow()
 
-      // Animated zoom out and center on map
       this.tweens.add({
         targets: cam,
         zoom: 0.5,
@@ -921,15 +1026,42 @@ class GameScene extends Phaser.Scene {
         duration: this.zoomDuration,
         ease: "Cubic.easeOut",
         onUpdate: () => {
-          // Switch mip level during zoom transition
-          const newMipLevel = getMipLevel(cam.zoom)
-          this.switchMipLevel(newMipLevel)
+          this.switchMipLevel(getMipLevel(cam.zoom))
         },
         onComplete: () => {
-          // Ensure correct mip level at final zoom
           this.switchMipLevel(getMipLevel(0.5))
         }
       })
+    }
+  }
+
+  // Replace the entire controlled set (used when React state changes)
+  setControlledCharacters(characterIds: string[]) {
+    // Remove indicators for characters no longer controlled
+    for (const id of this.controlledCharacterIds) {
+      if (!characterIds.includes(id)) {
+        this.removeSelectionIndicator(id)
+      }
+    }
+
+    // Add indicators for newly controlled characters
+    for (const id of characterIds) {
+      if (!this.controlledCharacterIds.has(id)) {
+        this.createSelectionIndicator(id)
+      }
+    }
+
+    this.controlledCharacterIds = new Set(characterIds)
+
+    if (characterIds.length === 0) {
+      this.cameras.main.stopFollow()
+    } else if (characterIds.length === 1) {
+      const sprite = this.characterSprites.get(characterIds[0])
+      if (sprite) {
+        this.cameras.main.startFollow(sprite, true, 0.1, 0.1)
+      }
+    } else {
+      this.cameras.main.stopFollow()
     }
   }
 
@@ -938,10 +1070,10 @@ class GameScene extends Phaser.Scene {
     const cam = this.cameras.main
     const now = Date.now()
 
-    // When controlling a character: send move input via WebSocket
-    if (this.controlledCharacterId && this.mapData) {
-      // Check if character is currently animating - don't send new moves
-      if (!this.movingCharacters.has(this.controlledCharacterId)) {
+    // When controlling exactly one character: send move input via WebSocket (keyboard)
+    if (this.controlledCharacterIds.size === 1 && this.mapData) {
+      const charId = Array.from(this.controlledCharacterIds)[0]
+      if (!this.movingCharacters.has(charId)) {
         if (now - this.lastMoveTime > this.moveDebounceTime) {
           let direction: "n" | "s" | "e" | "w" | null = null
 
@@ -956,7 +1088,7 @@ class GameScene extends Phaser.Scene {
           }
         }
       }
-    } else {
+    } else if (this.controlledCharacterIds.size === 0) {
       // No character controlled: pan camera with WASD/arrows
       const speed = 16
       if (this.cursors?.left?.isDown || this.wasd.A?.isDown) cam.scrollX -= speed
@@ -964,6 +1096,7 @@ class GameScene extends Phaser.Scene {
       if (this.cursors?.up?.isDown || this.wasd.W?.isDown) cam.scrollY -= speed
       if (this.cursors?.down?.isDown || this.wasd.S?.isDown) cam.scrollY += speed
     }
+    // When controlling multiple characters: WASD/arrows do nothing (use right-click batch path)
   }
 
   /**
@@ -1103,6 +1236,9 @@ class GameScene extends Phaser.Scene {
         char.x = newX
         char.y = newY
 
+        // Update path visualization (shrink remaining path)
+        this.updateCharacterPathAfterMove(characterId, newX, newY)
+
         // Reset animation time scale to normal
         if (sprite.anims) {
           sprite.anims.timeScale = 1
@@ -1129,10 +1265,11 @@ class GameScene extends Phaser.Scene {
       }
     })
 
-    // Also move selection indicator if this is the controlled character
-    if (characterId === this.controlledCharacterId && this.selectionIndicator) {
+    // Also move selection indicator if this character is in the controlled set
+    const selIndicator = this.selectionIndicators.get(characterId)
+    if (selIndicator) {
       this.tweens.add({
-        targets: this.selectionIndicator,
+        targets: selIndicator,
         x: targetX,
         y: targetY,
         duration: duration,
@@ -1200,6 +1337,7 @@ class GameScene extends Phaser.Scene {
   // Mark a character as no longer having a path (called when path completes/cancels)
   clearCharacterPath(characterId: string) {
     this.charactersWithActivePath.delete(characterId)
+    this.clearCharacterPathGraphics(characterId)
   }
 
   // Check if a character has an active path
@@ -1207,16 +1345,110 @@ class GameScene extends Phaser.Scene {
     return this.charactersWithActivePath.has(characterId)
   }
 
-  // Draw path visualization (disabled for now - will be used for squad movement later)
-  drawPath(_path: [number, number][]) {
-    // TODO: Re-enable when implementing path re-computation and squad movement
-    // Path visualization is disabled - keeping the method signature for future use
+  // Draw path visualization for a single character
+  drawCharacterPath(characterId: string, path: number[][]) {
+    if (path.length === 0) {
+      this.clearCharacterPathGraphics(characterId)
+      return
+    }
+
+    // Store the path for progressive updates during movement
+    this.characterPaths.set(characterId, path)
+
+    let gfx = this.characterPathGraphics.get(characterId)
+    if (!gfx) {
+      gfx = this.add.graphics()
+      gfx.setDepth(GameScene.DEPTH_UI)
+      this.characterPathGraphics.set(characterId, gfx)
+    }
+
+    this.renderPathGraphics(gfx, path, PLAYER_COLORS[this.currentPlayerColorIndex])
   }
 
-  // Clear path visualization
-  clearPath() {
+  // Draw paths for multiple characters (batch/squad)
+  drawBatchPaths(paths: Record<string, number[][]>) {
+    const color = PLAYER_COLORS[this.currentPlayerColorIndex]
+    for (const [characterId, path] of Object.entries(paths)) {
+      if (path.length === 0) continue
+
+      this.characterPaths.set(characterId, path)
+
+      let gfx = this.characterPathGraphics.get(characterId)
+      if (!gfx) {
+        gfx = this.add.graphics()
+        gfx.setDepth(GameScene.DEPTH_UI)
+        this.characterPathGraphics.set(characterId, gfx)
+      }
+
+      this.renderPathGraphics(gfx, path, color)
+    }
+  }
+
+  // Render path dots/line onto a graphics object
+  private renderPathGraphics(gfx: Phaser.GameObjects.Graphics, path: number[][], color: number) {
+    gfx.clear()
+
+    if (path.length === 0) return
+
+    // Draw dotted path line
+    const dotRadius = TILE_SIZE * 0.08
+    gfx.fillStyle(color, 0.5)
+
+    for (const [px, py] of path) {
+      const cx = px * TILE_SIZE + TILE_SIZE / 2
+      const cy = py * TILE_SIZE + TILE_SIZE / 2
+      gfx.fillCircle(cx, cy, dotRadius)
+    }
+
+    // Draw destination marker (larger circle at the end)
+    const last = path[path.length - 1]
+    const destX = last[0] * TILE_SIZE + TILE_SIZE / 2
+    const destY = last[1] * TILE_SIZE + TILE_SIZE / 2
+    gfx.fillStyle(color, 0.7)
+    gfx.fillCircle(destX, destY, dotRadius * 2.5)
+    gfx.lineStyle(2, color, 0.8)
+    gfx.strokeCircle(destX, destY, dotRadius * 2.5)
+  }
+
+  // Clear path graphics for a specific character
+  private clearCharacterPathGraphics(characterId: string) {
+    const gfx = this.characterPathGraphics.get(characterId)
+    if (gfx) {
+      gfx.destroy()
+      this.characterPathGraphics.delete(characterId)
+    }
+    this.characterPaths.delete(characterId)
+  }
+
+  // Clear all path visualizations
+  clearAllPathGraphics() {
+    this.characterPathGraphics.forEach(gfx => gfx.destroy())
+    this.characterPathGraphics.clear()
+    this.characterPaths.clear()
     if (this.pathGraphics) {
       this.pathGraphics.clear()
+    }
+  }
+
+  // Update path visualization after a character moves one step (shrink remaining path)
+  updateCharacterPathAfterMove(characterId: string, newX: number, newY: number) {
+    const path = this.characterPaths.get(characterId)
+    if (!path || path.length === 0) return
+
+    // Remove steps the character has reached
+    while (path.length > 0 && path[0][0] === newX && path[0][1] === newY) {
+      path.shift()
+    }
+
+    if (path.length === 0) {
+      // Path complete — clear visualization
+      this.clearCharacterPathGraphics(characterId)
+    } else {
+      // Redraw remaining path
+      const gfx = this.characterPathGraphics.get(characterId)
+      if (gfx) {
+        this.renderPathGraphics(gfx, path, PLAYER_COLORS[this.currentPlayerColorIndex])
+      }
     }
   }
 
@@ -1510,6 +1742,12 @@ class GameScene extends Phaser.Scene {
       glow.destroy()
       this.characterGlows.delete(event.characterId)
     }
+
+    // Clear selection indicator and path graphics
+    this.removeSelectionIndicator(event.characterId)
+    this.clearCharacterPathGraphics(event.characterId)
+    this.controlledCharacterIds.delete(event.characterId)
+    this.charactersWithActivePath.delete(event.characterId)
   }
 }
 
@@ -1525,22 +1763,21 @@ export function GamePage() {
   const phaserGameRef = useRef<Phaser.Game | null>(null)
   const hasEverInitializedRef = useRef(false) // NEVER reset - prevents Strict Mode double init
   const gameDataRef = useRef<GameDTO | null>(null) // Store game data for Phaser init
-  const currentPathRef = useRef<[number, number][] | null>(null) // Track current path for visualization
-
   const [game, setGame] = useState<GameDTO | null>(null)
   const [mapData, setMapData] = useState<MapData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null)
-  const [controlledCharacterId, setControlledCharacterId] = useState<string | null>(null)
+  const [controlledCharacterIds, setControlledCharacterIds] = useState<Set<string>>(new Set())
   const [attackModeId, setAttackModeId] = useState<string | null>(null) // Currently selected attack ID
   const [characterAttacks, setCharacterAttacks] = useState<AttackDefinition[]>([]) // Attacks for controlled character
 
   // Refs for cleanup and avoiding stale closures
   const gameIdRef = useRef<string | null>(null)
-  const controlledCharacterIdRef = useRef<string | null>(null)
+  const controlledCharacterIdsRef = useRef<Set<string>>(new Set())
   const sendMoveRef = useRef<((direction: "n" | "s" | "e" | "w") => boolean) | null>(null)
   const sendPathRef = useRef<((targetX: number, targetY: number) => boolean) | null>(null)
+  const sendBatchPathRef = useRef<((characterIds: string[], targetX: number, targetY: number) => boolean) | null>(null)
   const sendAttackRef = useRef<((attackId: string, targetX: number, targetY: number) => boolean) | null>(null)
   const attackModeIdRef = useRef<string | null>(null)
 
@@ -1550,22 +1787,22 @@ export function GamePage() {
   }, [gameId])
 
   useEffect(() => {
-    controlledCharacterIdRef.current = controlledCharacterId
-  }, [controlledCharacterId])
+    controlledCharacterIdsRef.current = controlledCharacterIds
+  }, [controlledCharacterIds])
 
   useEffect(() => {
     attackModeIdRef.current = attackModeId
   }, [attackModeId])
 
-  // Cleanup: release controlled character when leaving the game screen
+  // Cleanup: release all controlled characters when leaving the game screen
   useEffect(() => {
     return () => {
       const gId = gameIdRef.current
-      const charId = controlledCharacterIdRef.current
-      if (gId && charId) {
+      const charIds = controlledCharacterIdsRef.current
+      if (gId && charIds.size > 0) {
         // Fire and forget - don't await since component is unmounting
         relinquishCharacter(gId).catch(err => {
-          console.warn("Failed to release character on unmount:", err)
+          console.warn("Failed to release characters on unmount:", err)
         })
       }
     }
@@ -1576,26 +1813,8 @@ export function GamePage() {
     const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
     if (scene) {
       // Pass backend's animation state and duration directly (backend is Single Source of Truth)
+      // Path visualization is progressively updated inside animateCharacterMove's onComplete
       scene.animateCharacterMove(event.characterId, event.x, event.y, event.state, event.duration)
-
-      // Update path visualization if this is a path step
-      if (currentPathRef.current && currentPathRef.current.length > 0) {
-        const path = currentPathRef.current
-
-        // Remove the first point if it matches the current position (character reached it)
-        if (path[0] && path[0][0] === event.x && path[0][1] === event.y) {
-          currentPathRef.current = path.slice(1)
-        }
-
-        // Redraw remaining path or clear if done
-        if (currentPathRef.current.length > 0) {
-          scene.drawPath(currentPathRef.current)
-        } else {
-          // Path completed - clear visualization (idle event will clear path tracking)
-          scene.clearPath()
-          currentPathRef.current = null
-        }
-      }
     }
   }, [])
 
@@ -1616,25 +1835,31 @@ export function GamePage() {
 
   // Handle path start event
   const handlePathStart = useCallback((event: PathStartEvent) => {
-    // Store the path for progressive updates
-    currentPathRef.current = event.path
-
     const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
     if (scene) {
-      // Mark character as having an active path (so we don't auto-idle after each step)
       scene.setCharacterHasPath(event.characterId)
-      scene.drawPath(event.path)
+      scene.drawCharacterPath(event.characterId, event.path)
     }
   }, [])
 
   // Handle path cancel/complete - clear visualization
   const handlePathCancel = useCallback((event: { characterId: string }) => {
-    currentPathRef.current = null
-
     const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
     if (scene) {
       scene.clearCharacterPath(event.characterId)
-      scene.clearPath()
+    }
+  }, [])
+
+  // Handle batch path start event (squad movement)
+  const handleBatchPathStart = useCallback((event: BatchPathStartEvent) => {
+    const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+    if (scene) {
+      // Mark each character as having an active path
+      for (const characterId of Object.keys(event.paths)) {
+        scene.setCharacterHasPath(characterId)
+      }
+      // Draw all paths at once
+      scene.drawBatchPaths(event.paths)
     }
   }, [])
 
@@ -1702,12 +1927,13 @@ export function GamePage() {
   }, [])
 
   // WebSocket connection
-  const { isConnected, sendMove, sendPath, sendAttack } = useGameWebSocket({
+  const { isConnected, sendMove, sendPath, sendBatchPath, sendAttack } = useGameWebSocket({
     gameId: gameId || "",
     onCharacterMove: handleCharacterMove,
     onCharacterIdle: handleCharacterIdle,
     onPathStart: handlePathStart,
     onPathCancel: handlePathCancel,
+    onBatchPathStart: handleBatchPathStart,
     onAttackStart: handleAttackStart,
     onProjectileSpawn: handleProjectileSpawn,
     onProjectileHit: handleProjectileHit,
@@ -1728,6 +1954,10 @@ export function GamePage() {
   }, [sendPath])
 
   useEffect(() => {
+    sendBatchPathRef.current = sendBatchPath
+  }, [sendBatchPath])
+
+  useEffect(() => {
     sendAttackRef.current = sendAttack
   }, [sendAttack])
 
@@ -1742,12 +1972,12 @@ export function GamePage() {
         setGame(gameData)
         gameDataRef.current = gameData // Store for Phaser init
 
-        // Find if current user controls a character
+        // Find if current user controls characters
         const currentPlayer = gameData.players.find(p =>
           authUser && p.playerId === authUser.userId
         )
-        if (currentPlayer?.controlledCharacterId) {
-          setControlledCharacterId(currentPlayer.controlledCharacterId)
+        if (currentPlayer?.controlledCharacterIds && currentPlayer.controlledCharacterIds.length > 0) {
+          setControlledCharacterIds(new Set(currentPlayer.controlledCharacterIds))
         }
 
         // Load map data (normalize handles legacy format with single "paths" layer)
@@ -1867,7 +2097,7 @@ export function GamePage() {
       // Find current player's ID and their controlled character from auth context
       const currentPlayerId = authUser?.userId ?? ""
       const currentPlayer = initialGameData.players.find(p => p.playerId === currentPlayerId)
-      const initialControlledCharacterId = currentPlayer?.controlledCharacterId ?? null
+      const initialControlledCharacterIds = currentPlayer?.controlledCharacterIds ?? []
 
       phaserGame.scene.start("GameScene", {
         mapData: mapData!,
@@ -1877,36 +2107,40 @@ export function GamePage() {
           colorIndex: p.colorIndex
         })),
         currentPlayerId,
-        initialControlledCharacterId,
+        initialControlledCharacterIds,
         assetMap,
         tileProperties,
         entityDefinitions,
-        onCharacterClick: (characterId: string) => {
-          // Auto take/switch control when clicking a character
-          setSelectedCharacter(characterId)
+        onCharacterClick: (characterId: string, shiftKey: boolean) => {
+          if (shiftKey) {
+            // Shift+click: toggle character in/out of selection
+            setSelectedCharacter(characterId) // triggers auto-take-control
+          } else {
+            // Normal click: single select
+            setSelectedCharacter(characterId)
+          }
         },
         onTileClick: (_x: number, _y: number) => {
-          // Clicking empty tile releases control (handled in React callback below)
+          // Clicking empty tile releases all control
           setSelectedCharacter(null)
         },
         onMoveInput: (direction: "n" | "s" | "e" | "w") => {
-          // Manual move cancels any active path
-          if (currentPathRef.current) {
-            currentPathRef.current = null
-            const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
-            scene?.clearPath()
+          // Manual move cancels any active path visualization for the controlled character
+          const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+          if (scene) {
+            scene.clearAllPathGraphics()
           }
-          // Send move command via WebSocket (use ref to avoid stale closure)
           sendMoveRef.current?.(direction)
         },
         onPathRequest: (targetX: number, targetY: number) => {
-          // Check if in attack mode - if so, send attack instead of path
           if (attackModeIdRef.current) {
             sendAttackRef.current?.(attackModeIdRef.current, targetX, targetY)
           } else {
-            // Send path request via WebSocket (use ref to avoid stale closure)
             sendPathRef.current?.(targetX, targetY)
           }
+        },
+        onBatchPathRequest: (characterIds: string[], targetX: number, targetY: number) => {
+          sendBatchPathRef.current?.(characterIds, targetX, targetY)
         }
       })
     }
@@ -1925,33 +2159,29 @@ export function GamePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapData])
 
-  // Auto take control when clicking a character
+  // Auto take control when clicking a character (additive — adds to controlled set)
   useEffect(() => {
     if (!gameId || !game || !selectedCharacter) return
 
-    // Find the selected character
     const char = game.characters.find(c => c.id === selectedCharacter)
     if (!char) return
 
     // If already controlling this character, do nothing
-    if (controlledCharacterId === selectedCharacter) return
+    if (controlledCharacterIds.has(selectedCharacter)) return
 
-    // If character is controlled by another player, show feedback and deselect
+    // If character is controlled by another player, reject
     if (char.controlled) {
       console.log("Character is controlled by another player")
       return
     }
 
-    // Auto take control
     async function autoTakeControl() {
       try {
-        // First release current control if any
-        if (controlledCharacterId) {
-          await relinquishCharacter(gameId!)
-        }
-
         await takeOverCharacter(gameId!, selectedCharacter!)
-        setControlledCharacterId(selectedCharacter)
+
+        const newSet = new Set(controlledCharacterIds)
+        newSet.add(selectedCharacter!)
+        setControlledCharacterIds(newSet)
 
         const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene
         const updated = await getGame(gameId!)
@@ -1962,7 +2192,7 @@ export function GamePage() {
             colorIndex: p.colorIndex
           })))
           scene.updateCharacters(updated.characters)
-          scene.setControlledCharacter(selectedCharacter!)
+          scene.addControlledCharacter(selectedCharacter!)
         }
 
         setGame(updated)
@@ -1972,17 +2202,17 @@ export function GamePage() {
     }
 
     autoTakeControl()
-  }, [selectedCharacter, gameId, game, controlledCharacterId])
+  }, [selectedCharacter, gameId, game, controlledCharacterIds])
 
-  // Auto release control when clicking empty tile (selectedCharacter becomes null)
+  // Auto release all control when clicking empty tile (selectedCharacter becomes null)
   useEffect(() => {
     if (!gameId || selectedCharacter !== null) return
-    if (!controlledCharacterId) return
+    if (controlledCharacterIds.size === 0) return
 
     async function autoReleaseControl() {
       try {
         await relinquishCharacter(gameId!)
-        setControlledCharacterId(null)
+        setControlledCharacterIds(new Set())
         const updated = await getGame(gameId!)
         setGame(updated)
         const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene
@@ -1992,33 +2222,32 @@ export function GamePage() {
             colorIndex: p.colorIndex
           })))
           scene.updateCharacters(updated.characters)
-          scene.clearControlledCharacter()
+          scene.clearAllControlledCharacters()
         }
       } catch (err) {
-        console.error("Failed to relinquish character:", err)
+        console.error("Failed to relinquish characters:", err)
       }
     }
 
     autoReleaseControl()
-  }, [selectedCharacter, gameId, controlledCharacterId])
+  }, [selectedCharacter, gameId, controlledCharacterIds])
 
-  // Load character attacks when controlled character changes
+  // Load character attacks when controlled characters change (only for single character)
   useEffect(() => {
-    if (!controlledCharacterId || !game) {
+    if (controlledCharacterIds.size !== 1 || !game) {
       setCharacterAttacks([])
       setAttackModeId(null)
       return
     }
 
-    // Find the controlled character
-    const char = game.characters.find(c => c.id === controlledCharacterId)
+    const charId = Array.from(controlledCharacterIds)[0]
+    const char = game.characters.find(c => c.id === charId)
     if (!char) {
       setCharacterAttacks([])
       setAttackModeId(null)
       return
     }
 
-    // Load the character's definition.json to get attacks
     async function loadCharacterAttacks() {
       try {
         const asset = await getAssetById(char!.assetId)
@@ -2036,11 +2265,11 @@ export function GamePage() {
         console.warn("Failed to load character attacks:", err)
         setCharacterAttacks([])
       }
-      setAttackModeId(null) // Clear attack mode when switching characters
+      setAttackModeId(null)
     }
 
     loadCharacterAttacks()
-  }, [controlledCharacterId, game])
+  }, [controlledCharacterIds, game])
 
   async function handlePause() {
     if (!gameId) return
@@ -2167,32 +2396,34 @@ export function GamePage() {
             </CardContent>
           </Card>
 
-          {/* Character control - shows currently controlled character */}
-          {controlledCharacterId && (
+          {/* Character control - shows currently controlled characters */}
+          {controlledCharacterIds.size > 0 && (
             <Card className="bg-zinc-800 border-zinc-700 border-green-500/50">
               <CardHeader className="py-2 px-3">
-                <CardTitle className="text-sm text-green-400">Controlling</CardTitle>
+                <CardTitle className="text-sm text-green-400">
+                  Controlling ({controlledCharacterIds.size})
+                </CardTitle>
               </CardHeader>
-              <CardContent className="py-2 px-3">
-                {(() => {
-                  const char = game.characters.find(c => c.id === controlledCharacterId)
+              <CardContent className="py-2 px-3 space-y-2">
+                {Array.from(controlledCharacterIds).map(charId => {
+                  const char = game.characters.find(c => c.id === charId)
                   return char ? (
-                    <div className="space-y-2">
-                      <p className="text-zinc-100">{char.name}</p>
-                      <div className="flex items-center gap-2 text-sm text-zinc-400">
+                    <div key={charId} className="flex items-center justify-between">
+                      <span className="text-sm text-zinc-100">{char.name}</span>
+                      <div className="flex items-center gap-1 text-xs text-zinc-400">
                         <Heart className="w-3 h-3 text-red-400" />
                         {char.health}/{char.maxHealth}
                       </div>
-                      <p className="text-xs text-zinc-500">Click empty tile to release</p>
                     </div>
                   ) : null
-                })()}
+                })}
+                <p className="text-xs text-zinc-500">Click empty tile to release all</p>
               </CardContent>
             </Card>
           )}
 
-          {/* Attack mode panel - only show when controlling a character with attacks */}
-          {controlledCharacterId && characterAttacks.length > 0 && (
+          {/* Attack mode panel - only show when controlling a single character with attacks */}
+          {controlledCharacterIds.size === 1 && characterAttacks.length > 0 && (
             <Card className={`bg-zinc-800 border-zinc-700 ${attackModeId ? "border-red-500/50" : ""}`}>
               <CardHeader className="py-2 px-3">
                 <CardTitle className="text-sm text-zinc-100 flex items-center gap-2">
@@ -2250,18 +2481,25 @@ export function GamePage() {
                 </>
               )}
             </div>
-            {controlledCharacterId ? (
+            {controlledCharacterIds.size === 1 ? (
               <>
                 <p className="text-green-400">WASD / Arrows: Move character</p>
                 <p className="text-green-400">Right-click: Pathfind to target</p>
                 <p>Camera follows character</p>
-                <p>Click empty tile: Release</p>
+                <p>Click empty tile: Release all</p>
+              </>
+            ) : controlledCharacterIds.size > 1 ? (
+              <>
+                <p className="text-green-400">Right-click: Squad pathfind</p>
+                <p>Shift+click: Toggle selection</p>
+                <p>Click empty tile: Release all</p>
               </>
             ) : (
               <p>WASD / Arrows: Pan camera</p>
             )}
             <p>Mouse wheel: Zoom</p>
             <p>Click character: Take control</p>
+            <p>Drag: Box select</p>
           </div>
         </div>
 

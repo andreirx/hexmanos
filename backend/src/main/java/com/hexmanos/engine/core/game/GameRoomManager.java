@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * Manages in-memory game state for all active games.
@@ -132,6 +133,7 @@ public class GameRoomManager {
 
     /**
      * Assign character control to a player.
+     * A player can control multiple characters. Only rejects if character is controlled by a different player.
      */
     public boolean takeControl(UUID gameId, UUID characterId, UUID playerId) {
         GameState state = activeGames.get(gameId);
@@ -139,38 +141,51 @@ public class GameRoomManager {
             return false;
         }
 
-        // Check if character exists and is not already controlled
+        // Check if character exists
         Optional<GameCharacter> character = state.findCharacter(characterId);
         if (character.isEmpty()) {
             return false;
         }
 
-        if (state.isCharacterControlled(characterId)) {
-            return false; // Already controlled
+        // Check if controlled by a different player
+        Optional<UUID> currentOwner = state.getControllingPlayer(characterId);
+        if (currentOwner.isPresent() && !currentOwner.get().equals(playerId)) {
+            return false; // Controlled by someone else
         }
 
-        // Release any existing control by this player
-        state.releaseAllControlsForPlayer(playerId);
-
-        // Assign control
+        // Assign control (no longer releases other characters)
         state.assignControl(characterId, playerId);
         log.info("Player {} took control of character {} in game {}", playerId, characterId, gameId);
         return true;
     }
 
     /**
-     * Release character control for a player.
+     * Release all character control for a player.
      */
     public void relinquishControl(UUID gameId, UUID playerId) {
         GameState state = activeGames.get(gameId);
         if (state != null) {
             state.releaseAllControlsForPlayer(playerId);
-            log.info("Player {} relinquished control in game {}", playerId, gameId);
+            log.info("Player {} relinquished all control in game {}", playerId, gameId);
         }
     }
 
     /**
-     * Get the character ID controlled by a player.
+     * Release control of a specific character by a player.
+     */
+    public void relinquishControl(UUID gameId, UUID playerId, UUID characterId) {
+        GameState state = activeGames.get(gameId);
+        if (state != null) {
+            Optional<UUID> owner = state.getControllingPlayer(characterId);
+            if (owner.isPresent() && owner.get().equals(playerId)) {
+                state.releaseControl(characterId);
+                log.info("Player {} released character {} in game {}", playerId, characterId, gameId);
+            }
+        }
+    }
+
+    /**
+     * Get the first character ID controlled by a player (backward compat).
      */
     public Optional<UUID> getControlledCharacter(UUID gameId, UUID playerId) {
         GameState state = activeGames.get(gameId);
@@ -178,6 +193,17 @@ public class GameRoomManager {
             return Optional.empty();
         }
         return state.getCharacterControlledByPlayer(playerId);
+    }
+
+    /**
+     * Get all characters controlled by a player.
+     */
+    public Set<UUID> getControlledCharacters(UUID gameId, UUID playerId) {
+        GameState state = activeGames.get(gameId);
+        if (state == null) {
+            return Set.of();
+        }
+        return state.getCharactersControlledByPlayer(playerId);
     }
 
     /**
@@ -322,5 +348,81 @@ public class GameRoomManager {
         return state.findCharacter(characterId)
                 .map(GameCharacter::hasPath)
                 .orElse(false);
+    }
+
+    // ============================================
+    // Batch pathfinding (squad movement)
+    // ============================================
+
+    /**
+     * Request paths for multiple characters to nearby slots around a target.
+     * Uses spiral search to find N valid tiles near target, then assigns
+     * characters to slots using greedy closest-pair matching.
+     *
+     * @return Map of characterId -> computed path (only includes characters that got valid paths)
+     */
+    public Map<UUID, List<Point>> requestBatchPath(
+            UUID gameId, Set<UUID> characterIds, int targetX, int targetY) {
+
+        GameState state = activeGames.get(gameId);
+        if (state == null) return Map.of();
+
+        TerrainGrid terrain = state.getTerrainGrid();
+        if (terrain == null) {
+            log.warn("Terrain grid not initialized for game {}", gameId);
+            return Map.of();
+        }
+
+        // Build character position map
+        Map<UUID, Point> charPositions = new HashMap<>();
+        for (UUID charId : characterIds) {
+            state.findCharacter(charId).ifPresent(c ->
+                    charPositions.put(charId, new Point(c.getX(), c.getY()))
+            );
+        }
+
+        if (charPositions.isEmpty()) return Map.of();
+
+        Point target = new Point(targetX, targetY);
+
+        // Occupied = all characters EXCEPT those in the batch (they are all moving)
+        // Use a mutable copy so we can reserve destination slots during pathfinding
+        Set<Point> occupied = new HashSet<>(state.getOccupiedPositions(characterIds));
+
+        // Find N slots near target (slots already exclude occupied positions)
+        List<Point> slots = SlotFinder.findSlots(target, charPositions.size(), terrain, occupied);
+        if (slots.isEmpty()) {
+            log.debug("No valid slots found near ({}, {}) for {} characters", targetX, targetY, charPositions.size());
+            return Map.of();
+        }
+
+        // Assign characters to slots (closest unit to closest slot)
+        Map<UUID, Point> assignments = SlotFinder.assignCharactersToSlots(charPositions, slots);
+
+        // Best-effort: compute individual A* paths, reserving each destination slot
+        // so subsequent pathfinds in this batch don't target the same cell.
+        Map<UUID, List<Point>> results = new HashMap<>();
+        for (Map.Entry<UUID, Point> entry : assignments.entrySet()) {
+            UUID charId = entry.getKey();
+            Point dest = entry.getValue();
+            Point start = charPositions.get(charId);
+
+            List<Point> path = Pathfinder.findPath(start, dest, terrain, occupied);
+            if (!path.isEmpty()) {
+                state.findCharacter(charId).ifPresent(c -> c.setPath(path));
+                results.put(charId, path);
+                // Reserve the destination slot so the next character's pathfind won't
+                // route through or target this cell
+                occupied.add(dest);
+                log.debug("Batch path: character {} -> ({}, {}), {} steps", charId, dest.x(), dest.y(), path.size());
+            } else {
+                log.debug("Batch path: no path found for character {} from ({},{}) to ({},{}), skipping",
+                        charId, start.x(), start.y(), dest.x(), dest.y());
+            }
+        }
+
+        log.info("Batch path for {} characters to ({}, {}): {}/{} paths computed in game {}",
+                characterIds.size(), targetX, targetY, results.size(), assignments.size(), gameId);
+        return results;
     }
 }

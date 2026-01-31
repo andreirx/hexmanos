@@ -131,7 +131,7 @@ export interface GamePlayerDTO {
   id: string
   playerId: string
   role: PlayerRole
-  controlledCharacterId?: string
+  controlledCharacterIds: string[]
   colorIndex: number  // 0-7 for 8 different player colors
   joinedAt: string
   lastSeenAt: string
@@ -236,4 +236,8 @@ export interface DamageEvent {
 export interface CharacterDeathEvent {
   characterId: string
   killedByCharacterId?: string
+}
+
+export interface BatchPathStartEvent {
+  paths: Record<string, number[][]>  // characterId -> [[x,y], [x,y], ...]
 }

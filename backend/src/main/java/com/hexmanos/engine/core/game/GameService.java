@@ -279,7 +279,7 @@ public class GameService {
     }
 
     /**
-     * Take control of a character.
+     * Take control of a character (adds to player's controlled set, does not replace).
      */
     public void takeOverCharacter(UUID gameId, UUID playerId, UUID characterId) {
         Game game = getGame(gameId);
@@ -292,7 +292,7 @@ public class GameService {
         playerRepository.findByGameIdAndPlayerId(gameId, playerId)
                 .orElseThrow(() -> new IllegalArgumentException("Player not in game"));
 
-        // Take control
+        // Take control (no longer releases other characters)
         if (!roomManager.takeControl(gameId, characterId, playerId)) {
             throw new IllegalArgumentException("Cannot take control of character");
         }
@@ -308,7 +308,7 @@ public class GameService {
     }
 
     /**
-     * Release control of a character.
+     * Release control of all characters for a player.
      */
     public void relinquishCharacter(UUID gameId, UUID playerId) {
         Game game = getGame(gameId);
@@ -317,7 +317,25 @@ public class GameService {
 
         // Update player record
         playerRepository.findByGameIdAndPlayerId(gameId, playerId).ifPresent(player -> {
-            player.relinquishControl();
+            player.relinquishAllControl();
+            playerRepository.save(player);
+        });
+
+        game.touch();
+        gameRepository.save(game);
+    }
+
+    /**
+     * Release control of a specific character for a player.
+     */
+    public void relinquishCharacter(UUID gameId, UUID playerId, UUID characterId) {
+        Game game = getGame(gameId);
+
+        roomManager.relinquishControl(gameId, playerId, characterId);
+
+        // Update player record
+        playerRepository.findByGameIdAndPlayerId(gameId, playerId).ifPresent(player -> {
+            player.relinquishControl(characterId);
             playerRepository.save(player);
         });
 
@@ -485,6 +503,59 @@ public class GameService {
 
         game.touch();
         gameRepository.save(game);
+    }
+
+    // ============================================
+    // Batch pathfinding (squad movement)
+    // ============================================
+
+    /**
+     * Result of a batch path request (squad movement).
+     */
+    public record BatchPathResult(Map<String, List<int[]>> paths) {
+        public static BatchPathResult from(Map<UUID, List<Point>> pathMap) {
+            Map<String, List<int[]>> result = new HashMap<>();
+            for (Map.Entry<UUID, List<Point>> entry : pathMap.entrySet()) {
+                result.put(entry.getKey().toString(),
+                        entry.getValue().stream()
+                                .map(p -> new int[]{p.x(), p.y()})
+                                .toList());
+            }
+            return new BatchPathResult(result);
+        }
+    }
+
+    /**
+     * Request batch paths for multiple characters to slots near a target.
+     * Validates all characters are controlled by the requesting player.
+     */
+    public BatchPathResult requestBatchPath(UUID gameId, UUID playerId,
+                                            Set<UUID> characterIds, int targetX, int targetY) {
+        Game game = getGame(gameId);
+
+        if (game.getStatus() != Game.GameStatus.RUNNING) {
+            throw new IllegalArgumentException("Game is not running");
+        }
+
+        // Validate all characters are controlled by this player
+        Set<UUID> controlled = roomManager.getControlledCharacters(gameId, playerId);
+        for (UUID charId : characterIds) {
+            if (!controlled.contains(charId)) {
+                throw new IllegalArgumentException("Character " + charId + " is not controlled by player");
+            }
+        }
+
+        Map<UUID, List<Point>> paths = roomManager.requestBatchPath(
+                gameId, characterIds, targetX, targetY);
+
+        if (paths.isEmpty()) {
+            throw new IllegalArgumentException("No paths found to target area");
+        }
+
+        game.touch();
+        gameRepository.save(game);
+
+        return BatchPathResult.from(paths);
     }
 
     /**

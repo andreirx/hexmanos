@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 import java.io.*;
 import java.time.Instant;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Represents the complete runtime state of a game.
@@ -101,13 +102,23 @@ public class GameState implements Serializable {
     }
 
     /**
-     * Get the character controlled by a player.
+     * Get the character controlled by a player (backward compat: returns first).
      */
     public Optional<UUID> getCharacterControlledByPlayer(UUID playerId) {
         return characterControl.entrySet().stream()
                 .filter(e -> e.getValue().equals(playerId))
                 .map(Map.Entry::getKey)
                 .findFirst();
+    }
+
+    /**
+     * Get all characters controlled by a player.
+     */
+    public Set<UUID> getCharactersControlledByPlayer(UUID playerId) {
+        return characterControl.entrySet().stream()
+                .filter(e -> e.getValue().equals(playerId))
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
     }
 
     /**
@@ -143,6 +154,19 @@ public class GameState implements Serializable {
         Set<Point> occupied = new HashSet<>();
         for (GameCharacter c : characters) {
             if (!c.getId().equals(excludeCharacterId)) {
+                occupied.add(new Point(c.getX(), c.getY()));
+            }
+        }
+        return occupied;
+    }
+
+    /**
+     * Get set of positions occupied by characters (excluding multiple characters).
+     */
+    public Set<Point> getOccupiedPositions(Set<UUID> excludeCharacterIds) {
+        Set<Point> occupied = new HashSet<>();
+        for (GameCharacter c : characters) {
+            if (!excludeCharacterIds.contains(c.getId())) {
                 occupied.add(new Point(c.getX(), c.getY()));
             }
         }

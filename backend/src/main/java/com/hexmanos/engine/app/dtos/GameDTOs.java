@@ -80,7 +80,7 @@ public class GameDTOs {
             UUID id,
             UUID playerId,
             String role,
-            UUID controlledCharacterId,
+            List<UUID> controlledCharacterIds,
             int colorIndex,
             Instant joinedAt,
             Instant lastSeenAt
@@ -90,7 +90,9 @@ public class GameDTOs {
                     player.getId(),
                     player.getPlayerId(),
                     player.getRole().name(),
-                    player.getControlledCharacterId(),
+                    player.getControlledCharacterIds() != null
+                            ? List.copyOf(player.getControlledCharacterIds())
+                            : List.of(),
                     player.getColorIndex(),
                     player.getJoinedAt(),
                     player.getLastSeenAt()

@@ -71,8 +71,15 @@ export async function takeOverCharacter(gameId: string, characterId: string): Pr
 }
 
 /**
- * Release control of a character.
+ * Release control of all characters.
  */
 export async function relinquishCharacter(gameId: string): Promise<void> {
   await api.post(`/games/${gameId}/characters/relinquish`)
+}
+
+/**
+ * Release control of a single character.
+ */
+export async function releaseCharacter(gameId: string, characterId: string): Promise<void> {
+  await api.post(`/games/${gameId}/characters/${characterId}/release`)
 }

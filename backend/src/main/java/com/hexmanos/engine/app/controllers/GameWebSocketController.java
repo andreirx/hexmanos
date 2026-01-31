@@ -15,7 +15,10 @@ import org.springframework.stereotype.Controller;
 
 import java.security.Principal;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * WebSocket controller for real-time game interactions.
@@ -213,6 +216,43 @@ public class GameWebSocketController {
     }
 
     /**
+     * Handle batch pathfinding request (squad movement).
+     * Client sends: /app/game/{gameId}/batch-path
+     * Server broadcasts: /topic/game/{gameId} (BatchPathStartEvent)
+     */
+    @MessageMapping("/game/{gameId}/batch-path")
+    public void requestBatchPath(
+            @DestinationVariable UUID gameId,
+            @Payload BatchPathRequest request,
+            Principal principal) {
+
+        UUID playerId = extractPlayerId(principal);
+        if (playerId == null) {
+            log.warn("Batch path request with no authenticated user");
+            return;
+        }
+
+        try {
+            Set<UUID> characterIds = request.characterIds().stream()
+                    .map(UUID::fromString)
+                    .collect(Collectors.toSet());
+
+            GameService.BatchPathResult result = gameService.requestBatchPath(
+                    gameId, playerId, characterIds, request.targetX(), request.targetY());
+
+            // Broadcast batch path start to all players
+            BatchPathStartEvent event = new BatchPathStartEvent(result.paths());
+            messagingTemplate.convertAndSend("/topic/game/" + gameId, event);
+
+            log.debug("Batch path set for {} characters to ({}, {}) in game {}",
+                    characterIds.size(), request.targetX(), request.targetY(), gameId);
+        } catch (IllegalArgumentException e) {
+            log.warn("Batch path failed for player {} in game {}: {}", playerId, gameId, e.getMessage());
+            sendErrorToUser(principal, "Batch path failed: " + e.getMessage());
+        }
+    }
+
+    /**
      * Extract the internal player UUID from the Principal.
      */
     private UUID extractPlayerId(Principal principal) {
@@ -251,6 +291,11 @@ public class GameWebSocketController {
      * Request payload for attack commands.
      */
     public record AttackRequest(String attackId, int targetX, int targetY) {}
+
+    /**
+     * Request payload for batch path commands (squad movement).
+     */
+    public record BatchPathRequest(List<String> characterIds, int targetX, int targetY) {}
 
     /**
      * Event broadcast when a character moves.
@@ -299,6 +344,13 @@ public class GameWebSocketController {
             String direction,
             String state,
             long animationDuration
+    ) {}
+
+    /**
+     * Event broadcast when batch paths start (squad movement).
+     */
+    public record BatchPathStartEvent(
+            Map<String, List<int[]>> paths  // characterId -> [[x,y], [x,y], ...]
     ) {}
 
     /**

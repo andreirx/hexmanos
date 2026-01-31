@@ -8,6 +8,8 @@ import lombok.NoArgsConstructor;
 import org.springframework.data.domain.Persistable;
 
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 @Data
@@ -32,8 +34,11 @@ public class GamePlayerEntity implements Persistable<UUID> {
     @Enumerated(EnumType.STRING)
     private GamePlayer.PlayerRole role;
 
-    @Column
-    private UUID controlledCharacterId;
+    @ElementCollection
+    @CollectionTable(name = "game_player_controlled_characters",
+                     joinColumns = @JoinColumn(name = "game_player_id"))
+    @Column(name = "character_id")
+    private Set<UUID> controlledCharacterIds = new HashSet<>();
 
     @Column(nullable = false, updatable = false)
     private Instant joinedAt;
@@ -70,7 +75,11 @@ public class GamePlayerEntity implements Persistable<UUID> {
             player.setGameId(entity.getGameId());
             player.setPlayerId(entity.getPlayerId());
             player.setRole(entity.getRole());
-            player.setControlledCharacterId(entity.getControlledCharacterId());
+            player.setControlledCharacterIds(
+                    entity.getControlledCharacterIds() != null
+                            ? new HashSet<>(entity.getControlledCharacterIds())
+                            : new HashSet<>()
+            );
             player.setJoinedAt(entity.getJoinedAt());
             player.setLastSeenAt(entity.getLastSeenAt());
             return player;
@@ -82,7 +91,11 @@ public class GamePlayerEntity implements Persistable<UUID> {
             entity.setGameId(player.getGameId());
             entity.setPlayerId(player.getPlayerId());
             entity.setRole(player.getRole());
-            entity.setControlledCharacterId(player.getControlledCharacterId());
+            entity.setControlledCharacterIds(
+                    player.getControlledCharacterIds() != null
+                            ? new HashSet<>(player.getControlledCharacterIds())
+                            : new HashSet<>()
+            );
             entity.setJoinedAt(player.getJoinedAt());
             entity.setLastSeenAt(player.getLastSeenAt());
             entity.setNew(isNew);

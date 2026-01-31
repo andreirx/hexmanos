@@ -230,10 +230,10 @@ public class GameController {
     }
 
     /**
-     * Release control of a character.
+     * Release control of all characters.
      */
     @PostMapping("/{gameId}/characters/relinquish")
-    public ResponseEntity<Void> relinquishCharacter(
+    public ResponseEntity<Void> relinquishAllCharacters(
             @PathVariable UUID gameId,
             @AuthenticationPrincipal Jwt jwt) {
         UUID playerId = getPlayerId(jwt);
@@ -243,6 +243,28 @@ public class GameController {
 
         gameService.relinquishCharacter(gameId, playerId);
         return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Release control of a specific character.
+     */
+    @PostMapping("/{gameId}/characters/{characterId}/release")
+    public ResponseEntity<Void> releaseCharacter(
+            @PathVariable UUID gameId,
+            @PathVariable UUID characterId,
+            @AuthenticationPrincipal Jwt jwt) {
+        UUID playerId = getPlayerId(jwt);
+        if (playerId == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        try {
+            gameService.relinquishCharacter(gameId, playerId, characterId);
+            return ResponseEntity.ok().build();
+        } catch (IllegalArgumentException e) {
+            log.warn("Failed to release character: {}", e.getMessage());
+            return ResponseEntity.badRequest().build();
+        }
     }
 
     /**

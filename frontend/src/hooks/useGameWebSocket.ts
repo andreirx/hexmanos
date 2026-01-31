@@ -10,6 +10,7 @@ import type {
   ProjectileHitEvent,
   DamageEvent,
   CharacterDeathEvent,
+  BatchPathStartEvent,
 } from "@/api/types"
 
 // Re-export types for convenience
@@ -20,6 +21,7 @@ export type {
   ProjectileHitEvent,
   DamageEvent,
   CharacterDeathEvent,
+  BatchPathStartEvent,
 }
 
 const WS_URL = import.meta.env.VITE_WS_URL || "http://localhost:8080/ws/game"
@@ -53,6 +55,7 @@ export interface GameWebSocketOptions {
   onCharacterIdle?: (event: CharacterIdleEvent) => void
   onPathStart?: (event: PathStartEvent) => void
   onPathCancel?: (event: PathCancelEvent) => void
+  onBatchPathStart?: (event: BatchPathStartEvent) => void
   // Attack/projectile events
   onAttackStart?: (event: AttackStartEvent) => void
   onProjectileSpawn?: (event: ProjectileSpawnEvent) => void
@@ -72,6 +75,7 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
     onCharacterIdle,
     onPathStart,
     onPathCancel,
+    onBatchPathStart,
     onAttackStart,
     onProjectileSpawn,
     onProjectileUpdate,
@@ -95,6 +99,7 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
     onCharacterIdle,
     onPathStart,
     onPathCancel,
+    onBatchPathStart,
     onAttackStart,
     onProjectileSpawn,
     onProjectileUpdate,
@@ -110,6 +115,7 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
     onCharacterIdle,
     onPathStart,
     onPathCancel,
+    onBatchPathStart,
     onAttackStart,
     onProjectileSpawn,
     onProjectileUpdate,
@@ -173,6 +179,21 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
     clientRef.current.publish({
       destination: `/app/game/${currentGameIdRef.current}/cancelPath`,
       body: "{}",
+    })
+    return true
+  }, [])
+
+  // Send batch path request (squad movement) - stable reference
+  const sendBatchPath = useCallback((characterIds: string[], targetX: number, targetY: number) => {
+    if (!clientRef.current?.active || !currentGameIdRef.current) {
+      console.warn("Cannot send batch path: WebSocket not connected")
+      return false
+    }
+
+    console.log("[WebSocket] Publishing batch path request for", characterIds.length, "characters to:", targetX, targetY)
+    clientRef.current.publish({
+      destination: `/app/game/${currentGameIdRef.current}/batch-path`,
+      body: JSON.stringify({ characterIds, targetX, targetY }),
     })
     return true
   }, [])
@@ -266,7 +287,11 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
               const event = JSON.parse(message.body)
 
               // Detect event type by checking for specific fields
-              if ("path" in event && Array.isArray(event.path)) {
+              if ("paths" in event && typeof event.paths === "object" && !Array.isArray(event.paths)) {
+                // BatchPathStartEvent has a 'paths' object (characterId -> path array)
+                console.log("[WebSocket] Received batch path start event:", event)
+                callbacksRef.current.onBatchPathStart?.(event as BatchPathStartEvent)
+              } else if ("path" in event && Array.isArray(event.path)) {
                 // PathStartEvent has a 'path' array
                 console.log("[WebSocket] Received path start event:", event)
                 callbacksRef.current.onPathStart?.(event as PathStartEvent)
@@ -380,6 +405,7 @@ export function useGameWebSocket(options: GameWebSocketOptions) {
     sendIdle,
     sendPath,
     sendCancelPath,
+    sendBatchPath,
     sendAttack,
   }
 }
