@@ -1,6 +1,25 @@
-# Hexmanos Engine
+# 🌌 HEXMANOS: The Living Pixel Engine
 
-A pixel art game asset workshop for creating characters, tiles, and maps. Built with a clean architecture backend, modern React frontend, and AWS infrastructure.
+## High Level Vision
+
+### 1. The High-Level Vision
+Hexmanos is a **Community-Driven Persistent Strategy Platform**. It bridges the gap between creative sandboxes (like Minecraft/Roblox) and deep simulation strategy games (like HoMM3/XCOM).
+
+The core philosophy is **"Create to Play"**:
+*   **The Creative Loop:** Players define the world. They draw characters, paint terrain, and design maps in the browser-based **Workshop**.
+*   **The Gameplay Loop:** These assets are injected into a persistent, server-authoritative world where players cooperate to build a "Living Base," manage an economy, and deploy squads into tactical turn-based combat.
+
+### 2. The Gameplay Trinity
+The game design revolves around three distinct phases of play:
+1.  **The Living Base (HoMM3 Style):** A persistent, real-time map where characters physically travel to perform jobs (mining, building, crafting). The economy runs 24/7.
+2.  **The Expedition (KOTOR Style):** Real-time exploration of dangerous maps. When an enemy is detected, the game seamless transitions into...
+3.  **The Encounter (XCOM Style):** High-stakes, turn-based tactical combat. Time freezes, grids appear, and strategy takes over.
+
+### 3. Engineering Philosophy
+Hexmanos is built with a **"Safety-Critical"** mindset applied to Game Development.
+*   **Server Authority:** The Backend (Java/Spring Boot) is the absolute dictator of time, physics, and state. The Frontend (React/Phaser) is merely a visual terminal.
+*   **Hybrid Infrastructure:** We leverage local power (M1 Max) for heavy compute and game loops, while offloading stateless reliability (Auth, Storage) to AWS.
+*   **The Pointer Pattern:** We treat assets as immutable references, ensuring that content updates never break active game sessions.
 
 ## Tech Stack
 

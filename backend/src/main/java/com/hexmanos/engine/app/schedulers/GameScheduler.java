@@ -7,6 +7,8 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PostConstruct;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -32,6 +34,19 @@ public class GameScheduler {
     private final SimpMessagingTemplate messagingTemplate;
 
     private static final Duration EXPIRY_DURATION = Duration.ofDays(2);
+
+    /**
+     * Restore all RUNNING games from snapshots on startup.
+     */
+    @PostConstruct
+    public void restoreGamesOnStartup() {
+        log.info("Restoring active games from snapshots...");
+        try {
+            gameService.restoreRunningGames();
+        } catch (Exception e) {
+            log.error("Failed to restore games on startup: {}", e.getMessage(), e);
+        }
+    }
 
     /**
      * Save snapshots for all active games.

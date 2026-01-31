@@ -772,6 +772,52 @@ public class GameService {
     }
 
     /**
+     * Restore all RUNNING games from snapshots on startup.
+     * Called after backend restart to recover in-memory state.
+     */
+    public void restoreRunningGames() {
+        List<Game> activeGames = gameRepository.findActiveGames();
+        int restored = 0;
+
+        for (Game game : activeGames) {
+            if (game.getStatus() != Game.GameStatus.RUNNING) {
+                continue;
+            }
+
+            if (roomManager.isLoaded(game.getId())) {
+                continue; // Already in memory
+            }
+
+            try {
+                if (roomManager.restoreFromSnapshot(game.getId())) {
+                    // Initialize terrain grid (transient field lost during serialization)
+                    GameState state = roomManager.getState(game.getId());
+                    if (state != null) {
+                        Asset mapAsset = assetRepository.findById(game.getMapAssetId()).orElse(null);
+                        if (mapAsset != null) {
+                            String mapDataJson = loadMapData(mapAsset.getStorageKeyPrefix());
+                            Map<String, Integer> tileCosts = loadTileMovementCosts(mapDataJson);
+                            state.initializeTerrain(tileCosts);
+                        }
+                    }
+                    restored++;
+                    log.info("Auto-restored RUNNING game {} from snapshot", game.getId());
+                } else {
+                    log.warn("No snapshot found for RUNNING game {}, resetting to WAITING", game.getId());
+                    game.setStatus(Game.GameStatus.WAITING);
+                    gameRepository.save(game);
+                }
+            } catch (Exception e) {
+                log.error("Failed to restore game {}: {}", game.getId(), e.getMessage(), e);
+            }
+        }
+
+        if (restored > 0) {
+            log.info("Restored {} RUNNING game(s) from snapshots on startup", restored);
+        }
+    }
+
+    /**
      * Clean up expired games.
      */
     public void cleanupExpiredGames(Instant cutoff) {
