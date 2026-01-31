@@ -164,6 +164,7 @@ class GameScene extends Phaser.Scene {
   private characterSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
   private movingCharacters: Set<string> = new Set() // Track characters currently animating
   private onCharacterClick: ((characterId: string, shiftKey: boolean) => void) | null = null
+  private onBoxSelect: ((characterIds: string[]) => void) | null = null
   private onTileClick: ((x: number, y: number) => void) | null = null
   private onMoveInput: ((direction: "n" | "s" | "e" | "w") => void) | null = null
   private onPathRequest: ((targetX: number, targetY: number) => void) | null = null
@@ -196,6 +197,7 @@ class GameScene extends Phaser.Scene {
   // Box select state
   private boxSelectStart: { x: number; y: number } | null = null
   private boxSelectRect: Phaser.GameObjects.Graphics | null = null
+  private boxSelectPreviewRects: Map<string, Phaser.GameObjects.Graphics> = new Map()
   private static readonly BOX_SELECT_THRESHOLD = 5 // pixels minimum to distinguish drag from click
   private moveDebounceTime = 200 // ms between move inputs
   private lastMoveTime = 0
@@ -246,6 +248,7 @@ class GameScene extends Phaser.Scene {
     tileProperties: Map<string, TileProperties>
     entityDefinitions: Map<string, EntityDefinition>
     onCharacterClick: (characterId: string, shiftKey: boolean) => void
+    onBoxSelect: (characterIds: string[]) => void
     onTileClick: (x: number, y: number) => void
     onMoveInput: (direction: "n" | "s" | "e" | "w") => void
     onPathRequest: (targetX: number, targetY: number) => void
@@ -257,6 +260,7 @@ class GameScene extends Phaser.Scene {
     this.tileProperties = data.tileProperties
     this.entityDefinitions = data.entityDefinitions
     this.onCharacterClick = data.onCharacterClick
+    this.onBoxSelect = data.onBoxSelect
     this.onTileClick = data.onTileClick
     this.onMoveInput = data.onMoveInput
     this.onPathRequest = data.onPathRequest
@@ -693,21 +697,29 @@ class GameScene extends Phaser.Scene {
       const dy = pointer.worldY - this.boxSelectStart.y
       const dist = Math.sqrt(dx * dx + dy * dy)
 
-      if (dist < GameScene.BOX_SELECT_THRESHOLD) return
+      if (dist < GameScene.BOX_SELECT_THRESHOLD) {
+        // Clear preview rects if drag is too short
+        this.clearBoxSelectPreviews()
+        return
+      }
+
+      const rx = Math.min(this.boxSelectStart.x, pointer.worldX)
+      const ry = Math.min(this.boxSelectStart.y, pointer.worldY)
+      const rw = Math.abs(dx)
+      const rh = Math.abs(dy)
 
       // Draw box select rectangle
       if (this.boxSelectRect) {
         this.boxSelectRect.clear()
         this.boxSelectRect.lineStyle(2, 0x44ff44, 0.8)
         this.boxSelectRect.fillStyle(0x44ff44, 0.15)
-        const rx = Math.min(this.boxSelectStart.x, pointer.worldX)
-        const ry = Math.min(this.boxSelectStart.y, pointer.worldY)
-        const rw = Math.abs(dx)
-        const rh = Math.abs(dy)
         this.boxSelectRect.fillRect(rx, ry, rw, rh)
         this.boxSelectRect.strokeRect(rx, ry, rw, rh)
         this.boxSelectRect.setVisible(true)
       }
+
+      // Show preview rectangles around characters within the box
+      this.updateBoxSelectPreviews(rx, ry, rw, rh)
     })
 
     this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
@@ -717,11 +729,12 @@ class GameScene extends Phaser.Scene {
       const dy = pointer.worldY - this.boxSelectStart.y
       const dist = Math.sqrt(dx * dx + dy * dy)
 
-      // Clear box select graphics
+      // Clear box select graphics and preview rects
       if (this.boxSelectRect) {
         this.boxSelectRect.clear()
         this.boxSelectRect.setVisible(false)
       }
+      this.clearBoxSelectPreviews()
 
       if (dist >= GameScene.BOX_SELECT_THRESHOLD) {
         // Box select — find characters inside the rectangle
@@ -730,22 +743,10 @@ class GameScene extends Phaser.Scene {
         const rw = Math.abs(dx)
         const rh = Math.abs(dy)
 
-        const selectedIds: string[] = []
-        this.characterSprites.forEach((sprite, charId) => {
-          if (sprite.x >= rx && sprite.x <= rx + rw && sprite.y >= ry && sprite.y <= ry + rh) {
-            // Only select characters the current player can control:
-            // - already controlled by this player, OR
-            // - not controlled by anyone
-            const char = this.characters.find(c => c.id === charId)
-            if (!char) return
-            if (char.controlled && char.controlledByPlayerId !== this.currentPlayerId) return
-            selectedIds.push(charId)
-          }
-        })
+        const selectedIds = this.getSelectableCharactersInRect(rx, ry, rw, rh)
 
-        if (selectedIds.length > 0 && this.onCharacterClick) {
-          // Multi-select: notify React with each character (shift=true to add)
-          selectedIds.forEach(id => this.onCharacterClick!(id, true))
+        if (selectedIds.length > 0 && this.onBoxSelect) {
+          this.onBoxSelect(selectedIds)
         }
       } else {
         // Simple click on empty tile
@@ -825,6 +826,60 @@ class GameScene extends Phaser.Scene {
   private clearAllSelectionIndicators() {
     this.selectionIndicators.forEach(indicator => indicator.destroy())
     this.selectionIndicators.clear()
+  }
+
+  // Get selectable character IDs within a world-space rectangle
+  private getSelectableCharactersInRect(rx: number, ry: number, rw: number, rh: number): string[] {
+    const ids: string[] = []
+    this.characterSprites.forEach((sprite, charId) => {
+      if (sprite.x >= rx && sprite.x <= rx + rw && sprite.y >= ry && sprite.y <= ry + rh) {
+        const char = this.characters.find(c => c.id === charId)
+        if (!char) return
+        if (char.controlled && char.controlledByPlayerId !== this.currentPlayerId) return
+        ids.push(charId)
+      }
+    })
+    return ids
+  }
+
+  // Show preview rectangles around characters that would be selected during box drag
+  private updateBoxSelectPreviews(rx: number, ry: number, rw: number, rh: number) {
+    const selectableIds = new Set(this.getSelectableCharactersInRect(rx, ry, rw, rh))
+
+    // Remove preview rects for characters no longer in the box
+    this.boxSelectPreviewRects.forEach((gfx, charId) => {
+      if (!selectableIds.has(charId)) {
+        gfx.destroy()
+        this.boxSelectPreviewRects.delete(charId)
+      }
+    })
+
+    // Add/update preview rects for characters in the box
+    const playerColor = PLAYER_COLORS[this.currentPlayerColorIndex]
+    selectableIds.forEach(charId => {
+      const sprite = this.characterSprites.get(charId)
+      if (!sprite) return
+
+      let gfx = this.boxSelectPreviewRects.get(charId)
+      if (!gfx) {
+        gfx = this.add.graphics()
+        gfx.setDepth(GameScene.DEPTH_UI)
+        this.boxSelectPreviewRects.set(charId, gfx)
+      }
+
+      gfx.clear()
+      const halfSize = TILE_SIZE * 0.5
+      gfx.lineStyle(2, playerColor, 0.9)
+      gfx.strokeRect(sprite.x - halfSize, sprite.y - halfSize, TILE_SIZE, TILE_SIZE)
+      gfx.fillStyle(playerColor, 0.1)
+      gfx.fillRect(sprite.x - halfSize, sprite.y - halfSize, TILE_SIZE, TILE_SIZE)
+    })
+  }
+
+  // Clear all box select preview rectangles
+  private clearBoxSelectPreviews() {
+    this.boxSelectPreviewRects.forEach(gfx => gfx.destroy())
+    this.boxSelectPreviewRects.clear()
   }
 
   // Switch texture mip levels based on zoom
@@ -1780,6 +1835,7 @@ export function GamePage() {
   const sendBatchPathRef = useRef<((characterIds: string[], targetX: number, targetY: number) => boolean) | null>(null)
   const sendAttackRef = useRef<((attackId: string, targetX: number, targetY: number) => boolean) | null>(null)
   const attackModeIdRef = useRef<string | null>(null)
+  const handleBoxSelectRef = useRef<((characterIds: string[]) => void) | null>(null)
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -2111,14 +2167,13 @@ export function GamePage() {
         assetMap,
         tileProperties,
         entityDefinitions,
-        onCharacterClick: (characterId: string, shiftKey: boolean) => {
-          if (shiftKey) {
-            // Shift+click: toggle character in/out of selection
-            setSelectedCharacter(characterId) // triggers auto-take-control
-          } else {
-            // Normal click: single select
-            setSelectedCharacter(characterId)
-          }
+        onCharacterClick: (characterId: string, _shiftKey: boolean) => {
+          // Single click or shift+click: triggers auto-take-control via selectedCharacter effect
+          setSelectedCharacter(characterId)
+        },
+        onBoxSelect: (characterIds: string[]) => {
+          // Box select: batch take-over all characters at once
+          handleBoxSelectRef.current?.(characterIds)
         },
         onTileClick: (_x: number, _y: number) => {
           // Clicking empty tile releases all control
@@ -2231,6 +2286,51 @@ export function GamePage() {
 
     autoReleaseControl()
   }, [selectedCharacter, gameId, controlledCharacterIds])
+
+  // Box select handler: batch take-over all characters at once
+  const handleBoxSelect = useCallback(async (characterIds: string[]) => {
+    if (!gameId || !game || characterIds.length === 0) return
+
+    // Filter: only take over characters not already controlled by this player
+    const alreadyControlled = controlledCharacterIdsRef.current
+    const toTakeOver = characterIds.filter(id => !alreadyControlled.has(id))
+    const alreadyOurs = characterIds.filter(id => alreadyControlled.has(id))
+
+    // Take over new characters in parallel
+    const succeeded = [...alreadyOurs]
+    await Promise.all(toTakeOver.map(async (charId) => {
+      try {
+        await takeOverCharacter(gameId, charId)
+        succeeded.push(charId)
+      } catch (err) {
+        console.warn("Failed to take over character:", charId, err)
+      }
+    }))
+
+    if (succeeded.length === 0) return
+
+    // Update React state
+    const newSet = new Set(succeeded)
+    setControlledCharacterIds(newSet)
+
+    // Update the scene with all controlled characters
+    const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+    if (scene) {
+      const updated = await getGame(gameId)
+      scene.updatePlayers(updated.players.map(p => ({
+        playerId: p.playerId,
+        colorIndex: p.colorIndex
+      })))
+      scene.updateCharacters(updated.characters)
+      scene.setControlledCharacters(succeeded)
+      setGame(updated)
+    }
+  }, [gameId, game])
+
+  // Keep handleBoxSelect ref in sync
+  useEffect(() => {
+    handleBoxSelectRef.current = handleBoxSelect
+  }, [handleBoxSelect])
 
   // Load character attacks when controlled characters change (only for single character)
   useEffect(() => {

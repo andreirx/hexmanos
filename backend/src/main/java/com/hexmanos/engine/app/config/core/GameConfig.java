@@ -7,9 +7,12 @@ import com.hexmanos.engine.core.game.*;
 import com.hexmanos.engine.core.map.MapMigrationService;
 import com.hexmanos.engine.external.postgres.game.PostgresGamePlayerRepository;
 import com.hexmanos.engine.external.postgres.game.PostgresGameRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+
+import java.nio.file.Path;
 
 @Configuration
 public class GameConfig {
@@ -26,8 +29,16 @@ public class GameConfig {
     }
 
     @Bean
-    public GameRoomManager gameRoomManager(SnapshotService snapshotService) {
-        return new GameRoomManager(snapshotService);
+    public BatchMovementRecorder batchMovementRecorder(
+            @Value("${app.debug.batch-recording.enabled:false}") boolean enabled,
+            @Value("${app.debug.batch-recording.dir:${user.home}/hexmanos_debug/batch_recordings}") String dir) {
+        return new BatchMovementRecorder(enabled, Path.of(dir));
+    }
+
+    @Bean
+    public GameRoomManager gameRoomManager(SnapshotService snapshotService,
+                                           BatchMovementRecorder batchMovementRecorder) {
+        return new GameRoomManager(snapshotService, batchMovementRecorder);
     }
 
     @Bean

@@ -207,11 +207,18 @@ public class GameScheduler {
                         messagingTemplate.convertAndSend("/topic/game/" + gameId, idleEvent);
                         log.debug("Path completed: Character {} is now idle in game {}",
                                 character.getId(), gameId);
+
+                        // Debug recording: character arrived at destination
+                        roomManager.getBatchMovementRecorder()
+                                .recordCharacterArrival(character.getId(), result.x(), result.y());
                     }
                 }
             } catch (Exception e) {
                 log.warn("Path step failed for character {} in game {}: {}",
                         character.getId(), gameId, e.getMessage());
+                // Debug recording: path cancelled due to error
+                roomManager.getBatchMovementRecorder()
+                        .recordCharacterPathCancelled(character.getId(), character.getX(), character.getY());
                 // Clear the path on error to prevent infinite retries
                 character.clearPath();
                 // Set to idle on error too

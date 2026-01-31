@@ -16,6 +16,11 @@ import java.util.stream.Collectors;
 public class GameRoomManager {
     private final Map<UUID, GameState> activeGames = new ConcurrentHashMap<>();
     private final SnapshotService snapshotService;
+    private final BatchMovementRecorder batchMovementRecorder;
+
+    public BatchMovementRecorder getBatchMovementRecorder() {
+        return batchMovementRecorder;
+    }
 
     /**
      * Load a game into memory with the given initial state.
@@ -319,12 +324,16 @@ public class GameRoomManager {
         TerrainGrid terrain = state.getTerrainGrid();
         if (terrain != null && !terrain.isPassable(nextStep.x(), nextStep.y())) {
             log.debug("Path step blocked by terrain at {}", nextStep);
+            batchMovementRecorder.recordCharacterPathCancelled(
+                    characterId, character.getX(), character.getY());
             character.clearPath();
             return null;
         }
 
         if (state.isOccupied(nextStep.x(), nextStep.y(), characterId)) {
             log.debug("Path step blocked by character at {}", nextStep);
+            batchMovementRecorder.recordCharacterPathCancelled(
+                    characterId, character.getX(), character.getY());
             character.clearPath();
             return null;
         }
@@ -389,6 +398,10 @@ public class GameRoomManager {
         // Use a mutable copy so we can reserve destination slots during pathfinding
         Set<Point> occupied = new HashSet<>(state.getOccupiedPositions(characterIds));
 
+        // Debug recording: capture initial state
+        String batchId = batchMovementRecorder.recordBatchRequest(
+                gameId, characterIds, targetX, targetY, terrain, charPositions, occupied);
+
         // Find N slots near target (slots already exclude occupied positions)
         List<Point> slots = SlotFinder.findSlots(target, charPositions.size(), terrain, occupied);
         if (slots.isEmpty()) {
@@ -420,6 +433,9 @@ public class GameRoomManager {
                         charId, start.x(), start.y(), dest.x(), dest.y());
             }
         }
+
+        // Debug recording: capture computed paths and assignments
+        batchMovementRecorder.recordBatchResult(batchId, assignments, results);
 
         log.info("Batch path for {} characters to ({}, {}): {}/{} paths computed in game {}",
                 characterIds.size(), targetX, targetY, results.size(), assignments.size(), gameId);
