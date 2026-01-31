@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Header } from "@/components/layout"
 import { useAuth } from "@/context/AuthContext"
-import { getGame, takeOverCharacter, relinquishCharacter, pauseGame, stopGame } from "@/api/games"
+import { getGame, takeOverCharacter, relinquishCharacter, releaseCharacter, pauseGame, stopGame } from "@/api/games"
 import { getAssetFile, getAssetById, getAssetFileUrl } from "@/api/assets"
 import { useGameWebSocket } from "@/hooks/useGameWebSocket"
 import type {
@@ -1870,6 +1870,8 @@ export function GamePage() {
   const sendAttackRef = useRef<((attackId: string, targetX: number, targetY: number) => boolean) | null>(null)
   const attackModeIdRef = useRef<string | null>(null)
   const handleBoxSelectRef = useRef<((characterIds: string[]) => void) | null>(null)
+  const handleCharacterClickRef = useRef<((characterId: string, shiftKey: boolean) => void) | null>(null)
+  const handleDeselectAllRef = useRef<(() => void) | null>(null)
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -2201,17 +2203,14 @@ export function GamePage() {
         assetMap,
         tileProperties,
         entityDefinitions,
-        onCharacterClick: (characterId: string, _shiftKey: boolean) => {
-          // Single click or shift+click: triggers auto-take-control via selectedCharacter effect
-          setSelectedCharacter(characterId)
+        onCharacterClick: (characterId: string, shiftKey: boolean) => {
+          handleCharacterClickRef.current?.(characterId, shiftKey)
         },
         onBoxSelect: (characterIds: string[]) => {
-          // Box select: batch take-over all characters at once
           handleBoxSelectRef.current?.(characterIds)
         },
         onTileClick: (_x: number, _y: number) => {
-          // Clicking empty tile releases all control
-          setSelectedCharacter(null)
+          handleDeselectAllRef.current?.()
         },
         onMoveInput: (direction: "n" | "s" | "e" | "w") => {
           // Manual move cancels any active path visualization for the controlled character
@@ -2248,89 +2247,146 @@ export function GamePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapData])
 
-  // Auto take control when clicking a character (additive — adds to controlled set)
-  useEffect(() => {
-    if (!gameId || !game || !selectedCharacter) return
+  // Handle character click: normal click = replace selection, shift+click = toggle
+  const handleCharacterClick = useCallback(async (characterId: string, shiftKey: boolean) => {
+    if (!gameId || !game) return
 
-    const char = game.characters.find(c => c.id === selectedCharacter)
+    const char = game.characters.find(c => c.id === characterId)
     if (!char) return
 
-    // If already controlling this character, do nothing
-    if (controlledCharacterIds.has(selectedCharacter)) return
+    const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+    const currentControlled = controlledCharacterIdsRef.current
 
-    // If character is controlled by another player, reject
-    if (char.controlled) {
-      console.log("Character is controlled by another player")
-      return
-    }
+    if (shiftKey) {
+      // === SHIFT+CLICK: Toggle character in/out of selection ===
+      if (currentControlled.has(characterId)) {
+        // Remove from selection — release on backend
+        try {
+          await releaseCharacter(gameId, characterId)
+          const newSet = new Set(currentControlled)
+          newSet.delete(characterId)
+          setControlledCharacterIds(newSet)
+          setSelectedCharacter(newSet.size > 0 ? Array.from(newSet)[0] : null)
+          if (scene) {
+            scene.removeControlledCharacter(characterId)
+            const updated = await getGame(gameId)
+            scene.updatePlayers(updated.players.map(p => ({ playerId: p.playerId, colorIndex: p.colorIndex })))
+            scene.updateCharacters(updated.characters)
+            setGame(updated)
+          }
+        } catch (err) {
+          console.error("Failed to release character:", err)
+        }
+      } else {
+        // Add to selection — take over on backend
+        if (char.controlled) {
+          console.log("Character is controlled by another player")
+          return
+        }
+        try {
+          await takeOverCharacter(gameId, characterId)
+          const newSet = new Set(currentControlled)
+          newSet.add(characterId)
+          setControlledCharacterIds(newSet)
+          setSelectedCharacter(characterId)
+          if (scene) {
+            const updated = await getGame(gameId)
+            scene.updatePlayers(updated.players.map(p => ({ playerId: p.playerId, colorIndex: p.colorIndex })))
+            scene.updateCharacters(updated.characters)
+            scene.addControlledCharacter(characterId)
+            setGame(updated)
+          }
+        } catch (err) {
+          console.error("Failed to take over character:", err)
+        }
+      }
+    } else {
+      // === NORMAL CLICK: Replace entire selection with just this character ===
+      if (currentControlled.size === 1 && currentControlled.has(characterId)) {
+        // Already the only selected character — do nothing
+        return
+      }
 
-    async function autoTakeControl() {
+      if (char.controlled && !currentControlled.has(characterId)) {
+        console.log("Character is controlled by another player")
+        return
+      }
+
       try {
-        await takeOverCharacter(gameId!, selectedCharacter!)
+        // Release all currently controlled characters that aren't this one
+        const toRelease = Array.from(currentControlled).filter(id => id !== characterId)
+        await Promise.all(toRelease.map(id => releaseCharacter(gameId, id).catch(() => {})))
 
-        const newSet = new Set(controlledCharacterIds)
-        newSet.add(selectedCharacter!)
+        // Take over the new character if not already controlled
+        if (!currentControlled.has(characterId)) {
+          await takeOverCharacter(gameId, characterId)
+        }
+
+        const newSet = new Set([characterId])
         setControlledCharacterIds(newSet)
-
-        const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene
-        const updated = await getGame(gameId!)
+        setSelectedCharacter(characterId)
 
         if (scene) {
-          scene.updatePlayers(updated.players.map(p => ({
-            playerId: p.playerId,
-            colorIndex: p.colorIndex
-          })))
+          const updated = await getGame(gameId)
+          scene.updatePlayers(updated.players.map(p => ({ playerId: p.playerId, colorIndex: p.colorIndex })))
           scene.updateCharacters(updated.characters)
-          scene.addControlledCharacter(selectedCharacter!)
+          scene.setControlledCharacters([characterId])
+          setGame(updated)
         }
-
-        setGame(updated)
       } catch (err) {
-        console.error("Failed to take over character:", err)
+        console.error("Failed to select character:", err)
       }
     }
+  }, [gameId, game])
 
-    autoTakeControl()
-  }, [selectedCharacter, gameId, game, controlledCharacterIds])
-
-  // Auto release all control when clicking empty tile (selectedCharacter becomes null)
+  // Keep handleCharacterClick ref in sync
   useEffect(() => {
-    if (!gameId || selectedCharacter !== null) return
-    if (controlledCharacterIds.size === 0) return
+    handleCharacterClickRef.current = handleCharacterClick
+  }, [handleCharacterClick])
 
-    async function autoReleaseControl() {
-      try {
-        await relinquishCharacter(gameId!)
-        setControlledCharacterIds(new Set())
-        const updated = await getGame(gameId!)
+  // Handle deselect all: click on empty tile releases all controlled characters
+  const handleDeselectAll = useCallback(async () => {
+    if (!gameId) return
+    const currentControlled = controlledCharacterIdsRef.current
+    if (currentControlled.size === 0) return
+
+    try {
+      await relinquishCharacter(gameId)
+      setControlledCharacterIds(new Set())
+      setSelectedCharacter(null)
+      const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
+      if (scene) {
+        const updated = await getGame(gameId)
+        scene.updatePlayers(updated.players.map(p => ({ playerId: p.playerId, colorIndex: p.colorIndex })))
+        scene.updateCharacters(updated.characters)
+        scene.clearAllControlledCharacters()
         setGame(updated)
-        const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene
-        if (scene) {
-          scene.updatePlayers(updated.players.map(p => ({
-            playerId: p.playerId,
-            colorIndex: p.colorIndex
-          })))
-          scene.updateCharacters(updated.characters)
-          scene.clearAllControlledCharacters()
-        }
-      } catch (err) {
-        console.error("Failed to relinquish characters:", err)
       }
+    } catch (err) {
+      console.error("Failed to relinquish characters:", err)
     }
+  }, [gameId])
 
-    autoReleaseControl()
-  }, [selectedCharacter, gameId, controlledCharacterIds])
+  // Keep handleDeselectAll ref in sync
+  useEffect(() => {
+    handleDeselectAllRef.current = handleDeselectAll
+  }, [handleDeselectAll])
 
-  // Box select handler: batch take-over all characters at once
+  // Box select handler: replace selection with all boxed characters
   const handleBoxSelect = useCallback(async (characterIds: string[]) => {
     if (!gameId || !game || characterIds.length === 0) return
 
-    // Filter: only take over characters not already controlled by this player
     const alreadyControlled = controlledCharacterIdsRef.current
+    const selectedSet = new Set(characterIds)
+
+    // Release characters that were controlled but are NOT in the new box selection
+    const toRelease = Array.from(alreadyControlled).filter(id => !selectedSet.has(id))
+    await Promise.all(toRelease.map(id => releaseCharacter(gameId, id).catch(() => {})))
+
+    // Take over characters in the box that aren't already controlled
     const toTakeOver = characterIds.filter(id => !alreadyControlled.has(id))
     const alreadyOurs = characterIds.filter(id => alreadyControlled.has(id))
 
-    // Take over new characters in parallel
     const succeeded = [...alreadyOurs]
     await Promise.all(toTakeOver.map(async (charId) => {
       try {
@@ -2343,14 +2399,10 @@ export function GamePage() {
 
     if (succeeded.length === 0) return
 
-    // Update React state — set selectedCharacter to first succeeded ID
-    // to prevent the auto-release effect from firing (it triggers when selectedCharacter is null)
-    setSelectedCharacter(succeeded[0])
-
     const newSet = new Set(succeeded)
     setControlledCharacterIds(newSet)
+    setSelectedCharacter(succeeded[0])
 
-    // Update the scene with all controlled characters
     const scene = phaserGameRef.current?.scene.getScene("GameScene") as GameScene | undefined
     if (scene) {
       const updated = await getGame(gameId)
