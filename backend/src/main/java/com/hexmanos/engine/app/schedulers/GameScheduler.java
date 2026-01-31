@@ -150,80 +150,122 @@ public class GameScheduler {
 
         List<GameCharacter> characters = state.getCharacters();
         for (GameCharacter character : characters) {
-            if (!character.hasPath()) {
+
+            // === CASE 1: Character has an active path — execute next step ===
+            if (character.hasPath()) {
+                executeActivePathStep(gameId, character, terrain, now);
                 continue;
             }
 
-            // Check movement cost-based delay
-            Point nextStep = character.getNextPathStep();
-            if (nextStep == null) {
-                continue;
-            }
+            // === CASE 2: Character has a movement intention but no path — retry ===
+            if (character.hasMovementIntention() && !character.hasPath()) {
+                // Check if already within radius (e.g. got pushed closer by other movement)
+                if (character.isWithinTargetRadius()) {
+                    character.clearMovementIntention();
+                    character.idle();
+                    CharacterIdleEvent idleEvent = new CharacterIdleEvent(
+                            character.getId().toString(), "idle");
+                    messagingTemplate.convertAndSend("/topic/game/" + gameId, idleEvent);
+                    roomManager.getBatchMovementRecorder()
+                            .recordCharacterArrival(character.getId(), character.getX(), character.getY());
+                    log.debug("Character {} within radius of target, marking as arrived", character.getId());
+                    continue;
+                }
 
-            // Get movement cost for the destination tile
-            int movementCost = 1;
-            if (terrain != null) {
-                movementCost = Math.max(1, terrain.getCost(nextStep.x(), nextStep.y()));
-            }
+                // Throttle retry attempts
+                if (!character.canRetryPath(GameRoomManager.PATH_RETRY_INTERVAL_MS)) {
+                    continue;
+                }
 
-            // Calculate required delay based on movement cost (using GameService constant)
-            long requiredDelay = GameService.BASE_MOVE_DELAY_MS * movementCost;
-            long timeSinceLastMove = now - character.getLastMoveTime();
-
-            // Skip if not enough time has passed
-            if (timeSinceLastMove < requiredDelay) {
-                continue;
-            }
-
-            try {
-                GameService.MoveResult result = gameService.executePathStep(gameId, character.getId());
-                if (result != null) {
-                    // Record move time for movement cost timing
-                    character.recordMove();
-
-                    // Broadcast the move to all players (with animation state and duration from backend)
-                    CharacterMoveEvent event = new CharacterMoveEvent(
-                            result.characterId().toString(),
-                            result.x(),
-                            result.y(),
-                            result.direction(),
-                            result.state(),
-                            result.duration()
+                List<Point> newPath = roomManager.retryPath(gameId, character.getId());
+                if (!newPath.isEmpty()) {
+                    // Broadcast the new path to frontend so it can visualize it
+                    PathStartEvent pathEvent = new PathStartEvent(
+                            character.getId().toString(),
+                            newPath.stream().map(p -> new int[]{p.x(), p.y()}).toList()
                     );
-                    messagingTemplate.convertAndSend("/topic/game/" + gameId, event);
+                    messagingTemplate.convertAndSend("/topic/game/" + gameId, pathEvent);
+                    log.debug("Retry path sent for character {} in game {}: {} steps",
+                            character.getId(), gameId, newPath.size());
+                }
+            }
+        }
+    }
 
-                    log.debug("Path step: Character {} moved to ({}, {}) cost={} in game {}",
-                            result.characterId(), result.x(), result.y(), movementCost, gameId);
+    /**
+     * Execute a single path step for a character that has an active path.
+     */
+    private void executeActivePathStep(UUID gameId, GameCharacter character,
+                                       TerrainGrid terrain, long now) {
+        Point nextStep = character.getNextPathStep();
+        if (nextStep == null) {
+            return;
+        }
 
-                    // Check if path completed (character no longer has path after this step)
-                    if (!character.hasPath()) {
-                        // Set character to idle state
+        // Get movement cost for the destination tile
+        int movementCost = 1;
+        if (terrain != null) {
+            movementCost = Math.max(1, terrain.getCost(nextStep.x(), nextStep.y()));
+        }
+
+        // Calculate required delay based on movement cost
+        long requiredDelay = GameService.BASE_MOVE_DELAY_MS * movementCost;
+        long timeSinceLastMove = now - character.getLastMoveTime();
+
+        // Skip if not enough time has passed
+        if (timeSinceLastMove < requiredDelay) {
+            return;
+        }
+
+        try {
+            GameService.MoveResult result = gameService.executePathStep(gameId, character.getId());
+            if (result != null) {
+                // Record move time for movement cost timing
+                character.recordMove();
+
+                // Broadcast the move to all players
+                CharacterMoveEvent event = new CharacterMoveEvent(
+                        result.characterId().toString(),
+                        result.x(),
+                        result.y(),
+                        result.direction(),
+                        result.state(),
+                        result.duration()
+                );
+                messagingTemplate.convertAndSend("/topic/game/" + gameId, event);
+
+                log.debug("Path step: Character {} moved to ({}, {}) cost={} in game {}",
+                        result.characterId(), result.x(), result.y(), movementCost, gameId);
+
+                // Check if path completed
+                if (!character.hasPath()) {
+                    // Check if movement intention is also satisfied
+                    if (character.hasMovementIntention()) {
+                        if (character.isAtTargetDestination() || character.isWithinTargetRadius()) {
+                            character.clearMovementIntention();
+                            roomManager.getBatchMovementRecorder()
+                                    .recordCharacterArrival(character.getId(), result.x(), result.y());
+                        }
+                        // else: intention remains, will retry in next tick cycle
+                    }
+
+                    // Only idle if no intention left (otherwise keep "waiting to retry")
+                    if (!character.hasMovementIntention()) {
                         character.idle();
-                        // Broadcast idle event so frontend knows to switch to idle animation
                         CharacterIdleEvent idleEvent = new CharacterIdleEvent(
-                                character.getId().toString(),
-                                "idle"
-                        );
+                                character.getId().toString(), "idle");
                         messagingTemplate.convertAndSend("/topic/game/" + gameId, idleEvent);
                         log.debug("Path completed: Character {} is now idle in game {}",
                                 character.getId(), gameId);
-
-                        // Debug recording: character arrived at destination
-                        roomManager.getBatchMovementRecorder()
-                                .recordCharacterArrival(character.getId(), result.x(), result.y());
                     }
                 }
-            } catch (Exception e) {
-                log.warn("Path step failed for character {} in game {}: {}",
-                        character.getId(), gameId, e.getMessage());
-                // Debug recording: path cancelled due to error
-                roomManager.getBatchMovementRecorder()
-                        .recordCharacterPathCancelled(character.getId(), character.getX(), character.getY());
-                // Clear the path on error to prevent infinite retries
-                character.clearPath();
-                // Set to idle on error too
-                character.idle();
             }
+        } catch (Exception e) {
+            log.warn("Path step failed for character {} in game {}: {}",
+                    character.getId(), gameId, e.getMessage());
+            // Clear path but keep intention for retry
+            character.clearPath();
+            character.idle();
         }
     }
 
@@ -431,6 +473,14 @@ public class GameScheduler {
     public record CharacterIdleEvent(
             String characterId,
             String state
+    ) {}
+
+    /**
+     * Event broadcast when a character gets a new path (including retries).
+     */
+    public record PathStartEvent(
+            String characterId,
+            java.util.List<int[]> path
     ) {}
 
     /**

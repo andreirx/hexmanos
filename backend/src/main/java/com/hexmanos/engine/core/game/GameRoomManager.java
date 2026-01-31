@@ -118,8 +118,9 @@ public class GameRoomManager {
             return false;
         }
 
-        // Clear any existing path when manually moving
+        // Clear any existing path and intention when manually moving
         character.clearPath();
+        character.clearMovementIntention();
 
         character.move(dx, dy);
         character.recordMove();  // Record for movement cost-based timing
@@ -265,6 +266,9 @@ public class GameRoomManager {
 
         List<Point> path = Pathfinder.findPath(start, target, terrain, obstacles);
 
+        // Set movement intention (exact destination, radius 0 for single-char moves)
+        character.setMovementIntention(target, 0);
+
         if (!path.isEmpty()) {
             character.setPath(path);
             log.debug("Set path for character {} in game {}: {} steps", characterId, gameId, path.size());
@@ -286,6 +290,7 @@ public class GameRoomManager {
 
         state.findCharacter(characterId).ifPresent(character -> {
             character.clearPath();
+            character.clearMovementIntention(); // Explicit cancel = stop trying
             log.debug("Cancelled path for character {} in game {}", characterId, gameId);
         });
     }
@@ -324,16 +329,14 @@ public class GameRoomManager {
         TerrainGrid terrain = state.getTerrainGrid();
         if (terrain != null && !terrain.isPassable(nextStep.x(), nextStep.y())) {
             log.debug("Path step blocked by terrain at {}", nextStep);
-            batchMovementRecorder.recordCharacterPathCancelled(
-                    characterId, character.getX(), character.getY());
+            // Clear path steps but keep movement intention for retry
             character.clearPath();
             return null;
         }
 
         if (state.isOccupied(nextStep.x(), nextStep.y(), characterId)) {
             log.debug("Path step blocked by character at {}", nextStep);
-            batchMovementRecorder.recordCharacterPathCancelled(
-                    characterId, character.getX(), character.getY());
+            // Clear path steps but keep movement intention for retry
             character.clearPath();
             return null;
         }
@@ -357,6 +360,70 @@ public class GameRoomManager {
         return state.findCharacter(characterId)
                 .map(GameCharacter::hasPath)
                 .orElse(false);
+    }
+
+    // ============================================
+    // Movement intention retry
+    // ============================================
+
+    /** How often to retry pathfinding for blocked characters (ms). */
+    public static final long PATH_RETRY_INTERVAL_MS = 1500;
+
+    /**
+     * Retry pathfinding for a character that has a movement intention but no active path.
+     * On retry, if the character has a radius > 0, we accept any passable tile within
+     * that radius of the original target.
+     *
+     * @return the new path if one was found, empty list otherwise
+     */
+    public List<Point> retryPath(UUID gameId, UUID characterId) {
+        GameState state = activeGames.get(gameId);
+        if (state == null) return Collections.emptyList();
+
+        Optional<GameCharacter> characterOpt = state.findCharacter(characterId);
+        if (characterOpt.isEmpty()) return Collections.emptyList();
+
+        GameCharacter character = characterOpt.get();
+        if (!character.hasMovementIntention()) return Collections.emptyList();
+
+        // Check if already arrived (within radius)
+        if (character.isWithinTargetRadius()) {
+            log.debug("Character {} arrived within radius of target, clearing intention", characterId);
+            character.clearMovementIntention();
+            return Collections.emptyList();
+        }
+
+        TerrainGrid terrain = state.getTerrainGrid();
+        if (terrain == null) return Collections.emptyList();
+
+        Point start = new Point(character.getX(), character.getY());
+        Point target = character.getTargetDestination();
+        Set<Point> obstacles = state.getOccupiedPositions(characterId);
+
+        // First try: exact target
+        List<Point> path = Pathfinder.findPath(start, target, terrain, obstacles);
+
+        // If exact target fails and we have a radius, try nearby tiles
+        if (path.isEmpty() && character.getTargetRadius() > 0) {
+            // Use SlotFinder to find 1 passable tile near the target
+            List<Point> nearbySlots = SlotFinder.findSlots(target, 1, terrain, obstacles);
+            if (!nearbySlots.isEmpty()) {
+                Point nearby = nearbySlots.get(0);
+                path = Pathfinder.findPath(start, nearby, terrain, obstacles);
+                if (!path.isEmpty()) {
+                    log.debug("Retry: found alternative path for character {} to ({},{}) instead of ({},{})",
+                            characterId, nearby.x(), nearby.y(), target.x(), target.y());
+                }
+            }
+        }
+
+        if (!path.isEmpty()) {
+            character.setPath(path);
+            log.debug("Retry succeeded: character {} got new path ({} steps)", characterId, path.size());
+        }
+
+        character.recordPathRetry();
+        return path;
     }
 
     // ============================================
@@ -412,6 +479,17 @@ public class GameRoomManager {
         // Assign characters to slots (closest unit to closest slot)
         Map<UUID, Point> assignments = SlotFinder.assignCharactersToSlots(charPositions, slots);
 
+        // Compute retry radius based on batch size (larger groups get more leeway)
+        int retryRadius = Math.max(1, (int) Math.ceil(Math.sqrt(charPositions.size())));
+
+        // Set movement intentions for ALL characters in the batch (even if pathfind fails initially)
+        for (Map.Entry<UUID, Point> entry : assignments.entrySet()) {
+            UUID charId = entry.getKey();
+            Point dest = entry.getValue();
+            state.findCharacter(charId).ifPresent(c ->
+                    c.setMovementIntention(dest, retryRadius));
+        }
+
         // Best-effort: compute individual A* paths, reserving each destination slot
         // so subsequent pathfinds in this batch don't target the same cell.
         Map<UUID, List<Point>> results = new HashMap<>();
@@ -429,7 +507,7 @@ public class GameRoomManager {
                 occupied.add(dest);
                 log.debug("Batch path: character {} -> ({}, {}), {} steps", charId, dest.x(), dest.y(), path.size());
             } else {
-                log.debug("Batch path: no path found for character {} from ({},{}) to ({},{}), skipping",
+                log.debug("Batch path: no path found for character {} from ({},{}) to ({},{}), will retry later",
                         charId, start.x(), start.y(), dest.x(), dest.y());
             }
         }

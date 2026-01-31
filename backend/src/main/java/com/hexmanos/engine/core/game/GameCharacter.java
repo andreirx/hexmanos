@@ -38,6 +38,11 @@ public class GameCharacter implements Serializable {
     private transient int pathIndex;
     private transient long lastMoveTime;        // For movement cost-based timing
 
+    // Movement intention — persists across path retries
+    private transient Point targetDestination;  // Where the character wants to go
+    private transient int targetRadius;         // 0 = exact, >0 = "close enough" radius for group moves
+    private transient long lastPathRetryTime;   // Throttle retry attempts
+
     // Attack state (transient - not serialized to snapshots)
     private transient Map<String, Long> attackCooldowns;  // attackId -> last used timestamp
     private transient String activeAttackId;              // Currently executing attack
@@ -322,5 +327,69 @@ public class GameCharacter implements Serializable {
      */
     public void recordMove() {
         this.lastMoveTime = System.currentTimeMillis();
+    }
+
+    // ============================================
+    // Movement intention methods
+    // ============================================
+
+    /**
+     * Set a movement intention — the character wants to reach this destination.
+     * Persists across path retries (unlike currentPath which gets cleared on block).
+     *
+     * @param destination the target point
+     * @param radius 0 = must reach exact point, >0 = arriving within this Chebyshev distance counts as done
+     */
+    public void setMovementIntention(Point destination, int radius) {
+        this.targetDestination = destination;
+        this.targetRadius = radius;
+        this.lastPathRetryTime = 0; // Allow immediate first attempt
+    }
+
+    /**
+     * Check if this character has an active movement intention (wants to go somewhere).
+     */
+    public boolean hasMovementIntention() {
+        return targetDestination != null;
+    }
+
+    /**
+     * Check if the character is already within the acceptable radius of its target.
+     */
+    public boolean isWithinTargetRadius() {
+        if (targetDestination == null) return false;
+        int dx = Math.abs(x - targetDestination.x());
+        int dy = Math.abs(y - targetDestination.y());
+        return Math.max(dx, dy) <= targetRadius; // Chebyshev distance
+    }
+
+    /**
+     * Check if the character is exactly at its target destination.
+     */
+    public boolean isAtTargetDestination() {
+        return targetDestination != null && x == targetDestination.x() && y == targetDestination.y();
+    }
+
+    /**
+     * Clear the movement intention (character has arrived or given up).
+     */
+    public void clearMovementIntention() {
+        this.targetDestination = null;
+        this.targetRadius = 0;
+        this.lastPathRetryTime = 0;
+    }
+
+    /**
+     * Record a path retry attempt timestamp (for throttling).
+     */
+    public void recordPathRetry() {
+        this.lastPathRetryTime = System.currentTimeMillis();
+    }
+
+    /**
+     * Check if enough time has passed to attempt another path retry.
+     */
+    public boolean canRetryPath(long retryIntervalMs) {
+        return System.currentTimeMillis() - lastPathRetryTime >= retryIntervalMs;
     }
 }
