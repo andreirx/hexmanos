@@ -19,7 +19,7 @@ import type {
   CharacterDeathEvent,
   BatchPathStartEvent,
 } from "@/hooks/useGameWebSocket"
-import { ArrowLeft, Pause, Square, User, Heart, Wifi, WifiOff, Swords, Target } from "lucide-react"
+import { ArrowLeft, Pause, Square, User, Heart, Wifi, WifiOff, Swords, Target, Move, Hand, Crosshair } from "lucide-react"
 import type { GameDTO, GameCharacterDTO, AttackDefinition } from "@/api/types"
 import {
   getVariationFromSeed,
@@ -950,19 +950,22 @@ class GameScene extends Phaser.Scene {
       }
     })
 
-    // Update character sprites using LOCAL TRUTH MIRROR (not sprite's current animation!)
+    // Update ALL character sprites using LOCAL TRUTH MIRROR (not sprite's current animation!)
     // The sprite might be showing a fallback (idle) even though the character is actually walking.
-    // We must consult characterStates to know the REAL state from the backend.
-    this.characterStates.forEach((charState, charId) => {
-      const sprite = this.characterSprites.get(charId)
-      if (!sprite) return
+    // We iterate characterSprites (not characterStates) to catch every sprite, even if state is missing.
+    // LESSON LEARNED: Also reset alpha — death/fade tweens set alpha=0, and setVisible(true) alone
+    // doesn't restore visibility if alpha is 0.
+    this.characterSprites.forEach((sprite, charId) => {
+      const charState = this.characterStates.get(charId)
+      const char = this.characters.find(c => c.id === charId)
+      const assetId = charState?.assetId ?? char?.assetId
+      if (!assetId) return
 
       // Update scale for character sprites
       sprite.setScale(newScale)
 
       // Use the AUTHORITATIVE state from our Local Truth Mirror, NOT the sprite's animation
-      const intendedState = charState.state  // e.g., "walk_down", "idle"
-      const assetId = charState.assetId
+      const intendedState = charState?.state ?? "idle"
 
       // Try to play the animation for the intended state at the new mip level
       const mipAnimSuffix = newLevel === "full" ? "" : `_${newLevel}`
@@ -983,7 +986,9 @@ class GameScene extends Phaser.Scene {
         }
       }
 
-      // CRITICAL: Always ensure sprite is visible after mip level switch
+      // CRITICAL: Always ensure sprite is fully visible after mip level switch
+      // setVisible(true) alone is not enough — alpha may be 0 from death/fade tweens
+      sprite.setAlpha(1)
       sprite.setVisible(true)
     })
 
@@ -1868,6 +1873,7 @@ export function GamePage() {
   const sendPathRef = useRef<((targetX: number, targetY: number) => boolean) | null>(null)
   const sendBatchPathRef = useRef<((characterIds: string[], targetX: number, targetY: number) => boolean) | null>(null)
   const sendAttackRef = useRef<((attackId: string, targetX: number, targetY: number) => boolean) | null>(null)
+  const sendCancelPathRef = useRef<(() => boolean) | null>(null)
   const attackModeIdRef = useRef<string | null>(null)
   const handleBoxSelectRef = useRef<((characterIds: string[]) => void) | null>(null)
   const handleCharacterClickRef = useRef<((characterId: string, shiftKey: boolean) => void) | null>(null)
@@ -2019,7 +2025,7 @@ export function GamePage() {
   }, [])
 
   // WebSocket connection
-  const { isConnected, sendMove, sendPath, sendBatchPath, sendAttack } = useGameWebSocket({
+  const { isConnected, sendMove, sendPath, sendCancelPath, sendBatchPath, sendAttack } = useGameWebSocket({
     gameId: gameId || "",
     onCharacterMove: handleCharacterMove,
     onCharacterIdle: handleCharacterIdle,
@@ -2052,6 +2058,10 @@ export function GamePage() {
   useEffect(() => {
     sendAttackRef.current = sendAttack
   }, [sendAttack])
+
+  useEffect(() => {
+    sendCancelPathRef.current = sendCancelPath
+  }, [sendCancelPath])
 
   // Load game data
   useEffect(() => {
@@ -2480,6 +2490,35 @@ export function GamePage() {
     }
   }
 
+  // Command panel keyboard shortcuts: M (move), S (stop), A (attack)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      // Only active when controlling characters
+      if (controlledCharacterIdsRef.current.size === 0) return
+
+      switch (e.key.toLowerCase()) {
+        case "m":
+          setAttackModeId(null)
+          break
+        case "s":
+          sendCancelPathRef.current?.()
+          setAttackModeId(null)
+          break
+        case "a":
+          // Toggle attack mode — use first attack if available
+          if (controlledCharacterIdsRef.current.size === 1 && characterAttacks.length > 0) {
+            setAttackModeId(prev => prev ? null : characterAttacks[0].id)
+          }
+          break
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [characterAttacks])
+
   if (!isAuthenticated) {
     return (
       <div className="h-screen flex flex-col bg-zinc-900">
@@ -2693,12 +2732,66 @@ export function GamePage() {
         </div>
 
         {/* Main game area */}
-        <div className="flex-1 flex items-center justify-center bg-zinc-950 p-0">
+        <div className="flex-1 relative bg-zinc-950 p-0">
           <div
             ref={gameContainerRef}
             className="w-full h-full"
             style={{ imageRendering: "pixelated" }}
           />
+
+          {/* Command panel — Starcraft-style bottom bar, visible when controlling characters */}
+          {controlledCharacterIds.size > 0 && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1 bg-zinc-900/90 border border-zinc-700 rounded-lg p-2 shadow-xl">
+              {/* Move (M) — default mode: right-click = pathfind */}
+              <button
+                onClick={() => setAttackModeId(null)}
+                title="Move (M)"
+                className={`w-12 h-12 flex flex-col items-center justify-center rounded transition-colors ${
+                  !attackModeId
+                    ? "bg-green-600 text-white"
+                    : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                }`}
+              >
+                <Move className="w-5 h-5" />
+                <span className="text-[10px] mt-0.5">M</span>
+              </button>
+
+              {/* Stop (S) — cancel all movement */}
+              <button
+                onClick={() => {
+                  sendCancelPathRef.current?.()
+                  setAttackModeId(null)
+                }}
+                title="Stop (S)"
+                className="w-12 h-12 flex flex-col items-center justify-center rounded bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
+              >
+                <Hand className="w-5 h-5" />
+                <span className="text-[10px] mt-0.5">S</span>
+              </button>
+
+              {/* Attack (A) — only for single character with attacks */}
+              {controlledCharacterIds.size === 1 && characterAttacks.length > 0 && (
+                <button
+                  onClick={() => {
+                    if (attackModeId) {
+                      setAttackModeId(null)
+                    } else {
+                      setAttackModeId(characterAttacks[0].id)
+                    }
+                  }}
+                  title="Attack (A)"
+                  className={`w-12 h-12 flex flex-col items-center justify-center rounded transition-colors ${
+                    attackModeId
+                      ? "bg-red-600 text-white"
+                      : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  }`}
+                >
+                  <Crosshair className="w-5 h-5" />
+                  <span className="text-[10px] mt-0.5">A</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Right sidebar - Characters */}

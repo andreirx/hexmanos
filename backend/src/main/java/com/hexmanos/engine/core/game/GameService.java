@@ -491,15 +491,16 @@ public class GameService {
     }
 
     /**
-     * Cancel the current path for a player's controlled character.
+     * Cancel the current path for all of a player's controlled characters.
      */
     public void cancelPath(UUID gameId, UUID playerId) {
         Game game = getGame(gameId);
 
-        // Get the character controlled by this player
-        roomManager.getControlledCharacter(gameId, playerId).ifPresent(characterId ->
-                roomManager.cancelPath(gameId, characterId)
-        );
+        // Cancel paths for ALL controlled characters (multi-control support)
+        Set<UUID> controlled = roomManager.getControlledCharacters(gameId, playerId);
+        for (UUID characterId : controlled) {
+            roomManager.cancelPath(gameId, characterId);
+        }
 
         game.touch();
         gameRepository.save(game);
