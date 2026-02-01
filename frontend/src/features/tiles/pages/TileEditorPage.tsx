@@ -23,6 +23,7 @@ interface TileProperties {
   tileType?: "TILE" | "PATH" | "BRIDGE"  // PATH tiles have exactly 15 variations, BRIDGE tiles auto-render under paths over water
   terrainType?: "LAND" | "WATER"  // WATER paths are rivers (not passable)
   movementCost?: number  // 1=easy (default), 2=normal, 3+=difficult, 0=impassable (for pathfinding)
+  pathWidth?: number     // Center width in pixels for PATH/BRIDGE auto-generation
   bridgeAssetId?: string  // For LAND PATH tiles: which BRIDGE asset to draw when path crosses water
 }
 
@@ -31,14 +32,11 @@ const MAX_HISTORY = 10
 const MAX_VARIATIONS = 8
 const BRUSH_SIZES = [1, 2, 4, 8, 16]
 
-// Path constants (56px wide center)
-const PATH_CENTER_START = 36  // Center rectangle starts at 36
-const PATH_CENTER_END = 92    // Center rectangle ends at 92
 const PATH_FADE_PIXELS = 4    // Number of pixels for border fade
 
-// Bridge constants (72px wide center)
-const BRIDGE_CENTER_START = 28
-const BRIDGE_CENTER_END = 100
+// Default widths for auto-generated paths/bridges (center width in pixels)
+const DEFAULT_PATH_WIDTH = 56   // PATH: 36..92
+const DEFAULT_BRIDGE_WIDTH = 72 // BRIDGE: 28..100
 
 // PATH tile type: 15 variations for all direction combinations (excluding 0000)
 // Bits: Up=8, Down=4, Left=2, Right=1
@@ -100,6 +98,7 @@ export function TileEditorPage() {
   const [movementCost, setMovementCost] = useState(1) // 1=easy (default), 2=normal, 3+=difficult
   const [tileType, setTileType] = useState<"TILE" | "PATH" | "BRIDGE">("TILE")
   const [terrainType, setTerrainType] = useState<"LAND" | "WATER">("LAND")
+  const [pathWidth, setPathWidth] = useState(DEFAULT_PATH_WIDTH)
   const [bridgeAssetId, setBridgeAssetId] = useState<string | null>(null)
   const [availableBridges, setAvailableBridges] = useState<AssetDTO[]>([])
   const [isSaving, setIsSaving] = useState(false)
@@ -204,6 +203,7 @@ export function TileEditorPage() {
       setMovementCost(properties.movementCost ?? 1) // Default to 1 if not set
       setTileType(properties.tileType || "TILE")
       setTerrainType(properties.terrainType || "LAND")
+      setPathWidth(properties.pathWidth ?? (properties.tileType === "BRIDGE" ? DEFAULT_BRIDGE_WIDTH : DEFAULT_PATH_WIDTH))
       setBridgeAssetId(properties.bridgeAssetId || null)
       clearAllHistory()
 
@@ -397,9 +397,9 @@ export function TileEditorPage() {
   const handleDrawPath = (direction: "up" | "down" | "left" | "right") => {
     const newPixels = new Uint8ClampedArray(currentVariation.pixels)
 
-    // Use bridge or path center based on tile type
-    const cStart = tileType === "BRIDGE" ? BRIDGE_CENTER_START : PATH_CENTER_START
-    const cEnd = tileType === "BRIDGE" ? BRIDGE_CENTER_END : PATH_CENTER_END
+    // Derive center bounds from pathWidth
+    const cStart = Math.round((TILE_SIZE - pathWidth) / 2)
+    const cEnd = Math.round((TILE_SIZE + pathWidth) / 2)
 
     // Define rectangle bounds based on direction
     let xStart: number, xEnd: number, yStart: number, yEnd: number
@@ -497,8 +497,8 @@ export function TileEditorPage() {
   const drawPathsOnPixels = (
     pixels: Uint8ClampedArray,
     directions: PathDirection,
-    centerStart: number = PATH_CENTER_START,
-    centerEnd: number = PATH_CENTER_END,
+    centerStart: number,
+    centerEnd: number,
   ): Uint8ClampedArray => {
     const newPixels = new Uint8ClampedArray(pixels)
 
@@ -577,6 +577,7 @@ export function TileEditorPage() {
       const newVariations: VariationFrame[] = PATH_COMBINATIONS.map(() => createEmptyFrame())
       setVariations(newVariations)
       setCurrentVariationIndex(0)
+      setPathWidth(newType === "BRIDGE" ? DEFAULT_BRIDGE_WIDTH : DEFAULT_PATH_WIDTH)
       if (newType === "BRIDGE") {
         // Bridges are always LAND and passable
         setTerrainType("LAND")
@@ -632,8 +633,8 @@ export function TileEditorPage() {
   const handleGenerateAllPaths = () => {
     if (tileType !== "PATH" && tileType !== "BRIDGE") return
 
-    const cStart = tileType === "BRIDGE" ? BRIDGE_CENTER_START : PATH_CENTER_START
-    const cEnd = tileType === "BRIDGE" ? BRIDGE_CENTER_END : PATH_CENTER_END
+    const cStart = Math.round((TILE_SIZE - pathWidth) / 2)
+    const cEnd = Math.round((TILE_SIZE + pathWidth) / 2)
 
     setVariations(prev => prev.map((variation, index) => {
       const directions = PATH_COMBINATIONS[index]
@@ -831,6 +832,7 @@ export function TileEditorPage() {
         tileType: tileType,
         terrainType: terrainType,
         movementCost: effectiveMovementCost,
+        ...((tileType === "PATH" || tileType === "BRIDGE") ? { pathWidth } : {}),
         ...(bridgeAssetId ? { bridgeAssetId } : {}),
       }
 
@@ -1671,6 +1673,32 @@ export function TileEditorPage() {
                           : "Very difficult terrain (swamp, mountains)"}
                 </p>
               </div>
+
+              {/* Path/Bridge width control */}
+              {(tileType === "PATH" || tileType === "BRIDGE") && (
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-2">
+                    {tileType === "BRIDGE" ? "Bridge" : "Path"} Width
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={16}
+                      max={112}
+                      step={2}
+                      value={pathWidth}
+                      onChange={(e) => setPathWidth(parseInt(e.target.value))}
+                      className="flex-1 h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <span className="text-sm font-mono w-10 text-center text-zinc-100">
+                      {pathWidth}px
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-2">
+                    Center width for auto-generated {tileType === "BRIDGE" ? "bridges" : "paths"} (default: {tileType === "BRIDGE" ? DEFAULT_BRIDGE_WIDTH : DEFAULT_PATH_WIDTH}px)
+                  </p>
+                </div>
+              )}
 
               {/* Bridge asset selector for LAND PATH tiles */}
               {tileType === "PATH" && terrainType === "LAND" && (
