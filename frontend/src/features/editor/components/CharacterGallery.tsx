@@ -237,29 +237,32 @@ export function CharacterGallery({ isOpen, onClose, onSelect, currentUserId }: C
                           <div className="flex-1 text-center text-xs text-zinc-500 py-2">
                             Archived
                           </div>
-                        ) : isOwner ? (
-                          <Button
-                            size="sm"
-                            className={`flex-1 ${
-                              isObject
-                                ? "bg-orange-600 hover:bg-orange-700"
-                                : "bg-blue-600 hover:bg-blue-700"
-                            }`}
-                            onClick={() => onSelect(asset, "edit")}
-                          >
-                            <Edit2 className="w-3 h-3 mr-1" />
-                            Edit
-                          </Button>
                         ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="flex-1 border-zinc-600 hover:bg-zinc-700"
-                            onClick={() => onSelect(asset, "copy")}
-                          >
-                            <Copy className="w-3 h-3 mr-1" />
-                            Copy
-                          </Button>
+                          <>
+                            {isOwner && (
+                              <Button
+                                size="sm"
+                                className={`flex-1 ${
+                                  isObject
+                                    ? "bg-orange-600 hover:bg-orange-700"
+                                    : "bg-blue-600 hover:bg-blue-700"
+                                }`}
+                                onClick={() => onSelect(asset, "edit")}
+                              >
+                                <Edit2 className="w-3 h-3 mr-1" />
+                                Edit
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="flex-1 border-zinc-600 hover:bg-zinc-700"
+                              onClick={() => onSelect(asset, "copy")}
+                            >
+                              <Copy className="w-3 h-3 mr-1" />
+                              Copy
+                            </Button>
+                          </>
                         )}
                       </div>
                     </div>
