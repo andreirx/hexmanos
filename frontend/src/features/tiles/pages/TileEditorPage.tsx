@@ -4,7 +4,7 @@ import { TileGallery } from "../components/TileGallery"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Header } from "@/components/layout"
-import { getPresignedUrl, uploadToPresignedUrl, registerAsset, getAssetFile, loadAssetImage } from "@/api/assets"
+import { getPresignedUrl, uploadToPresignedUrl, registerAsset, getAssetFile, getAssetsByType, loadAssetImage } from "@/api/assets"
 import { syncUser } from "@/api/users"
 import { useAuth } from "@/context/AuthContext"
 import {
@@ -20,9 +20,10 @@ interface TileProperties {
   tileSize: number
   passable: boolean
   variations: number
-  tileType?: "TILE" | "PATH"  // PATH tiles have exactly 15 variations
+  tileType?: "TILE" | "PATH" | "BRIDGE"  // PATH tiles have exactly 15 variations, BRIDGE tiles auto-render under paths over water
   terrainType?: "LAND" | "WATER"  // WATER paths are rivers (not passable)
   movementCost?: number  // 1=easy (default), 2=normal, 3+=difficult, 0=impassable (for pathfinding)
+  bridgeAssetId?: string  // For LAND PATH tiles: which BRIDGE asset to draw when path crosses water
 }
 
 const TILE_SIZE = 128
@@ -30,10 +31,14 @@ const MAX_HISTORY = 10
 const MAX_VARIATIONS = 8
 const BRUSH_SIZES = [1, 2, 4, 8, 16]
 
-// Path constants
-const PATH_CENTER_START = 32  // Center rectangle starts at 32
-const PATH_CENTER_END = 96    // Center rectangle ends at 96
+// Path constants (56px wide center)
+const PATH_CENTER_START = 36  // Center rectangle starts at 36
+const PATH_CENTER_END = 92    // Center rectangle ends at 92
 const PATH_FADE_PIXELS = 4    // Number of pixels for border fade
+
+// Bridge constants (72px wide center)
+const BRIDGE_CENTER_START = 28
+const BRIDGE_CENTER_END = 100
 
 // PATH tile type: 15 variations for all direction combinations (excluding 0000)
 // Bits: Up=8, Down=4, Left=2, Right=1
@@ -93,8 +98,10 @@ export function TileEditorPage() {
   const [tileName, setTileName] = useState("")
   const [passable, setPassable] = useState(true)
   const [movementCost, setMovementCost] = useState(1) // 1=easy (default), 2=normal, 3+=difficult
-  const [tileType, setTileType] = useState<"TILE" | "PATH">("TILE")
+  const [tileType, setTileType] = useState<"TILE" | "PATH" | "BRIDGE">("TILE")
   const [terrainType, setTerrainType] = useState<"LAND" | "WATER">("LAND")
+  const [bridgeAssetId, setBridgeAssetId] = useState<string | null>(null)
+  const [availableBridges, setAvailableBridges] = useState<AssetDTO[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [backendUser, setBackendUser] = useState<UserDTO | null>(null)
@@ -122,6 +129,33 @@ export function TileEditorPage() {
 
   // Current variation
   const currentVariation = variations[currentVariationIndex] || variations[0]
+
+  // Load available bridge assets for bridgeAssetId selector (when editing LAND PATH tiles)
+  useEffect(() => {
+    if (tileType !== "PATH" || terrainType !== "LAND") {
+      setAvailableBridges([])
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const allTiles = await getAssetsByType("TILE")
+        const bridges: AssetDTO[] = []
+        for (const asset of allTiles) {
+          try {
+            const props = await getAssetFile<TileProperties>(asset.storageKeyPrefix, "properties.json")
+            if (props.tileType === "BRIDGE") {
+              bridges.push(asset)
+            }
+          } catch { /* skip assets without properties */ }
+        }
+        if (!cancelled) setAvailableBridges(bridges)
+      } catch (err) {
+        console.error("Failed to load bridge assets:", err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [tileType, terrainType])
 
   // Sync user with backend when authenticated
   useEffect(() => {
@@ -170,6 +204,7 @@ export function TileEditorPage() {
       setMovementCost(properties.movementCost ?? 1) // Default to 1 if not set
       setTileType(properties.tileType || "TILE")
       setTerrainType(properties.terrainType || "LAND")
+      setBridgeAssetId(properties.bridgeAssetId || null)
       clearAllHistory()
 
       if (mode === "edit") {
@@ -362,6 +397,10 @@ export function TileEditorPage() {
   const handleDrawPath = (direction: "up" | "down" | "left" | "right") => {
     const newPixels = new Uint8ClampedArray(currentVariation.pixels)
 
+    // Use bridge or path center based on tile type
+    const cStart = tileType === "BRIDGE" ? BRIDGE_CENTER_START : PATH_CENTER_START
+    const cEnd = tileType === "BRIDGE" ? BRIDGE_CENTER_END : PATH_CENTER_END
+
     // Define rectangle bounds based on direction
     let xStart: number, xEnd: number, yStart: number, yEnd: number
     // Define which edges should fade (not at image edges)
@@ -369,18 +408,18 @@ export function TileEditorPage() {
 
     switch (direction) {
       case "up":
-        xStart = PATH_CENTER_START
-        xEnd = PATH_CENTER_END
+        xStart = cStart
+        xEnd = cEnd
         yStart = 0
-        yEnd = PATH_CENTER_END
+        yEnd = cEnd
         fadeLeft = true
         fadeRight = true
         fadeBottom = true
         break
       case "down":
-        xStart = PATH_CENTER_START
-        xEnd = PATH_CENTER_END
-        yStart = PATH_CENTER_START
+        xStart = cStart
+        xEnd = cEnd
+        yStart = cStart
         yEnd = TILE_SIZE
         fadeLeft = true
         fadeRight = true
@@ -388,18 +427,18 @@ export function TileEditorPage() {
         break
       case "left":
         xStart = 0
-        xEnd = PATH_CENTER_END
-        yStart = PATH_CENTER_START
-        yEnd = PATH_CENTER_END
+        xEnd = cEnd
+        yStart = cStart
+        yEnd = cEnd
         fadeTop = true
         fadeBottom = true
         fadeRight = true
         break
       case "right":
-        xStart = PATH_CENTER_START
+        xStart = cStart
         xEnd = TILE_SIZE
-        yStart = PATH_CENTER_START
-        yEnd = PATH_CENTER_END
+        yStart = cStart
+        yEnd = cEnd
         fadeTop = true
         fadeBottom = true
         fadeLeft = true
@@ -457,7 +496,9 @@ export function TileEditorPage() {
   // Draw paths on a pixel array based on directions (for bulk generation)
   const drawPathsOnPixels = (
     pixels: Uint8ClampedArray,
-    directions: PathDirection
+    directions: PathDirection,
+    centerStart: number = PATH_CENTER_START,
+    centerEnd: number = PATH_CENTER_END,
   ): Uint8ClampedArray => {
     const newPixels = new Uint8ClampedArray(pixels)
 
@@ -467,23 +508,23 @@ export function TileEditorPage() {
 
       switch (direction) {
         case "up":
-          xStart = PATH_CENTER_START; xEnd = PATH_CENTER_END
-          yStart = 0; yEnd = PATH_CENTER_END
+          xStart = centerStart; xEnd = centerEnd
+          yStart = 0; yEnd = centerEnd
           fadeLeft = true; fadeRight = true; fadeBottom = true
           break
         case "down":
-          xStart = PATH_CENTER_START; xEnd = PATH_CENTER_END
-          yStart = PATH_CENTER_START; yEnd = TILE_SIZE
+          xStart = centerStart; xEnd = centerEnd
+          yStart = centerStart; yEnd = TILE_SIZE
           fadeLeft = true; fadeRight = true; fadeTop = true
           break
         case "left":
-          xStart = 0; xEnd = PATH_CENTER_END
-          yStart = PATH_CENTER_START; yEnd = PATH_CENTER_END
+          xStart = 0; xEnd = centerEnd
+          yStart = centerStart; yEnd = centerEnd
           fadeTop = true; fadeBottom = true; fadeRight = true
           break
         case "right":
-          xStart = PATH_CENTER_START; xEnd = TILE_SIZE
-          yStart = PATH_CENTER_START; yEnd = PATH_CENTER_END
+          xStart = centerStart; xEnd = TILE_SIZE
+          yStart = centerStart; yEnd = centerEnd
           fadeTop = true; fadeBottom = true; fadeLeft = true
           break
       }
@@ -528,16 +569,22 @@ export function TileEditorPage() {
   }
 
   // Switch tile type
-  const handleSwitchTileType = (newType: "TILE" | "PATH") => {
+  const handleSwitchTileType = (newType: "TILE" | "PATH" | "BRIDGE") => {
     if (newType === tileType) return
 
-    if (newType === "PATH") {
-      // Create exactly 15 variations for PATH tile
+    if (newType === "PATH" || newType === "BRIDGE") {
+      // Create exactly 15 variations for PATH/BRIDGE tile
       const newVariations: VariationFrame[] = PATH_COMBINATIONS.map(() => createEmptyFrame())
       setVariations(newVariations)
       setCurrentVariationIndex(0)
-      // PATH passability depends on terrain type: LAND=passable, WATER=not passable (rivers)
-      setPassable(terrainType === "LAND")
+      if (newType === "BRIDGE") {
+        // Bridges are always LAND and passable
+        setTerrainType("LAND")
+        setPassable(true)
+      } else {
+        // PATH passability depends on terrain type: LAND=passable, WATER=not passable (rivers)
+        setPassable(terrainType === "LAND")
+      }
       clearAllHistory()
     } else {
       // Switch back to regular TILE with single variation
@@ -554,14 +601,14 @@ export function TileEditorPage() {
     setTerrainType(newTerrainType)
 
     // For PATH tiles, update passability based on terrain type
-    if (tileType === "PATH") {
+    if (tileType === "PATH" || tileType === "BRIDGE") {
       setPassable(newTerrainType === "LAND") // LAND paths passable, WATER paths (rivers) not passable
     }
   }
 
-  // Fill all PATH variations with background colors
+  // Fill all PATH/BRIDGE variations with background colors
   const handleFillAllBackgrounds = () => {
-    if (tileType !== "PATH") return
+    if (tileType !== "PATH" && tileType !== "BRIDGE") return
 
     const colors = [hexToRgba(fillColor1), hexToRgba(fillColor2), hexToRgba(fillColor3)]
 
@@ -581,18 +628,22 @@ export function TileEditorPage() {
     setStatusMessage({ type: "success", text: "Filled all 15 variations with background" })
   }
 
-  // Generate all paths on all variations
+  // Generate all paths/bridges on all variations
   const handleGenerateAllPaths = () => {
-    if (tileType !== "PATH") return
+    if (tileType !== "PATH" && tileType !== "BRIDGE") return
+
+    const cStart = tileType === "BRIDGE" ? BRIDGE_CENTER_START : PATH_CENTER_START
+    const cEnd = tileType === "BRIDGE" ? BRIDGE_CENTER_END : PATH_CENTER_END
 
     setVariations(prev => prev.map((variation, index) => {
       const directions = PATH_COMBINATIONS[index]
-      const newPixels = drawPathsOnPixels(variation.pixels, directions)
+      const newPixels = drawPathsOnPixels(variation.pixels, directions, cStart, cEnd)
       return { pixels: newPixels }
     }))
 
     clearAllHistory()
-    setStatusMessage({ type: "success", text: "Generated paths on all 15 variations" })
+    const label = tileType === "BRIDGE" ? "bridges" : "paths"
+    setStatusMessage({ type: "success", text: `Generated ${label} on all 15 variations` })
   }
 
   // Variation management
@@ -763,8 +814,8 @@ export function TileEditorPage() {
       // Use existing asset ID when editing, or create new one
       const assetId = loadedAsset?.id || crypto.randomUUID()
 
-      // PATH passability depends on terrain type: LAND=passable, WATER=not passable
-      const effectivePassable = tileType === "PATH"
+      // PATH/BRIDGE passability depends on terrain type: LAND=passable, WATER=not passable
+      const effectivePassable = (tileType === "PATH" || tileType === "BRIDGE")
         ? terrainType === "LAND"  // LAND paths passable, WATER paths (rivers) not
         : passable
 
@@ -780,6 +831,7 @@ export function TileEditorPage() {
         tileType: tileType,
         terrainType: terrainType,
         movementCost: effectiveMovementCost,
+        ...(bridgeAssetId ? { bridgeAssetId } : {}),
       }
 
       const fileNames: string[] = ["properties.json"]
@@ -1102,8 +1154,8 @@ export function TileEditorPage() {
                   </div>
                 </div>
               </div>
-              {/* Bulk fill button for PATH mode */}
-              {tileType === "PATH" && (
+              {/* Bulk fill button for PATH/BRIDGE mode */}
+              {(tileType === "PATH" || tileType === "BRIDGE") && (
                 <Button
                   variant="outline"
                   className="w-full bg-green-700 border-green-600 text-white hover:bg-green-600"
@@ -1285,16 +1337,16 @@ export function TileEditorPage() {
                   </div>
                 </div>
               </div>
-              {/* Bulk generate paths button for PATH mode */}
-              {tileType === "PATH" && (
+              {/* Bulk generate paths/bridges button for PATH/BRIDGE mode */}
+              {(tileType === "PATH" || tileType === "BRIDGE") && (
                 <Button
                   variant="outline"
-                  className="w-full bg-amber-700 border-amber-600 text-white hover:bg-amber-600"
+                  className={`w-full text-white hover:opacity-90 ${tileType === "BRIDGE" ? "bg-yellow-700 border-yellow-600 hover:bg-yellow-600" : "bg-amber-700 border-amber-600 hover:bg-amber-600"}`}
                   onClick={handleGenerateAllPaths}
-                  title="Generate all path combinations on all 15 variations"
+                  title={`Generate all ${tileType === "BRIDGE" ? "bridge" : "path"} combinations on all 15 variations`}
                 >
                   <Shuffle className="w-4 h-4 mr-2" />
-                  Generate All 15 Paths
+                  Generate All 15 {tileType === "BRIDGE" ? "Bridges" : "Paths"}
                 </Button>
               )}
             </CardContent>
@@ -1375,16 +1427,16 @@ export function TileEditorPage() {
           <div className="border-t border-zinc-700 p-4 bg-zinc-900">
             <div className="flex items-center justify-between mb-3">
               <div className="text-sm text-zinc-400">
-                {tileType === "PATH" ? (
+                {(tileType === "PATH" || tileType === "BRIDGE") ? (
                   <>
-                    Path {currentVariationIndex + 1}/15: {getPathLabel(PATH_COMBINATIONS[currentVariationIndex])}
+                    {tileType === "BRIDGE" ? "Bridge" : "Path"} {currentVariationIndex + 1}/15: {getPathLabel(PATH_COMBINATIONS[currentVariationIndex])}
                   </>
                 ) : (
                   <>Variation {currentVariationIndex + 1}/{variations.length}</>
                 )}
               </div>
-              {/* Hide add/delete for PATH mode */}
-              {tileType !== "PATH" && (
+              {/* Hide add/delete for PATH/BRIDGE mode */}
+              {tileType !== "PATH" && tileType !== "BRIDGE" && (
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleAddVariation} title="Add Variation">
                     <Plus className="w-4 h-4" />
@@ -1400,7 +1452,7 @@ export function TileEditorPage() {
                   </Button>
                 </div>
               )}
-              {tileType === "PATH" && (
+              {(tileType === "PATH" || tileType === "BRIDGE") && (
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" className="bg-zinc-700 border-zinc-600 text-zinc-100 hover:bg-zinc-600" onClick={handleClearVariation} title="Clear This Variation">
                     <X className="w-4 h-4" />
@@ -1419,7 +1471,7 @@ export function TileEditorPage() {
 
               <div className="flex-1 flex gap-1 ml-4 overflow-x-auto">
                 {variations.map((variation, index) => {
-                  const isPath = tileType === "PATH"
+                  const isPath = tileType === "PATH" || tileType === "BRIDGE"
                   const pathDirs = isPath ? PATH_COMBINATIONS[index] : null
                   return (
                     <button
@@ -1497,9 +1549,21 @@ export function TileEditorPage() {
                   >
                     PATH
                   </button>
+                  <button
+                    onClick={() => handleSwitchTileType("BRIDGE")}
+                    className={`flex-1 py-2 px-3 rounded text-sm transition-colors ${
+                      tileType === "BRIDGE"
+                        ? "bg-yellow-700 text-white"
+                        : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
+                    }`}
+                  >
+                    BRIDGE
+                  </button>
                 </div>
                 <p className="text-xs text-zinc-500 mt-2">
-                  {tileType === "PATH" ? "15 variations for all path directions" : "Custom variations (1-8)"}
+                  {tileType === "PATH" ? "15 variations for all path directions"
+                    : tileType === "BRIDGE" ? "15 variations for bridge directions (wider)"
+                    : "Custom variations (1-8)"}
                 </p>
               </div>
 
@@ -1528,9 +1592,9 @@ export function TileEditorPage() {
                   </button>
                 </div>
                 <p className="text-xs text-zinc-500 mt-2">
-                  {tileType === "PATH"
+                  {(tileType === "PATH" || tileType === "BRIDGE")
                     ? terrainType === "LAND"
-                      ? "Land paths are passable (walkways)"
+                      ? tileType === "BRIDGE" ? "Bridge surface (always passable)" : "Land paths are passable (walkways)"
                       : "Water paths are rivers (not passable)"
                     : terrainType === "LAND"
                       ? "Land terrain (grass, dirt, etc.)"
@@ -1542,34 +1606,34 @@ export function TileEditorPage() {
                 <label className="text-xs text-zinc-400 block mb-2">Passable</label>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => tileType !== "PATH" && setPassable(true)}
-                    disabled={tileType === "PATH"}
+                    onClick={() => tileType !== "PATH" && tileType !== "BRIDGE" && setPassable(true)}
+                    disabled={tileType === "PATH" || tileType === "BRIDGE"}
                     className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
                       passable
                         ? "bg-green-600 text-white"
                         : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
-                    } ${tileType === "PATH" ? "opacity-50 cursor-not-allowed" : ""}`}
+                    } ${(tileType === "PATH" || tileType === "BRIDGE") ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     <Check className="w-4 h-4" />
                     Yes
                   </button>
                   <button
-                    onClick={() => tileType !== "PATH" && setPassable(false)}
-                    disabled={tileType === "PATH"}
+                    onClick={() => tileType !== "PATH" && tileType !== "BRIDGE" && setPassable(false)}
+                    disabled={tileType === "PATH" || tileType === "BRIDGE"}
                     className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors ${
                       !passable
                         ? "bg-red-600 text-white"
                         : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
-                    } ${tileType === "PATH" ? "opacity-50 cursor-not-allowed" : ""}`}
+                    } ${(tileType === "PATH" || tileType === "BRIDGE") ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     <X className="w-4 h-4" />
                     No
                   </button>
                 </div>
                 <p className="text-xs text-zinc-500 mt-2">
-                  {tileType === "PATH"
+                  {(tileType === "PATH" || tileType === "BRIDGE")
                     ? terrainType === "LAND"
-                      ? "Land paths are always passable"
+                      ? tileType === "BRIDGE" ? "Bridges are always passable" : "Land paths are always passable"
                       : "Water paths (rivers) are never passable"
                     : passable
                       ? "Players can walk through"
@@ -1607,6 +1671,30 @@ export function TileEditorPage() {
                           : "Very difficult terrain (swamp, mountains)"}
                 </p>
               </div>
+
+              {/* Bridge asset selector for LAND PATH tiles */}
+              {tileType === "PATH" && terrainType === "LAND" && (
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-2">Bridge Asset</label>
+                  <select
+                    value={bridgeAssetId || ""}
+                    onChange={(e) => setBridgeAssetId(e.target.value || null)}
+                    className="w-full px-2 py-2 bg-zinc-700 border border-zinc-600 rounded text-sm text-zinc-100"
+                  >
+                    <option value="">None (no bridge over water)</option>
+                    {availableBridges.map((bridge) => (
+                      <option key={bridge.id} value={bridge.id}>
+                        {bridge.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-zinc-500 mt-2">
+                    {bridgeAssetId
+                      ? "Bridge will auto-render when this path crosses water"
+                      : "Select a BRIDGE asset to render under this path over water"}
+                  </p>
+                </div>
+              )}
 
               {statusMessage && (
                 <div

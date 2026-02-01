@@ -71,9 +71,10 @@ interface TileProperties {
   tileSize: number
   passable: boolean
   variations: number
-  tileType?: "TILE" | "PATH"
+  tileType?: "TILE" | "PATH" | "BRIDGE"
   terrainType?: "LAND" | "WATER"
   movementCost?: number  // 1=easy (default), 2=normal, 3+=difficult, 0=impassable
+  bridgeAssetId?: string  // For LAND PATH tiles: which BRIDGE asset to draw when path crosses water
 }
 
 interface EntityDefinition {
@@ -329,6 +330,14 @@ class GameScene extends Phaser.Scene {
     // Collect character asset IDs
     this.characters.forEach(c => characterAssetIds.add(c.assetId))
 
+    // Also collect bridge asset IDs referenced by ground paths
+    pathAssetIds.forEach(assetId => {
+      const props = this.tileProperties.get(assetId)
+      if (props?.bridgeAssetId) {
+        pathAssetIds.add(props.bridgeAssetId)
+      }
+    })
+
     // Load terrain tiles: base + 8 transitions for each, plus mipmaps
     const mipSuffixes: MipLevel[] = ["full", "mip64", "mip32"]
     terrainAssetIds.forEach(assetId => {
@@ -514,7 +523,45 @@ class GameScene extends Phaser.Scene {
 
     // Draw water paths first (rivers, moats, lava)
     drawPathLayer(layers.waterPaths, "water")
-    // Draw ground paths on top (roads, bridges)
+
+    // Draw bridges (auto-generated under ground paths that cross water)
+    if (layers.groundPaths) {
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const groundPath = layers.groundPaths[y]?.[x]
+          if (!groundPath) continue
+
+          const groundProps = this.tileProperties.get(groundPath.pathAssetId)
+          if (!groundProps?.bridgeAssetId) continue
+
+          // Check if over water
+          const waterPath = layers.waterPaths?.[y]?.[x]
+          const terrainTile = layers.terrain[y]?.[x]
+          const terrainProps = terrainTile ? this.tileProperties.get(terrainTile.tileAssetId) : null
+          const isOverWater = waterPath != null || terrainProps?.terrainType === "WATER"
+          if (!isOverWater) continue
+
+          const bridgeAssetId = groundProps.bridgeAssetId
+          const variation = calculatePathVariation(
+            x, y, width, height, layers.groundPaths, groundPath.pathAssetId
+          )
+          const key = `path_${bridgeAssetId}_${variation}${mipSuffix}`
+
+          if (this.textures.exists(key)) {
+            const image = this.add.image(
+              x * TILE_SIZE + TILE_SIZE / 2,
+              y * TILE_SIZE + TILE_SIZE / 2,
+              key
+            )
+            image.setScale(mipScale)
+            image.setDepth(GameScene.DEPTH_PATH)
+            this.pathImages.set(`bridge_${x},${y}`, { image, assetId: bridgeAssetId, variation })
+          }
+        }
+      }
+    }
+
+    // Draw ground paths on top (roads)
     drawPathLayer(layers.groundPaths, "ground")
 
     // Create box select rectangle graphics
@@ -2177,6 +2224,30 @@ export function GamePage() {
           }
         })
       )
+
+      // Second pass: load bridge assets referenced by ground paths' bridgeAssetId
+      const bridgeAssetIds = new Set<string>()
+      tileProperties.forEach((props) => {
+        if (props.bridgeAssetId && !assetMap.has(props.bridgeAssetId)) {
+          bridgeAssetIds.add(props.bridgeAssetId)
+        }
+      })
+      if (bridgeAssetIds.size > 0) {
+        await Promise.all(
+          Array.from(bridgeAssetIds).map(async (assetId) => {
+            try {
+              const asset = await getAssetById(assetId)
+              assetMap.set(assetId, { storageKeyPrefix: asset.storageKeyPrefix })
+              try {
+                const props = await getAssetFile<TileProperties>(asset.storageKeyPrefix, "properties.json")
+                tileProperties.set(assetId, props)
+              } catch { /* no properties */ }
+            } catch (err) {
+              console.warn(`Failed to load bridge asset ${assetId}:`, err)
+            }
+          })
+        )
+      }
 
       // Create Phaser game
       const config: Phaser.Types.Core.GameConfig = {

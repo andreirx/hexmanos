@@ -9,9 +9,10 @@ interface TileProperties {
   tileSize: number
   passable: boolean
   variations: number
-  tileType?: "TILE" | "PATH"
+  tileType?: "TILE" | "PATH" | "BRIDGE"
   terrainType?: "LAND" | "WATER"
   movementCost?: number  // 1=easy (default), 2=normal, 3+=difficult, 0=impassable
+  bridgeAssetId?: string  // For LAND PATH tiles: which BRIDGE asset to draw when path crosses water
 }
 
 interface TilePaletteProps {
@@ -100,6 +101,7 @@ export function TilePalette({ selectedAssetId, onSelectAsset, tileType }: TilePa
               const isSelected = selectedAssetId === tile.id
               const thumbnailUrl = getAssetFileUrl(tile.storageKeyPrefix, "tile_0.png", true)
               const isWater = props?.terrainType === "WATER"
+              const isBridge = props?.tileType === "BRIDGE"
 
               return (
                 <button
@@ -109,14 +111,20 @@ export function TilePalette({ selectedAssetId, onSelectAsset, tileType }: TilePa
                     isSelected
                       ? isWater
                         ? "border-cyan-500 bg-cyan-500/10"
-                        : "border-blue-500 bg-blue-500/10"
+                        : isBridge
+                          ? "border-yellow-600 bg-yellow-600/10"
+                          : "border-blue-500 bg-blue-500/10"
                       : "border-zinc-700 hover:border-zinc-500 bg-zinc-900"
                   }`}
-                  title={`${tile.name}${props ? ` (${props.variations} variations)` : ""}${isWater ? " [WATER]" : ""}`}
+                  title={`${tile.name}${props ? ` (${props.variations} variations)` : ""}${isWater ? " [WATER]" : ""}${isBridge ? " [BRIDGE]" : ""}`}
                 >
                   {/* Water indicator */}
                   {isWater && (
                     <div className="absolute top-1 right-1 w-3 h-3 rounded-full bg-cyan-500 border border-cyan-400" title="Water terrain" />
+                  )}
+                  {/* Bridge indicator */}
+                  {isBridge && (
+                    <div className="absolute top-1 right-1 w-3 h-3 rounded-full bg-yellow-600 border border-yellow-500" title="Bridge tile" />
                   )}
 
                   {/* Thumbnail */}

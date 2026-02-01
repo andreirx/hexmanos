@@ -14,9 +14,10 @@ interface TileProperties {
   tileSize: number
   passable: boolean
   variations: number
-  tileType?: "TILE" | "PATH"
+  tileType?: "TILE" | "PATH" | "BRIDGE"
   terrainType?: "LAND" | "WATER"
   movementCost?: number  // 1=easy (default), 2=normal, 3+=difficult, 0=impassable
+  bridgeAssetId?: string  // For LAND PATH tiles: which BRIDGE asset to draw when path crosses water
 }
 
 interface CharacterDefinition {
@@ -412,7 +413,42 @@ export function MapCanvas({
       // First pass: Draw water paths (rivers, moats, lava) - underneath
       drawPathLayer(mapData.layers.waterPaths)
 
-      // Second pass: Draw ground paths (roads, bridges) - on top
+      // Second pass: Draw bridges (auto-generated under ground paths that cross water)
+      if (mapData.layers.groundPaths) {
+        for (let y = 0; y < mapHeight; y++) {
+          for (let x = 0; x < mapWidth; x++) {
+            const groundPath = mapData.layers.groundPaths[y]?.[x]
+            if (!groundPath) continue
+
+            // Check if this ground path has a bridge asset linked
+            const groundProps = tileProperties.get(groundPath.pathAssetId)
+            if (!groundProps?.bridgeAssetId) continue
+
+            // Check if this cell is over water (water path or water terrain)
+            const waterPath = mapData.layers.waterPaths?.[y]?.[x]
+            const terrainTile = mapData.layers.terrain[y]?.[x]
+            const terrainProps = terrainTile ? tileProperties.get(terrainTile.tileAssetId) : null
+            const isOverWater = waterPath != null || terrainProps?.terrainType === "WATER"
+            if (!isOverWater) continue
+
+            // Get bridge asset and draw with same variation as the ground path
+            const bridgeAsset = assetCache.get(groundProps.bridgeAssetId)
+            if (!bridgeAsset) continue
+
+            const variation = calculatePathVariation(
+              x, y, mapWidth, mapHeight,
+              mapData.layers.groundPaths, groundPath.pathAssetId
+            )
+            const url = getAssetFileUrl(bridgeAsset.storageKeyPrefix, `tile_${variation}.png`)
+            const img = getImage(url)
+            if (img) {
+              ctx.drawImage(img, x * tileSize, y * tileSize, tileSize, tileSize)
+            }
+          }
+        }
+      }
+
+      // Third pass: Draw ground paths (roads) - on top of bridges
       drawPathLayer(mapData.layers.groundPaths)
     }
 
