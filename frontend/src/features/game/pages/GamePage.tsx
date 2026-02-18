@@ -707,15 +707,29 @@ class GameScene extends Phaser.Scene {
       D: this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.D) ?? null,
     }
 
-    // Mouse wheel zoom
-    this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _gameObjects: unknown[], _deltaX: number, deltaY: number) => {
+    // Mouse wheel zoom - zoom centered on mouse position
+    this.input.on("wheel", (pointer: Phaser.Input.Pointer, _gameObjects: unknown[], _deltaX: number, deltaY: number) => {
       const cam = this.cameras.main
       const zoomFactor = 1.1
-      if (deltaY < 0) {
-        cam.zoom = Math.min(2, cam.zoom * zoomFactor)
-      } else {
-        cam.zoom = Math.max(0.1, cam.zoom / zoomFactor)
-      }
+
+      // Step 1: World point under mouse before zoom
+      const worldX = pointer.worldX
+      const worldY = pointer.worldY
+
+      // Step 2: Calculate new zoom
+      const oldZoom = cam.zoom
+      const newZoom = deltaY < 0
+        ? Math.min(2, oldZoom * zoomFactor)
+        : Math.max(0.1, oldZoom / zoomFactor)
+
+      // Step 3: Apply zoom
+      cam.zoom = newZoom
+
+      // Step 4: Adjust scroll so world point stays under mouse
+      // scrollX/Y is the world coordinate at the camera's top-left
+      // pointer.x/y is screen position relative to game canvas
+      cam.scrollX = worldX - pointer.x / newZoom
+      cam.scrollY = worldY - pointer.y / newZoom
 
       // Switch mip level based on new zoom
       const newMipLevel = getMipLevel(cam.zoom)

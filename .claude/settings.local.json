@@ -47,7 +47,8 @@
       "Bash(find:*)",
       "Bash(npm run typecheck:*)",
       "Bash(grep:*)",
-      "Bash(lsof:*)"
+      "Bash(lsof:*)",
+      "Bash(ls:*)"
     ]
   }
 }

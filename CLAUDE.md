@@ -43,13 +43,14 @@ Core has NO Spring annotations. Services wired via `@Bean` in `app.config.core`.
 
 Detailed architecture, patterns, and lessons learned live in `docs/`:
 
-| Document | When to read |
-|----------|-------------|
-| `docs/backend-architecture.md` | Adding backend features, DB models, persistence, migrations |
-| `docs/frontend-architecture.md` | Adding UI features, components, API calls |
-| `docs/game-engine.md` | Game logic, WebSocket events, Phaser rendering, projectiles |
-| `docs/infrastructure.md` | Deployment, AWS services, storage config |
-| `docs/patterns-and-lessons.md` | Before debugging - common pitfalls and hard-won solutions |
+| Document                        | When to read                                                |
+|---------------------------------|-------------------------------------------------------------|
+| `docs/backend-architecture.md`  | Adding backend features, DB models, persistence, migrations |
+| `docs/frontend-architecture.md` | Adding UI features, components, API calls                   |
+| `docs/game-engine.md`           | Game logic, WebSocket events, Phaser rendering, projectiles |
+| `docs/infrastructure.md`        | Deployment, AWS services, storage config                    |
+| `docs/patterns-and-lessons.md`  | Before debugging - common pitfalls and hard-won solutions   |
+| `docs/lessons-learned.md`       | Check this when planning a feature or refactor              |
 
 Each feature folder also has a `MAP.md` describing its files and purpose. Read these before modifying a feature.
 
@@ -61,6 +62,7 @@ Each feature folder also has a `MAP.md` describing its files and purpose. Read t
 4. **No TODOs in code.** Use `bd create` for future work.
 5. **Refactoring scope check.** When changing structures/formats/schemas, check all consumers: editors, game engine, admin interface, renderer.
 6. **Pixel art rendering.** All canvas/img for game assets must use `image-rendering: pixelated`.
+7. **Treat user feedback as HARD DATA.** never assume your code is correct even if it looks correct. Maybe there's something else affecting it.
 
 ## Session Completion
 
